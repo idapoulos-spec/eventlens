@@ -1,36 +1,105 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# EventLens
 
-## Getting Started
+EventLens is a research dashboard that compares [Kalshi](https://kalshi.com) prediction-market data with stock-market data.
 
-First, run the development server:
+Enter a stock ticker (e.g. `NVDA`) and a Kalshi market ticker (e.g. `KXFEDDECISION-26OCT-H25`), click **Analyze**, and EventLens shows:
+
+- **Kalshi market:** title, implied probability, YES bid / ask, last price, 24-hour volume, open interest, 1-hour and 24-hour probability change, and an event-uncertainty score
+- **Stock:** current price, daily change, volume, and 30-day realized volatility (via [Twelve Data](https://twelvedata.com))
+- **Charts:** Kalshi probability vs. stock return over the last 7 days, aligned on timestamps, plus the probability history and a ~3-month stock price chart
+
+> Experimental market-research tool. Metrics are informational and are not investment recommendations.
+
+## Tech stack
+
+Next.js (App Router), TypeScript, Tailwind CSS, Recharts, pnpm.
+
+## Getting started
+
+### Prerequisites
+
+- Node.js 20.9 or later
+- pnpm (`npm install -g pnpm`)
+
+### Install
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Configure the Twelve Data API key
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Stock data comes from Twelve Data. Kalshi data uses public endpoints and needs no key.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Get a free API key at <https://twelvedata.com/pricing>.
+2. Copy the example env file and add your key:
 
-## Learn More
+   ```bash
+   cp .env.example .env.local
+   ```
 
-To learn more about Next.js, take a look at the following resources:
+   ```env
+   TWELVE_DATA_API_KEY=your_key_here
+   ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+The key is only read on the server and is never sent to the browser. Without it, the app still runs: Kalshi data loads and the stock section explains how to add the key.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The free Twelve Data plan allows 8 requests per minute. Each analysis uses 3 (quote, hourly bars, daily bars), and responses are cached for 60 seconds.
 
-## Deploy on Vercel
+### Run locally
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+pnpm dev
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Open <http://localhost:3000>.
+
+### Other scripts
+
+```bash
+pnpm lint    # ESLint
+pnpm build   # production build (includes type checking)
+pnpm start   # serve the production build
+```
+
+## Finding a Kalshi market ticker
+
+Use a **market** ticker, not an event or series ticker. Market tickers appear in Kalshi market URLs and API responses, and look like `KXFEDDECISION-26OCT-H25` or `KXRECSSNBER-27`. The example buttons in the app use real markets, but markets close over time, so an example may stop working.
+
+## How metrics are calculated
+
+All calculations are pure functions in `lib/analytics/`.
+
+| Metric | Definition |
+| --- | --- |
+| Implied probability | Midpoint of YES bid and YES ask: `(yesBid + yesAsk) / 2`. If one side of the book is empty, the last trade price is used. |
+| 1h / 24h change | Current probability minus the hourly probability 1h / 24h ago, in percentage points. |
+| Uncertainty | Binary entropy `H(p) = −p·log₂p − (1−p)·log₂(1−p)`, scaled to 0–100. 100 at 50%, 0 at 0% or 100%. |
+| Realized volatility | Sample standard deviation of the last 30 daily log returns, annualized with √252. |
+| Alignment | The two hourly series are merged on the union of their timestamps, each carrying forward its last value (an as-of join). |
+
+## Project structure
+
+```
+app/                  Next.js routes (page.tsx renders the dashboard server-side)
+components/           UI components (cards, form, panels)
+  charts/             Recharts client components
+lib/
+  kalshi/             Kalshi API client + normalized types (server-only)
+  market-data/        Twelve Data client + normalized types (server-only)
+  analytics/          Pure metric and alignment functions
+  validation.ts       Ticker input validation
+  format.ts           Number and date formatting
+```
+
+Third-party API calls live in `lib/kalshi` and `lib/market-data`, run only on the server (enforced with `server-only`), and return normalized TypeScript types. The UI never calls third-party APIs directly.
+
+## Deploying to Vercel
+
+1. Import the GitHub repository in Vercel.
+2. Add `TWELVE_DATA_API_KEY` under **Project → Settings → Environment Variables**.
+3. Deploy. Vercel detects Next.js and pnpm automatically.
+
+## Scope
+
+This is an MVP. It has no trading functionality, user accounts, database, or automatic event-to-stock mapping.
