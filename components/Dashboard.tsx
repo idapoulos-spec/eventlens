@@ -1,13 +1,14 @@
 import { Suspense, type ReactNode } from "react";
 import { alignSeries } from "@/lib/analytics";
 import { formatDateTime } from "@/lib/format";
-import { getKalshiOverview, type KalshiOverview } from "@/lib/kalshi";
+import { getKalshiOverview, getKalshiResearchHistory, type KalshiOverview } from "@/lib/kalshi";
 import { getStockOverview, type StockOverview } from "@/lib/market-data";
 import type { Result } from "@/lib/result";
 import { ComparisonChart } from "./charts/ComparisonChart";
 import { SingleSeriesChart } from "./charts/SingleSeriesChart";
 import { tradingDayClose } from "./charts/time";
 import { KalshiPanel } from "./KalshiPanel";
+import { Research, ResearchCard } from "./Research";
 import { StockPanel } from "./StockPanel";
 import { Card, Notice } from "./ui";
 
@@ -15,7 +16,7 @@ type KalshiResult = Promise<Result<KalshiOverview>>;
 type StockResult = Promise<Result<StockOverview>>;
 
 /**
- * Starts both data requests at once. Each section waits only for the data it
+ * Starts every data request at once. Each section waits only for the data it
  * needs, so a slow Kalshi response never hides the stock data, or vice versa.
  * While a section loads, its card already shows its title, and a placeholder
  * the size of its content, so the page doesn't jump as sections arrive.
@@ -23,6 +24,8 @@ type StockResult = Promise<Result<StockOverview>>;
 export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) {
   const kalshiData = getKalshiOverview(kalshi);
   const stockData = getStockOverview(stock);
+  // Research's 90-day history is a separate request, so it never slows the sections above.
+  const researchHistory = getKalshiResearchHistory(kalshi);
 
   return (
     <div className="grid gap-4 sm:gap-5">
@@ -65,6 +68,16 @@ export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) 
           <StockHistory data={stockData} stock={stock} />
         </Suspense>
       </div>
+
+      <Suspense
+        fallback={
+          <ResearchCard>
+            <ChartSkeleton label="Loading research" className="h-72" />
+          </ResearchCard>
+        }
+      >
+        <Research kalshiData={kalshiData} stockData={stockData} historyData={researchHistory} stock={stock} kalshi={kalshi} />
+      </Suspense>
 
       <Suspense fallback={null}>
         <SourcesNote kalshiData={kalshiData} stockData={stockData} />

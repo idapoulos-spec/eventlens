@@ -10,13 +10,24 @@ export interface TooltipRow {
 }
 
 /**
- * Tooltip body: timestamp (or trading date, for daily bars), then one row per series
- * with a line key, value first.
+ * Tooltip body: timestamp (or trading date, for daily bars, or a custom heading), then
+ * one row per series with a line key, value first.
  */
-export function ChartTooltip({ t, rows, daily = false }: { t: number; rows: TooltipRow[]; daily?: boolean }) {
+export function ChartTooltip({
+  t,
+  rows,
+  daily = false,
+  heading,
+}: {
+  t?: number;
+  rows: TooltipRow[];
+  daily?: boolean;
+  heading?: string;
+}) {
+  const title = heading ?? (t === undefined ? "" : daily ? formatTradingDate(t) : formatDateTime(t));
   return (
     <div className="rounded-lg border border-border bg-surface-raised px-3 py-2 text-xs shadow-lg">
-      <p className="mb-1.5 text-ink-muted">{daily ? formatTradingDate(t) : formatDateTime(t)}</p>
+      <p className="mb-1.5 text-ink-muted">{title}</p>
       {rows.map((row) => (
         <p key={row.label} className="flex items-center gap-2 py-0.5">
           <span aria-hidden className="h-0.5 w-3 rounded-full" style={{ background: row.color }} />
@@ -31,6 +42,7 @@ export function ChartTooltip({ t, rows, daily = false }: { t: number; rows: Tool
 export const CHART_COLORS = {
   kalshi: "var(--series-kalshi)",
   stock: "var(--series-stock)",
+  correlation: "var(--series-correlation)",
   grid: "var(--grid)",
   axis: "var(--axis)",
   muted: "var(--ink-muted)",

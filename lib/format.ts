@@ -42,6 +42,11 @@ export function formatWait(seconds: number): string {
 // stock markets, so they read the same whatever time zone the server runs in (UTC on Vercel).
 export const DISPLAY_TIME_ZONE = "America/New_York";
 
+/** A New York calendar date, e.g. "Sep 27". */
+export function formatShortDate(ms: number): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone: DISPLAY_TIME_ZONE, month: "short", day: "numeric" }).format(ms);
+}
+
 /** e.g. "Sep 27, 9:30 PM EDT", or "Sep 27, 2026, 9:30 PM EDT" with the year. */
 export function formatDateTime(ms: number, { withYear = false } = {}): string {
   return new Intl.DateTimeFormat("en-US", {

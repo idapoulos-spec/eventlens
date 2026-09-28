@@ -14,6 +14,8 @@
   --axis: #383835;
   --series-kalshi: #3987e5;
   --series-stock: #d95926;
+  /* Research charts: a correlation between the two series, so neither series' color. */
+  --series-correlation: #199e70;
   --up: #0ca30c;
   --down: #e66767;
   --warn: #fab219;
@@ -29,6 +31,7 @@
   --color-ink-muted: var(--ink-muted);
   --color-series-kalshi: var(--series-kalshi);
   --color-series-stock: var(--series-stock);
+  --color-series-correlation: var(--series-correlation);
   --color-up: var(--up);
   --color-down: var(--down);
   --color-warn: var(--warn);
