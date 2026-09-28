@@ -18,10 +18,19 @@ export interface KalshiMarket {
   closeTime: string | null;
 }
 
+/** How a historical probability point was estimated. */
+export type PointSource = Exclude<ProbabilitySource, "unavailable">;
+
+export interface KalshiPoint extends TimePoint {
+  source: PointSource;
+}
+
 /** Why a probability change could not be computed. */
 export type ChangeUnavailable = "market_not_live" | "no_probability" | "history_failed" | "not_enough_history";
 
 export interface KalshiChange extends ProbabilityChange {
+  /** How the probability at `from` was estimated; it may differ from the current probability's source. */
+  fromSource: PointSource | null;
   unavailable: ChangeUnavailable | null;
 }
 
@@ -33,9 +42,11 @@ export interface KalshiOverview {
   /** Live implied probability; null unless the market is open. */
   probability: number | null;
   probabilitySource: ProbabilitySource;
-  /** Compared against minute-level history. */
+  /** When the most recent trade happened (ms); null if the market has never traded or the lookup failed. */
+  lastTradeAt: number | null;
+  /** Compared against minute-level history, so the reference point is the one in effect an hour ago. */
   change1h: KalshiChange;
-  /** Compared against hourly history, so the reference point is 24–25 hours old. */
+  /** Compared against minute-level history, so the reference point is the one in effect 24 hours ago. */
   change24h: KalshiChange;
   /** Null unless the market is open. */
   uncertainty: number | null;
@@ -62,14 +73,14 @@ export interface RawMarket {
   close_time?: string | null;
 }
 
-export interface RawEvent {
-  event_ticker: string;
-  series_ticker: string;
-  title?: string;
+export interface RawTrade {
+  created_time: string;
 }
 
 interface RawOhlc {
   close_dollars?: string | null;
+  /** Close of the last period with a trade; the only price field when no trade happened in this period. */
+  previous_dollars?: string | null;
 }
 
 export interface RawCandlestick {
@@ -77,4 +88,9 @@ export interface RawCandlestick {
   yes_bid?: RawOhlc;
   yes_ask?: RawOhlc;
   price?: RawOhlc;
+}
+
+export interface RawMarketCandlesticks {
+  market_ticker: string;
+  candlesticks?: RawCandlestick[];
 }
