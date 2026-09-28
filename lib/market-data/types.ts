@@ -27,8 +27,13 @@ export interface StockBar {
 
 export interface StockOverview {
   quote: StockQuote;
-  /** Hourly bars covering roughly the last week, oldest first. */
+  /** Hourly bars covering roughly the last two weeks, oldest first. The last may still be forming. */
   intraday: StockBar[];
+  /**
+   * 30-minute bars covering roughly the last 70 sessions (regular hours only), oldest
+   * first. The last may still be forming.
+   */
+  halfHourly: StockBar[];
   /**
    * Daily bars of completed sessions covering roughly the last three months, oldest first.
    * While the market is open, today's unfinished bar is left out.

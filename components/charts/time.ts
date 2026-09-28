@@ -2,6 +2,8 @@ import { DISPLAY_TIME_ZONE } from "@/lib/format";
 // Imported directly: the lib/market-data index also loads the server-only Twelve Data client.
 import { timeZoneOffsetMs } from "@/lib/market-data/session";
 
+export { tradingDayClose } from "@/lib/market-data/session";
+
 // Chart axes use the same New York time zone as the tooltips (see formatDateTime), so a
 // tick labeled "Sep 25" sits at midnight New York time whatever time zone the viewer is in.
 
@@ -33,15 +35,6 @@ function newYorkTime(date: Date, hour = 0, minute = 0): number {
 function newYorkDate(t: number): Date {
   const local = new Date(t + offsetMs(t));
   return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()));
-}
-
-/**
- * Daily bars are stamped at 00:00 UTC of the trading date, which is the previous evening
- * in New York. Re-stamp one at the 4:00 PM New York close of its trading date, so it
- * reads as the right day on New York-time axes and tooltips.
- */
-export function tradingDayClose(utcMidnight: number): number {
-  return newYorkTime(new Date(utcMidnight), 16, 0);
 }
 
 /** Axis label: the date at New York midnight (e.g. "Sep 25"), otherwise the hour (e.g. "6 PM"). */

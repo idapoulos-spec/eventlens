@@ -4,14 +4,20 @@ import { realizedVolatility, relativeVolume } from "@/lib/analytics";
 import { cachedFor, LIVE } from "@/lib/fetch-cache";
 import { isTimeout, timeoutSignal } from "@/lib/request-timeout";
 import { fail, ok, type Result } from "@/lib/result";
-import { barCloseTime } from "./session";
+import { barCloseTime, toHourlyBars } from "./session";
 import type { RawError, RawQuote, RawTimeSeries, StockBar, StockOverview, StockQuote } from "./types";
 
 const TWELVE_DATA_BASE_URL = "https://api.twelvedata.com";
-const HOUR_MS = 60 * 60 * 1000;
+const HALF_HOUR_MS = 30 * 60 * 1000;
 const VOL_WINDOW_DAYS = 30;
+// 900 half-hour bars is about 70 sessions (13 a day), enough for the 90-day research window.
+// A time series costs one API credit whatever its length.
+const HALF_HOURLY_BARS = 900;
+// Hourly bars for the 7-day comparison chart: about 10 sessions, as before.
+const HOURLY_BARS = 70;
+const DAILY_BARS = 90;
 
-type Interval = "1h" | "1day";
+type Interval = "30min" | "1day";
 
 class TwelveDataError extends Error {
   constructor(
@@ -87,18 +93,23 @@ function normalizeQuote(raw: RawQuote): StockQuote {
   };
 }
 
+interface Series {
+  bars: StockBar[];
+  exchangeTimeZone: string | undefined;
+}
+
 /**
  * Twelve Data returns bar open times, newest first. Stamp intraday bars at their
  * close time (see barCloseTime) and return them oldest first.
  */
-function normalizeSeries(raw: RawTimeSeries, interval: Interval): StockBar[] {
+function normalizeSeries(raw: RawTimeSeries, interval: Interval): Series {
   const exchangeTimeZone = raw.meta?.exchange_timezone;
-  return raw.values
+  const bars = raw.values
     .map((v) => {
       // Requested with timezone=UTC, so datetimes are UTC.
       const open = parseDatetime(v.datetime);
       return {
-        t: interval === "1h" ? barCloseTime(open, HOUR_MS, exchangeTimeZone) : open,
+        t: interval === "30min" ? barCloseTime(open, HALF_HOUR_MS, exchangeTimeZone) : open,
         open: Number(v.open),
         high: Number(v.high),
         low: Number(v.low),
@@ -108,6 +119,7 @@ function normalizeSeries(raw: RawTimeSeries, interval: Interval): StockBar[] {
     })
     .filter((b) => Number.isFinite(b.t) && Number.isFinite(b.close))
     .sort((a, b) => a.t - b.t);
+  return { bars, exchangeTimeZone };
 }
 
 function getTimeSeries(symbol: string, interval: Interval, outputsize: number, apiKey: string) {
@@ -160,10 +172,13 @@ export async function getStockOverview(symbol: string): Promise<Result<StockOver
   }
 
   try {
-    const [rawQuote, intraday, allDaily] = await Promise.all([
+    // Half-hour bars serve both the hourly comparison chart (combined into Twelve Data's
+    // hourly bars) and research, whose top-of-hour closes line up with Kalshi's hourly
+    // candles, so research costs no extra API credit.
+    const [rawQuote, halfHourly, { bars: allDaily }] = await Promise.all([
       twelveGet<RawQuote>("/quote", { symbol }, apiKey, LIVE),
-      getTimeSeries(symbol, "1h", 70, apiKey),
-      getTimeSeries(symbol, "1day", 90, apiKey),
+      getTimeSeries(symbol, "30min", HALF_HOURLY_BARS, apiKey),
+      getTimeSeries(symbol, "1day", DAILY_BARS, apiKey),
     ]);
 
     const quote = normalizeQuote(rawQuote);
@@ -176,7 +191,8 @@ export async function getStockOverview(symbol: string): Promise<Result<StockOver
 
     return ok({
       quote,
-      intraday,
+      intraday: toHourlyBars(halfHourly.bars, HALF_HOUR_MS, halfHourly.exchangeTimeZone).slice(-HOURLY_BARS),
+      halfHourly: halfHourly.bars,
       daily,
       realizedVol30d: realizedVolatility(volWindow),
       // Today's volume isn't comparable with a full-day average until the session ends.
