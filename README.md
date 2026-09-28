@@ -7,6 +7,7 @@ Enter a stock ticker (e.g. `NVDA`) and a Kalshi market ticker (e.g. `KXFEDDECISI
 - **Kalshi market:** title, implied probability, YES bid / ask, last price, 24-hour volume, open interest, 1-hour and 24-hour probability change, and an event-uncertainty score
 - **Stock:** current price, daily change, volume (compared with average volume once the market has closed), and 30-day realized volatility (via [Twelve Data](https://twelvedata.com))
 - **Charts:** Kalshi probability vs. stock return over the last 7 days, aligned on timestamps, plus the probability history and ~3 months of daily closes
+- **Research:** how Kalshi probability changes relate to stock returns over 7, 30, or 90 days (hourly or daily): lead-lag correlation, rolling correlation, and an event study around Kalshi jumps, with sample sizes, caveats, and a CSV export of the aligned data
 
 > Experimental market-research tool. Metrics are informational and are not investment recommendations.
 
@@ -44,7 +45,7 @@ Stock data comes from Twelve Data. Kalshi data uses public endpoints and needs n
 
 The key is only read on the server and is never sent to the browser. Without it, the app still runs: Kalshi data loads and the stock section explains how to add the key.
 
-The free Twelve Data plan allows 8 requests per minute. Each analysis uses 3 (quote, hourly bars, daily bars). Current quotes from Twelve Data and Kalshi are fetched fresh on every request; price history is cached for 60 seconds, so re-analyzing the same ticker within a minute uses only 1.
+The free Twelve Data plan allows 8 requests per minute. Each analysis uses 3 (quote, 30-minute bars, daily bars). Current quotes from Twelve Data and Kalshi are fetched fresh on every request; price history is cached for 60 seconds, so re-analyzing the same ticker within a minute uses only 1. The Research section adds no Twelve Data requests: changing its window, resolution, or jump size, and downloading the CSV, all happen in the browser with data that's already loaded.
 
 ### Run locally
 
@@ -81,7 +82,69 @@ All calculations are pure functions in `lib/analytics/`.
 | Uncertainty | Binary entropy `H(p) = −p·log₂p − (1−p)·log₂(1−p)`, scaled to 0–100. 100 at 50%, 0 at 0% or 100%. |
 | Realized volatility | Sample standard deviation of the last 30 daily log returns, annualized with √252. Uses completed sessions only: while the market is open, today's unfinished bar is left out (the daily close chart leaves it out too). |
 | Relative volume | The latest session's volume as a percentage of average volume. Not shown while the market is open: today's volume is still accumulating, and on Twelve Data's free plan it can miss part of the market, so it isn't comparable with the average until the close. |
-| Alignment | The two hourly series are merged on the union of their timestamps, each carrying forward its last value (an as-of join). Stock bars are stamped at their close time; for US stocks the shortened last bar of the day is stamped at the 4:00 PM New York close. |
+| Alignment | The two hourly series are merged on the union of their timestamps, each carrying forward its last value (an as-of join). Stock bars are stamped at their close time; for US stocks the shortened last bar of the day is stamped at the 4:00 PM New York close. Hourly bars are built from Twelve Data's 30-minute bars, grouped the same way Twelve Data groups its own hourly bars. |
+
+## Research section
+
+The Research section measures how Kalshi probability changes relate to stock returns. Correlation is not causation, and nothing here is a prediction or a trading signal: other news can move both at once.
+
+### How the data is lined up
+
+The comparison chart above carries each series forward, so the stock looks flat overnight while Kalshi keeps moving. That's fine for a picture but would distort statistics, so research compares the two **only at moments where both have a real observation**:
+
+- **Hourly:** the stock's top-of-hour closes during trading hours (10:00 AM to 4:00 PM New York), from 30-minute bars. Kalshi's hourly candles end on the hour, so these line up exactly; Twelve Data's own hourly bars close at :30 and never would.
+- **Daily:** each session's close. The actual close time comes from the 30-minute bars, so early-close days (e.g. 1:00 PM) are read at the right moment.
+- **Kalshi's value** at each of those moments is the YES bid/ask midpoint in effect then. Kalshi only writes a candle when something changes (every gap checked reopened at the previous close), so a quiet hour's value is the last candle's close, not a guess.
+
+Left out, and counted on the page:
+
+- **Intervals that span time the stock wasn't trading** (hourly mode: overnight, weekends, holidays, halts). Hourly results are intraday only, so Kalshi moves on overnight news, and the first half hour (9:30–10:00, which has no Kalshi value at 9:30), are not included there. Daily close-to-close returns include overnight moves.
+- **Kalshi values estimated from the last trade** (when the book is one-sided). The trade may be hours or days old.
+- **Times before Kalshi's first candle** in the loaded history, and **after the market's close time**.
+- **Stock bars that are still forming** (or closed less than 5 minutes ago).
+
+### Metrics
+
+| Metric | Definition |
+| --- | --- |
+| Changes | For each interval between consecutive observations, one grid slot apart (one trading hour, or consecutive sessions): the Kalshi probability change in percentage points, and the stock's log return `ln(P₁/P₀)`. |
+| Lead-lag | Pearson correlation of the Kalshi change in slot *s* with the stock return in slot *s + k*, for *k* from −3 to +3 hours (hourly) or −5 to +5 trading days (daily). **Positive *k*: Kalshi moved first. Negative *k*: the stock moved first.** Lags never pair across a gap (e.g. overnight). Each bar has dashed marks at ±1.96/√n for its own number of pairs: the rough 95% range if there were no relationship, assuming independent observations. With 7 or 11 lags, one crossing its range by chance alone isn't unusual (about 30% or 43% odds), and the chart says so. |
+| Rolling correlation | Same-interval correlation over the last 18 hourly intervals (about 3 sessions) or 20 daily intervals (about a month). Shown only with at least 10 more intervals than one window. |
+| Event study | A jump is a Kalshi change of at least the chosen size (1, 2, 3, 5, or 10 pp; default 2 pp hourly, 3 pp daily) in one interval. For each jump, the stock's cumulative log return from the close before the jump, over 6 bars (hourly) or 5 sessions (daily) each side, measured in trading bars, so a window can span a night or weekend. Rises and falls are averaged separately. A jump within that many bars of an earlier one, or too close to the edge of the data, is skipped and counted. The **baseline** is the same path averaged over every window of the same length in the period, jump or not: the stock's normal drift, to compare the jump paths with. |
+| Sample size | Every result shows its *n*. Fewer than 10 pairs: no correlation is reported. Fewer than 30: flagged as a small sample. Fewer than 10 non-zero Kalshi changes: flagged, because a few moves decide the result. Fewer than 10 jumps: flagged as too few to generalize. |
+
+**Reading the sign.** Every correlation and event-study direction depends on what YES means for the chosen market. Positive means the stock tended to rise when the chance of YES rose; if YES is bad news for the stock, negative values are what you'd expect. The page quotes the market's YES label next to each chart.
+
+### Data limitations
+
+- **Most Kalshi hourly changes are zero, and moves come in 0.5 pp steps** (1¢ ticks, midpoint). In one check of the Fed October market, 104 of 384 intraday hours over 90 days moved at all. Correlations can rest on a few moves, and event studies often have fewer than 10 jumps.
+- **Typical sample sizes:** 7 days hourly ≈ 30 intervals, 30 days hourly ≈ 120, 90 days hourly ≈ 370, 30 days daily ≈ 20, 90 days daily ≈ 60. The daily view isn't offered for 7 days (about 5 closes).
+- **Market lifetime:** a market younger than the window covers less of it (the page shows the actual date range). Stock data covers the last ~90 days, so a market that settled before then won't overlap.
+- **History depth:** Kalshi returns at most 10,000 candles per request, so 90 days (plus a week before, to know the probability in effect when the window starts) is one request of hourly candles. The Twelve Data free plan returns up to 900 30-minute bars (about 70 sessions) of regular-hours data.
+
+### CSV export
+
+**Download CSV** saves the aligned dataset for the selected window and resolution, e.g. `eventlens_NVDA_KXFEDDECISION-26OCT-H25_90d_hourly_2026-09-28.csv`. It has one row per stock observation, including excluded rows with the reason, so the analysis can be redone or filtered differently elsewhere:
+
+| Column | Meaning |
+| --- | --- |
+| `timestamp_utc`, `timestamp_ny` | Observation time (ISO 8601; New York time with its UTC offset) |
+| `resolution` | `hourly` or `daily` |
+| `stock_close` | Stock price at that time |
+| `kalshi_probability` | Kalshi probability in effect (0–1); empty before the first candle |
+| `kalshi_source` | `midpoint` or `last_price` |
+| `kalshi_as_of_utc` | When the Kalshi candle that value comes from ended. Filter `kalshi_as_of_utc == timestamp_utc` to keep only hours where Kalshi wrote a candle. |
+| `kalshi_valid`, `kalshi_exclusion` | Whether the Kalshi value is usable, and why not (`before_kalshi`, `market_closed`, `kalshi_last_price`) |
+| `interval_valid`, `interval_exclusion` | Whether the interval ending at this row is used, and why not (`first_row`, `non_trading`, or a Kalshi reason) |
+| `prob_change_pp`, `stock_log_return` | Changes over the interval ending at this row, filled in whenever both ends have values, even for excluded intervals |
+
+```python
+import pandas as pd
+
+df = pd.read_csv("eventlens_NVDA_KXFEDDECISION-26OCT-H25_90d_hourly_2026-09-28.csv", parse_dates=["timestamp_utc"])
+used = df[df.interval_valid]
+print(len(used), used.prob_change_pp.corr(used.stock_log_return))
+```
 
 ## Project structure
 
@@ -89,10 +152,11 @@ All calculations are pure functions in `lib/analytics/`.
 app/                  Next.js routes (page.tsx renders the dashboard server-side)
 components/           UI components (cards, form, panels)
   charts/             Recharts client components
+  research/           Research panel (window, resolution, analyses, CSV download)
 lib/
   kalshi/             Kalshi API client + normalized types (server-only)
   market-data/        Twelve Data client + normalized types (server-only)
-  analytics/          Pure metric and alignment functions
+  analytics/          Pure metric, alignment, and research functions (and the CSV export)
   validation.ts       Ticker input validation
   format.ts           Number and date formatting
 ```
