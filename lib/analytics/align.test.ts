@@ -22,6 +22,11 @@ describe("mergeSeries", () => {
     expect(mergeSeries(pts([1, 0.1], [1, 0.15]))).toEqual(pts([1, 0.15]));
   });
 
+  it("keeps extra fields of the winning point", () => {
+    const merged = mergeSeries([{ t: 1, value: 0.1, source: "midpoint" }], [{ t: 1, value: 0.2, source: "last_price" }]);
+    expect(merged).toEqual([{ t: 1, value: 0.2, source: "last_price" }]);
+  });
+
   it("does not mutate its inputs", () => {
     const a = pts([2, 0.2], [1, 0.1]);
     const b = pts([2, 0.25]);

@@ -12,13 +12,13 @@ export interface AlignedPoint {
 }
 
 /**
- * Merge time series into one chronologically sorted series.
+ * Merge time series into one chronologically sorted series. Points keep any extra fields.
  * When several points share a timestamp, the one from the later series wins.
  */
-export function mergeSeries(...series: TimePoint[][]): TimePoint[] {
-  const byTime = new Map<number, number>();
-  for (const s of series) for (const p of s) byTime.set(p.t, p.value);
-  return Array.from(byTime, ([t, value]) => ({ t, value })).sort((a, b) => a.t - b.t);
+export function mergeSeries<P extends TimePoint>(...series: P[][]): P[] {
+  const byTime = new Map<number, P>();
+  for (const s of series) for (const p of s) byTime.set(p.t, p);
+  return Array.from(byTime.values()).sort((a, b) => a.t - b.t);
 }
 
 /**

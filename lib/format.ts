@@ -54,7 +54,3 @@ export function formatDateTime(ms: number, { withYear = false } = {}): string {
     timeZoneName: "short",
   }).format(ms);
 }
-
-export function formatDate(ms: number): string {
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(ms);
-}

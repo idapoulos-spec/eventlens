@@ -7,7 +7,7 @@ import { formatWait } from "@/lib/format";
 import { validateKalshiTicker, validateStockTicker } from "@/lib/validation";
 
 // Cap on how long Vercel lets this page's server function run. The worst case is about
-// 6 seconds: Kalshi's lookups run in parallel, each with a 6-second timeout.
+// 6 seconds: every Kalshi and Twelve Data request starts at once, each with a 6-second timeout.
 export const maxDuration = 30;
 
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
@@ -83,7 +83,7 @@ const FEATURES = [
   {
     dot: "bg-series-stock",
     title: "Stock",
-    text: "Price, daily change, volume against average, and 30-day realized volatility.",
+    text: "Price, daily change, volume (compared with average after the close), and 30-day realized volatility.",
   },
   {
     dot: "bg-linear-to-r from-series-kalshi from-50% to-series-stock to-50%",

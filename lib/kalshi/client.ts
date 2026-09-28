@@ -1,6 +1,6 @@
 import "server-only";
 
-import { HOUR_MS, impliedProbability, probabilityChange, uncertaintyScore } from "@/lib/analytics";
+import { HOUR_MS, impliedProbability, mergeSeries, probabilityChange, uncertaintyScore } from "@/lib/analytics";
 import { cachedFor, LIVE } from "@/lib/fetch-cache";
 import { isTimeout, timeoutSignal } from "@/lib/request-timeout";
 import { fail, ok, type Result } from "@/lib/result";
@@ -77,13 +77,6 @@ function normalizeCandles(candles: RawCandlestick[]): KalshiPoint[] {
     if (value !== null && source !== "unavailable") points.push({ t: c.end_period_ts * 1000, value, source });
   }
   return points.sort((a, b) => a.t - b.t);
-}
-
-/** Merge point series chronologically; on a shared timestamp the later series wins. */
-function mergePoints(...series: KalshiPoint[][]): KalshiPoint[] {
-  const byTime = new Map<number, KalshiPoint>();
-  for (const s of series) for (const p of s) byTime.set(p.t, p);
-  return Array.from(byTime.values()).sort((a, b) => a.t - b.t);
 }
 
 export async function getMarket(ticker: string): Promise<KalshiMarket> {
@@ -175,7 +168,7 @@ function changeOver(
  * Without those minute candles, show no change rather than an imprecise one.
  */
 function withMinutes(hourly: KalshiPoint[] | null, minutes: KalshiPoint[] | null): KalshiPoint[] | null {
-  return minutes === null ? null : mergePoints(hourly ?? [], minutes);
+  return minutes === null ? null : mergeSeries(hourly ?? [], minutes);
 }
 
 /** Market snapshot, history, and derived metrics for one Kalshi market. */
