@@ -31,9 +31,16 @@ export interface StockOverview {
   intraday: StockBar[];
   /** Daily bars covering roughly the last three months, oldest first. */
   daily: StockBar[];
-  /** Annualized 30-trading-day realized volatility, in percent. */
+  /**
+   * Annualized 30-trading-day realized volatility, in percent, from completed sessions
+   * only: while the market is open, today's unfinished daily bar is left out.
+   */
   realizedVol30d: number | null;
-  /** Today's volume as a percentage of average volume. */
+  /**
+   * The latest session's volume as a percentage of average volume. Null while the market
+   * is open: today's volume is still accumulating, and Twelve Data's intraday count can
+   * miss part of the market, so it isn't comparable with the average until the close.
+   */
   relativeVolume: number | null;
   fetchedAt: number;
 }
@@ -48,6 +55,8 @@ export interface RawError {
 
 export interface RawQuote {
   symbol: string;
+  /** Trading date of the quote's session, "YYYY-MM-DD". */
+  datetime?: string;
   name?: string;
   exchange?: string;
   currency?: string;

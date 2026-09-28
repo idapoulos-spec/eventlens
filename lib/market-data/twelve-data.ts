@@ -60,6 +60,11 @@ async function twelveGet<T>(
   return body as T;
 }
 
+/** Twelve Data datetime ("YYYY-MM-DD" or "YYYY-MM-DD HH:mm:ss", read as UTC) in milliseconds. */
+function parseDatetime(datetime: string): number {
+  return Date.parse(datetime.length > 10 ? `${datetime.replace(" ", "T")}Z` : `${datetime}T00:00:00Z`);
+}
+
 function num(value: string | undefined): number | null {
   if (value === undefined || value === "") return null;
   const n = Number(value);
@@ -90,9 +95,8 @@ function normalizeSeries(raw: RawTimeSeries, interval: Interval): StockBar[] {
   const exchangeTimeZone = raw.meta?.exchange_timezone;
   return raw.values
     .map((v) => {
-      // Requested with timezone=UTC, so datetimes are UTC ("YYYY-MM-DD" or "YYYY-MM-DD HH:mm:ss").
-      const iso = v.datetime.length > 10 ? `${v.datetime.replace(" ", "T")}Z` : `${v.datetime}T00:00:00Z`;
-      const open = Date.parse(iso);
+      // Requested with timezone=UTC, so datetimes are UTC.
+      const open = parseDatetime(v.datetime);
       return {
         t: interval === "1h" ? barCloseTime(open, HOUR_MS, exchangeTimeZone) : open,
         open: Number(v.open),
@@ -163,14 +167,19 @@ export async function getStockOverview(symbol: string): Promise<Result<StockOver
     ]);
 
     const quote = normalizeQuote(rawQuote);
-    const volWindow = daily.slice(-(VOL_WINDOW_DAYS + 1)).map((b) => b.close);
+    // While the market is open, the daily bar for the quote's session is still forming and
+    // its close is just the latest price, so volatility uses completed sessions only.
+    const session = rawQuote.datetime ? parseDatetime(rawQuote.datetime) : null;
+    const completed = quote.isMarketOpen ? daily.filter((b) => b.t !== session) : daily;
+    const volWindow = completed.slice(-(VOL_WINDOW_DAYS + 1)).map((b) => b.close);
 
     return ok({
       quote,
       intraday,
       daily,
       realizedVol30d: realizedVolatility(volWindow),
-      relativeVolume: relativeVolume(quote.volume, quote.averageVolume),
+      // Today's volume isn't comparable with a full-day average until the session ends.
+      relativeVolume: quote.isMarketOpen ? null : relativeVolume(quote.volume, quote.averageVolume),
       fetchedAt: Date.now(),
     });
   } catch (err) {
