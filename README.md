@@ -44,7 +44,7 @@ Stock data comes from Twelve Data. Kalshi data uses public endpoints and needs n
 
 The key is only read on the server and is never sent to the browser. Without it, the app still runs: Kalshi data loads and the stock section explains how to add the key.
 
-The free Twelve Data plan allows 8 requests per minute. Each analysis uses 3 (quote, hourly bars, daily bars), and responses are cached for 60 seconds.
+The free Twelve Data plan allows 8 requests per minute. Each analysis uses 3 (quote, hourly bars, daily bars). Current quotes from Twelve Data and Kalshi are fetched fresh on every request; price history is cached for 60 seconds, so re-analyzing the same ticker within a minute uses only 1.
 
 ### Run locally
 

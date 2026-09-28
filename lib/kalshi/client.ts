@@ -9,6 +9,7 @@ import {
   type ProbabilityChange,
   type TimePoint,
 } from "@/lib/analytics";
+import { cachedFor, LIVE } from "@/lib/fetch-cache";
 import { fail, ok, type Result } from "@/lib/result";
 import type { KalshiMarket, KalshiOverview, RawCandlestick, RawEvent, RawMarket } from "./types";
 
@@ -25,10 +26,10 @@ class KalshiHttpError extends Error {
   }
 }
 
-async function kalshiGet<T>(path: string, revalidateSeconds: number): Promise<T> {
+async function kalshiGet<T>(path: string, cache: RequestInit): Promise<T> {
   const res = await fetch(`${KALSHI_BASE_URL}${path}`, {
+    ...cache,
     headers: { Accept: "application/json" },
-    next: { revalidate: revalidateSeconds },
   });
   if (!res.ok) throw new KalshiHttpError(res.status);
   return res.json() as Promise<T>;
@@ -70,13 +71,13 @@ function normalizeCandles(candles: RawCandlestick[]): TimePoint[] {
 }
 
 export async function getMarket(ticker: string): Promise<KalshiMarket> {
-  const data = await kalshiGet<{ market: RawMarket }>(`/markets/${encodeURIComponent(ticker)}`, 30);
+  const data = await kalshiGet<{ market: RawMarket }>(`/markets/${encodeURIComponent(ticker)}`, LIVE);
   return normalizeMarket(data.market);
 }
 
 /** Candlesticks are keyed by series, so resolve the series via the market's event. */
 async function getSeriesTicker(eventTicker: string): Promise<string> {
-  const { event } = await kalshiGet<{ event: RawEvent }>(`/events/${encodeURIComponent(eventTicker)}`, 3600);
+  const { event } = await kalshiGet<{ event: RawEvent }>(`/events/${encodeURIComponent(eventTicker)}`, cachedFor(3600));
   return event.series_ticker;
 }
 
@@ -95,7 +96,7 @@ async function getCandles(
   });
   const data = await kalshiGet<{ candlesticks?: RawCandlestick[] }>(
     `/series/${encodeURIComponent(seriesTicker)}/markets/${encodeURIComponent(marketTicker)}/candlesticks?${query}`,
-    60,
+    cachedFor(60),
   );
   return normalizeCandles(data.candlesticks ?? []);
 }

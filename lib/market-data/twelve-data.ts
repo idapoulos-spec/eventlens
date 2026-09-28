@@ -1,6 +1,7 @@
 import "server-only";
 
 import { realizedVolatility, relativeVolume } from "@/lib/analytics";
+import { cachedFor, LIVE } from "@/lib/fetch-cache";
 import { fail, ok, type Result } from "@/lib/result";
 import { barCloseTime } from "./session";
 import type { RawError, RawQuote, RawTimeSeries, StockBar, StockOverview, StockQuote } from "./types";
@@ -25,9 +26,14 @@ function getApiKey(): string | null {
   return key ? key : null;
 }
 
-async function twelveGet<T>(path: string, params: Record<string, string>, apiKey: string): Promise<T> {
+async function twelveGet<T>(
+  path: string,
+  params: Record<string, string>,
+  apiKey: string,
+  cache: RequestInit,
+): Promise<T> {
   const query = new URLSearchParams({ ...params, apikey: apiKey });
-  const res = await fetch(`${TWELVE_DATA_BASE_URL}${path}?${query}`, { next: { revalidate: 60 } });
+  const res = await fetch(`${TWELVE_DATA_BASE_URL}${path}?${query}`, cache);
   const body = (await res.json().catch(() => null)) as T | RawError | null;
   if (!body) throw new TwelveDataError(res.status, "Invalid response from Twelve Data");
   // Twelve Data reports errors in the body, sometimes with HTTP 200.
@@ -90,6 +96,7 @@ function getTimeSeries(symbol: string, interval: Interval, outputsize: number, a
     "/time_series",
     { symbol, interval, outputsize: String(outputsize), timezone: "UTC" },
     apiKey,
+    cachedFor(60),
   ).then((raw) => normalizeSeries(raw, interval));
 }
 
@@ -121,7 +128,7 @@ export async function getStockOverview(symbol: string): Promise<Result<StockOver
 
   try {
     const [rawQuote, intraday, daily] = await Promise.all([
-      twelveGet<RawQuote>("/quote", { symbol }, apiKey),
+      twelveGet<RawQuote>("/quote", { symbol }, apiKey, LIVE),
       getTimeSeries(symbol, "1h", 70, apiKey),
       getTimeSeries(symbol, "1day", 90, apiKey),
     ]);
