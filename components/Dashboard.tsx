@@ -111,9 +111,10 @@ function KalshiHistoryCard({ children }: { children: ReactNode }) {
   );
 }
 
+// Completed sessions only: while the market is open, today's bar is still forming (see getStockOverview).
 function StockHistoryCard({ stock, children }: { stock: string; children: ReactNode }) {
   return (
-    <Card title={`${stock} daily close`} subtitle="Last ~3 months">
+    <Card title={`${stock} daily close`} subtitle="Last ~3 months · completed sessions">
       {children}
     </Card>
   );

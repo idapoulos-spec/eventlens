@@ -29,12 +29,12 @@ export interface StockOverview {
   quote: StockQuote;
   /** Hourly bars covering roughly the last week, oldest first. */
   intraday: StockBar[];
-  /** Daily bars covering roughly the last three months, oldest first. */
-  daily: StockBar[];
   /**
-   * Annualized 30-trading-day realized volatility, in percent, from completed sessions
-   * only: while the market is open, today's unfinished daily bar is left out.
+   * Daily bars of completed sessions covering roughly the last three months, oldest first.
+   * While the market is open, today's unfinished bar is left out.
    */
+  daily: StockBar[];
+  /** Annualized 30-trading-day realized volatility, in percent, from the completed sessions in `daily`. */
   realizedVol30d: number | null;
   /**
    * The latest session's volume as a percentage of average volume. Null while the market

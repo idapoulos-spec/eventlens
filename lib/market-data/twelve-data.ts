@@ -160,7 +160,7 @@ export async function getStockOverview(symbol: string): Promise<Result<StockOver
   }
 
   try {
-    const [rawQuote, intraday, daily] = await Promise.all([
+    const [rawQuote, intraday, allDaily] = await Promise.all([
       twelveGet<RawQuote>("/quote", { symbol }, apiKey, LIVE),
       getTimeSeries(symbol, "1h", 70, apiKey),
       getTimeSeries(symbol, "1day", 90, apiKey),
@@ -168,10 +168,11 @@ export async function getStockOverview(symbol: string): Promise<Result<StockOver
 
     const quote = normalizeQuote(rawQuote);
     // While the market is open, the daily bar for the quote's session is still forming and
-    // its close is just the latest price, so volatility uses completed sessions only.
+    // its close is just the latest price, so daily history (the close chart and volatility)
+    // uses completed sessions only.
     const session = rawQuote.datetime ? parseDatetime(rawQuote.datetime) : null;
-    const completed = quote.isMarketOpen ? daily.filter((b) => b.t !== session) : daily;
-    const volWindow = completed.slice(-(VOL_WINDOW_DAYS + 1)).map((b) => b.close);
+    const daily = quote.isMarketOpen ? allDaily.filter((b) => b.t !== session) : allDaily;
+    const volWindow = daily.slice(-(VOL_WINDOW_DAYS + 1)).map((b) => b.close);
 
     return ok({
       quote,
