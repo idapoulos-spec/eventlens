@@ -87,7 +87,7 @@ export function KalshiPanel({ data }: { data: KalshiOverview }) {
   const { market, phase } = data;
   const live = phase === "open";
   const closeDate = market.closeTime
-    ? `${data.closePassed ? "Closed" : "Closes"} ${new Date(market.closeTime).toLocaleDateString("en-US", { dateStyle: "medium" })}`
+    ? `${data.closePassed ? "Closed" : "Closes"} ${formatDateTime(Date.parse(market.closeTime), { withYear: true })}`
     : null;
 
   return (

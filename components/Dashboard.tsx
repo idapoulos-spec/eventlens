@@ -70,7 +70,7 @@ async function StockSummary({ data }: { data: StockResult }) {
     <Card title="Stock">
       <Notice
         tone={missingKey ? "info" : "error"}
-        title={missingKey ? "Twelve Data API key not configured" : "Stock data unavailable"}
+        title={missingKey ? "Stock data not set up" : "Stock data unavailable"}
         message={s.error.message}
       />
     </Card>
@@ -141,7 +141,7 @@ async function StockHistory({ data, stock }: { data: StockResult; stock: string 
   if (!s.ok) {
     content =
       s.error.code === "missing_key" ? (
-        <Notice tone="info" title="No history" message="Stock data is disabled until a Twelve Data API key is configured." />
+        <Notice tone="info" title="No history" message="Stock price history isn't available because this site has no market-data API key set up." />
       ) : (
         <Notice title="History unavailable" message="Stock data couldn't be loaded, so there's no price history to show." />
       );

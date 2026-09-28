@@ -6,6 +6,10 @@ import { ANALYSIS_LIMIT_SUMMARY, checkAnalysisRateLimit } from "@/lib/analysis-r
 import { formatWait } from "@/lib/format";
 import { validateKalshiTicker, validateStockTicker } from "@/lib/validation";
 
+// Cap on how long Vercel lets this page's server function run. The worst case is about
+// 18 seconds: Kalshi's three lookups run in sequence, each with a 6-second timeout.
+export const maxDuration = 30;
+
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 export default async function Home({ searchParams }: PageProps<"/">) {

@@ -22,8 +22,18 @@ class TwelveDataError extends Error {
   }
 }
 
+let warnedMissingKey = false;
+
 function getApiKey(): string | null {
   const key = process.env.TWELVE_DATA_API_KEY?.trim();
+  if (!key && !warnedMissingKey) {
+    // Setup instructions are for whoever runs the site, so they go to the server log, not the page.
+    console.warn(
+      "[twelve-data] TWELVE_DATA_API_KEY is not set, so stock data is disabled. Add it to .env.local when " +
+        "running locally, or to the project's Environment Variables on Vercel, then restart or redeploy.",
+    );
+    warnedMissingKey = true;
+  }
   return key ? key : null;
 }
 
@@ -141,7 +151,7 @@ export async function getStockOverview(symbol: string): Promise<Result<StockOver
   if (!apiKey) {
     return fail(
       "missing_key",
-      "Stock data is disabled because TWELVE_DATA_API_KEY is not set. Add it to .env.local and restart the dev server.",
+      "Stock prices aren't available because this site hasn't been set up with a market-data API key. Kalshi data still works.",
     );
   }
 

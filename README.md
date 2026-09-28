@@ -18,8 +18,8 @@ Next.js (App Router), TypeScript, Tailwind CSS, Recharts, pnpm.
 
 ### Prerequisites
 
-- Node.js 20.9 or later
-- pnpm (`npm install -g pnpm`)
+- Node.js 24 (pinned in `package.json` under `engines`)
+- pnpm 10 (`npm install -g pnpm@10`). The exact version is pinned in `package.json` under `packageManager`.
 
 ### Install
 
@@ -117,8 +117,10 @@ For a hard limit, use a shared store such as Upstash Redis (`@upstash/ratelimit`
 ## Deploying to Vercel
 
 1. Import the GitHub repository in Vercel.
-2. Add `TWELVE_DATA_API_KEY` under **Project → Settings → Environment Variables**.
-3. Deploy. Vercel detects Next.js and pnpm automatically.
+2. Add `TWELVE_DATA_API_KEY` under **Project → Settings → Environment Variables** (Production, plus Preview if you want preview deployments to show stock data). The key is only read at request time, so the build does not need it. If it is missing, the site still works and shows that stock data isn't set up; the server log explains how to fix it.
+3. Deploy. Vercel detects Next.js, installs with pnpm 10 from `pnpm-lock.yaml`, and uses Node.js 24 from `engines`.
+
+The page's server function is capped at 30 seconds (`maxDuration` in `app/page.tsx`). All timestamps are shown in New York time with the zone labeled, regardless of the server's time zone.
 
 ## Scope
 
