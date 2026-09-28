@@ -12,8 +12,9 @@ import {
   YAxis,
 } from "recharts";
 import type { AlignedPoint } from "@/lib/analytics";
-import { formatCurrency, formatDate, formatSigned } from "@/lib/format";
-import { AXIS_TICK, CHART_COLORS, ChartTooltip, dayTicks } from "./ChartTooltip";
+import { formatCurrency, formatSigned } from "@/lib/format";
+import { AXIS_TICK, CHART_COLORS, ChartTooltip } from "./ChartTooltip";
+import { formatAxisTick, timeTicks } from "./time";
 
 type Mode = "change" | "levels";
 
@@ -38,7 +39,7 @@ const xAxisProps = {
   type: "number" as const,
   scale: "time" as const,
   domain: ["dataMin", "dataMax"] as [string, string],
-  tickFormatter: (t: number) => formatDate(t),
+  tickFormatter: formatAxisTick,
   tick: AXIS_TICK,
   stroke: CHART_COLORS.axis,
   tickLine: false,
@@ -48,19 +49,19 @@ const xAxisProps = {
 export function ComparisonChart({ points, stockSymbol, currency }: Props) {
   const [mode, setMode] = useState<Mode>("change");
 
-  const ticks = useMemo(() => dayTicks(points), [points]);
+  const ticks = useMemo(() => timeTicks(points), [points]);
 
   const probLabel = "Kalshi probability";
   const stockLabel = `${stockSymbol} return`;
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-4 text-xs text-ink-secondary">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-ink-secondary">
           <LegendKey color={CHART_COLORS.kalshi} label={mode === "change" ? `${probLabel} change (pp)` : `${probLabel} (%)`} />
           <LegendKey color={CHART_COLORS.stock} label={mode === "change" ? `${stockLabel} (%)` : `${stockSymbol} price`} />
         </div>
-        <div role="tablist" aria-label="Chart view" className="inline-flex rounded-lg border border-border p-0.5 text-xs">
+        <div role="tablist" aria-label="Chart view" className="grid grid-cols-2 rounded-lg border border-border p-0.5 text-xs sm:inline-grid">
           {(
             [
               ["change", "Change since start"],
@@ -72,7 +73,7 @@ export function ComparisonChart({ points, stockSymbol, currency }: Props) {
               role="tab"
               aria-selected={mode === value}
               onClick={() => setMode(value)}
-              className={`rounded-md px-3 py-1.5 transition ${
+              className={`rounded-md px-3 py-2.5 transition sm:py-1.5 ${
                 mode === value ? "bg-surface-raised text-ink" : "text-ink-muted hover:text-ink-secondary"
               }`}
             >
@@ -83,7 +84,7 @@ export function ComparisonChart({ points, stockSymbol, currency }: Props) {
       </div>
 
       {mode === "change" ? (
-        <div className="h-80">
+        <div className="h-72 sm:h-80">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={points} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
               <CartesianGrid stroke={CHART_COLORS.grid} vertical={false} />
