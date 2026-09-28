@@ -3,18 +3,30 @@
 const US_EXCHANGE_TIMEZONE = "America/New_York";
 const US_SESSION_CLOSE = { hour: 16, minute: 0 };
 
+// Building an Intl.DateTimeFormat is slow, and chart axes need many offsets per render.
+const wallClockFormats = new Map<string, Intl.DateTimeFormat>();
+
+function wallClockFormat(timeZone: string): Intl.DateTimeFormat {
+  let format = wallClockFormats.get(timeZone);
+  if (!format) {
+    format = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+    });
+    wallClockFormats.set(timeZone, format);
+  }
+  return format;
+}
+
 /** Offset of `timeZone` from UTC at instant `t` (local minus UTC), in milliseconds. */
-function timeZoneOffsetMs(t: number, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "numeric",
-    second: "numeric",
-  }).formatToParts(t);
+export function timeZoneOffsetMs(t: number, timeZone: string): number {
+  const parts = wallClockFormat(timeZone).formatToParts(t);
   const get = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value);
   const localAsUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
   return localAsUtc - (t - (t % 1000));

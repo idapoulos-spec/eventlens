@@ -1,20 +1,12 @@
 import { DISPLAY_TIME_ZONE } from "@/lib/format";
+// Imported directly: the lib/market-data index also loads the server-only Twelve Data client.
+import { timeZoneOffsetMs } from "@/lib/market-data/session";
 
 // Chart axes use the same New York time zone as the tooltips (see formatDateTime), so a
 // tick labeled "Sep 25" sits at midnight New York time whatever time zone the viewer is in.
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const wallClockParts = new Intl.DateTimeFormat("en-US", {
-  timeZone: DISPLAY_TIME_ZONE,
-  hourCycle: "h23",
-  year: "numeric",
-  month: "numeric",
-  day: "numeric",
-  hour: "numeric",
-  minute: "numeric",
-  second: "numeric",
-});
 const axisDate = new Intl.DateTimeFormat("en-US", { timeZone: DISPLAY_TIME_ZONE, month: "short", day: "numeric" });
 const axisHour = new Intl.DateTimeFormat("en-US", { timeZone: DISPLAY_TIME_ZONE, hour: "numeric" });
 const tradingDate = new Intl.DateTimeFormat("en-US", {
@@ -26,12 +18,9 @@ const tradingDate = new Intl.DateTimeFormat("en-US", {
 });
 
 /** Offset of New York time from UTC at instant `t` (local minus UTC), in milliseconds. */
-function offsetMs(t: number): number {
-  const parts = wallClockParts.formatToParts(t);
-  const get = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value);
-  const localAsUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
-  return localAsUtc - (t - (t % 1000));
-}
+const offsetMs = (t: number) => timeZoneOffsetMs(t, DISPLAY_TIME_ZONE);
+
+const isNewYorkMidnight = (t: number) => (t + offsetMs(t)) % DAY_MS === 0;
 
 /** UTC timestamp of a New York wall-clock time on `date` (read from its UTC fields). */
 function newYorkTime(date: Date, hour = 0, minute = 0): number {
@@ -57,7 +46,7 @@ export function tradingDayClose(utcMidnight: number): number {
 
 /** Axis label: the date at New York midnight (e.g. "Sep 25"), otherwise the hour (e.g. "6 PM"). */
 export function formatAxisTick(t: number): string {
-  return (t + offsetMs(t)) % DAY_MS === 0 ? axisDate.format(t) : axisHour.format(t);
+  return isNewYorkMidnight(t) ? axisDate.format(t) : axisHour.format(t);
 }
 
 /** Tooltip heading for a daily bar, e.g. "Fri, Sep 25, 2026". */
@@ -68,7 +57,8 @@ export function formatTradingDate(t: number): string {
 /**
  * X-axis ticks in New York time within a chronologically sorted series: every 6 hours
  * for spans up to two days, then midnights — every day up to three weeks, Mondays up to
- * about six months, then the first of each month. Thinned to at most `maxTicks`.
+ * about six months, then the first of each month. Thinned to at most `maxTicks` without
+ * dropping every midnight, so a span that contains a midnight always shows a date.
  */
 export function timeTicks(points: { t: number }[], maxTicks = 8): number[] | undefined {
   if (points.length < 2) return undefined;
@@ -91,5 +81,8 @@ export function timeTicks(points: { t: number }[], maxTicks = 8): number[] | und
   }
   if (ticks.length === 0) return undefined;
   const step = Math.ceil(ticks.length / maxTicks);
-  return ticks.filter((_, i) => i % step === 0);
+  // Count the kept ticks from the first midnight, not the first tick: with 6-hour ticks
+  // starting at 6 AM, every other tick from the start would skip all the midnights.
+  const offset = Math.max(0, ticks.findIndex(isNewYorkMidnight)) % step;
+  return ticks.filter((_, i) => i % step === offset);
 }
