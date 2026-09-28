@@ -119,7 +119,11 @@ export async function getProbabilityHistory(market: KalshiMarket, asOf: number):
   } catch {
     return { hourly: null, recent: null };
   }
-  const end = Math.floor(asOf / 1000);
+  // Align the window to the start of the current minute so identical requests within a
+  // minute share one cache entry, instead of writing a new, never-reused entry to the
+  // (shared, on Vercel) fetch cache every time. Candles end on minute boundaries and
+  // Kalshi includes a candle ending exactly at end_ts, so no completed candle is lost.
+  const end = Math.floor(asOf / 60_000) * 60;
   const [hourly, recent] = await Promise.allSettled([
     getCandles(series, market.ticker, end - HISTORY_DAYS * 24 * 60 * 60, end, HOURLY),
     getCandles(series, market.ticker, end - RECENT_HOURS * 60 * 60, end, MINUTE),
