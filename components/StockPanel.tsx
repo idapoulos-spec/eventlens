@@ -4,7 +4,17 @@ import { Card, Delta, Stat } from "./ui";
 
 export function StockPanel({ data }: { data: StockOverview }) {
   const { quote } = data;
-  const volumeVsAvg = data.relativeVolume === null ? undefined : `${data.relativeVolume.toFixed(0)}% of average`;
+  const open = quote.isMarketOpen;
+  // While open, today's volume is still accumulating, and Twelve Data's free plan can miss part of
+  // the market intraday, so it's flagged and not compared with the average until the close.
+  const volumeDetail = open ? (
+    <>
+      <span className="block">So far today; may be incomplete on the free data plan</span>
+      <span className="block">% of average shown after the close</span>
+    </>
+  ) : data.relativeVolume === null ? undefined : (
+    `${data.relativeVolume.toFixed(0)}% of average`
+  );
 
   return (
     <Card
@@ -14,7 +24,7 @@ export function StockPanel({ data }: { data: StockOverview }) {
           Stock · <span className="font-mono">{quote.symbol}</span>
         </span>
       }
-      subtitle={`${quote.exchange} · ${quote.currency} · Market ${quote.isMarketOpen ? "open" : "closed"}`}
+      subtitle={`${quote.exchange} · ${quote.currency} · Market ${open ? "open" : "closed"}`}
     >
       <p className="text-base font-medium leading-snug text-ink">{quote.name}</p>
 
@@ -22,7 +32,7 @@ export function StockPanel({ data }: { data: StockOverview }) {
         <div className="col-span-2 sm:col-span-3">
           <Stat
             size="lg"
-            label={quote.isMarketOpen ? "Current price" : "Last close"}
+            label={open ? "Current price" : "Last close"}
             value={formatCurrency(quote.price, quote.currency)}
             detail={
               <Delta
@@ -33,9 +43,13 @@ export function StockPanel({ data }: { data: StockOverview }) {
           />
         </div>
         <Stat label="Previous close" value={formatCurrency(quote.previousClose, quote.currency)} />
-        <Stat label="Volume" value={formatCompact(quote.volume)} detail={volumeVsAvg} />
+        <Stat label="Volume" value={formatCompact(quote.volume)} detail={volumeDetail} />
         <Stat label="Avg volume" value={formatCompact(quote.averageVolume)} />
-        <Stat label="Realized vol (30d)" value={formatPercent(data.realizedVol30d)} detail="Annualized, daily log returns" />
+        <Stat
+          label="Realized vol (30d)"
+          value={formatPercent(data.realizedVol30d)}
+          detail={open ? "Annualized daily log returns, excluding today" : "Annualized, daily log returns"}
+        />
       </dl>
     </Card>
   );
