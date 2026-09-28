@@ -19,6 +19,11 @@ import type {
 // Public, unauthenticated market-data endpoints of the Kalshi Trade API v2.
 const KALSHI_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2";
 const HISTORY_DAYS = 7;
+// Research covers up to 90 days. Reaching a week further back finds the probability in
+// effect when the window starts, even if the market was quiet then. That's at most
+// 2,328 hourly candles, well under Kalshi's limit of 10,000 per request.
+const RESEARCH_DAYS = 90;
+const RESEARCH_LOOKBACK_DAYS = 7;
 const RECENT_HOURS = 3;
 const HOUR_SEC = 60 * 60;
 const DAY_SEC = 24 * HOUR_SEC;
@@ -40,6 +45,28 @@ async function kalshiGet<T>(path: string, cache: RequestInit): Promise<T> {
   if (!res.ok) throw new KalshiHttpError(res.status);
   return res.json() as Promise<T>;
 }
+
+/** Fixed, user-facing wording for a failed Kalshi request. */
+function describeError(err: unknown, ticker: string): Result<never> {
+  if (err instanceof KalshiHttpError && err.status === 404) {
+    return fail("not_found", `No Kalshi market found with ticker "${ticker}". Use a market ticker, not an event or series ticker.`);
+  }
+  if (err instanceof KalshiHttpError && err.status === 429) {
+    return fail("rate_limited", "Kalshi rate limit reached. Please wait a moment and try again.");
+  }
+  if (isTimeout(err)) {
+    return fail("timeout", "Kalshi didn't respond in time. Please try again shortly.");
+  }
+  return fail("unavailable", "Could not reach the Kalshi API. Please try again shortly.");
+}
+
+/**
+ * History windows end at the start of the current minute, so identical requests within
+ * a minute share one cache entry, instead of writing a new, never-reused entry to the
+ * (shared, on Vercel) fetch cache every time. Candles end on minute boundaries and
+ * Kalshi includes a candle ending exactly at end_ts, so no completed candle is lost.
+ */
+const windowEndSec = (asOf: number) => Math.floor(asOf / 60_000) * 60;
 
 function toNumber(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined || value === "") return null;
@@ -120,11 +147,7 @@ interface ProbabilityHistory {
 
 /** Never rejects: a series that fails to load is null. */
 export async function getProbabilityHistory(ticker: string, asOf: number): Promise<ProbabilityHistory> {
-  // Align the window to the start of the current minute so identical requests within a
-  // minute share one cache entry, instead of writing a new, never-reused entry to the
-  // (shared, on Vercel) fetch cache every time. Candles end on minute boundaries and
-  // Kalshi includes a candle ending exactly at end_ts, so no completed candle is lost.
-  const end = Math.floor(asOf / 60_000) * 60;
+  const end = windowEndSec(asOf);
   const dayAgo = end - DAY_SEC;
   const [hourly, recent, dayAgoMinutes] = await Promise.allSettled([
     getCandles(ticker, end - HISTORY_DAYS * DAY_SEC, end, HOURLY),
@@ -184,16 +207,7 @@ export async function getKalshiOverview(ticker: string): Promise<Result<KalshiOv
   try {
     market = await getMarket(ticker);
   } catch (err) {
-    if (err instanceof KalshiHttpError && err.status === 404) {
-      return fail("not_found", `No Kalshi market found with ticker "${ticker}". Use a market ticker, not an event or series ticker.`);
-    }
-    if (err instanceof KalshiHttpError && err.status === 429) {
-      return fail("rate_limited", "Kalshi rate limit reached. Please wait a moment and try again.");
-    }
-    if (isTimeout(err)) {
-      return fail("timeout", "Kalshi didn't respond in time. Please try again shortly.");
-    }
-    return fail("unavailable", "Could not reach the Kalshi API. Please try again shortly.");
+    return describeError(err, ticker);
   }
 
   const phase = marketPhase(market.status);
@@ -221,4 +235,19 @@ export async function getKalshiOverview(ticker: string): Promise<Result<KalshiOv
     history: history.hourly?.map(({ t, value }) => ({ t, value })) ?? null,
     fetchedAt,
   });
+}
+
+/**
+ * Hourly implied-probability points (with how each was estimated) covering the last 90
+ * days, for research. Kalshi only writes a candle when something changes, so the latest
+ * point at or before any moment is the probability in effect then.
+ */
+export async function getKalshiResearchHistory(ticker: string): Promise<Result<KalshiPoint[]>> {
+  const end = windowEndSec(Date.now());
+  const start = end - (RESEARCH_DAYS + RESEARCH_LOOKBACK_DAYS) * DAY_SEC;
+  try {
+    return ok(await getCandles(ticker, start, end, HOURLY));
+  } catch (err) {
+    return describeError(err, ticker);
+  }
 }

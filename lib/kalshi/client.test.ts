@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HOUR_MS } from "@/lib/analytics";
-import { getKalshiOverview } from "./client";
+import { getKalshiOverview, getKalshiResearchHistory } from "./client";
 
 // server-only throws outside React's server environment; the client only uses it as a marker.
 vi.mock("server-only", () => ({}));
@@ -166,5 +166,47 @@ describe("getKalshiOverview", () => {
     await overview();
     expect(calls).toHaveLength(5);
     expect(calls.indexOf("market")).toBe(4);
+  });
+});
+
+describe("getKalshiResearchHistory", () => {
+  it("requests hourly candles from a week before the 90-day window, keeping how each point was estimated", async () => {
+    const requests: URL[] = [];
+    vi.stubGlobal("fetch", async (input: string | URL) => {
+      const url = new URL(String(input));
+      requests.push(url);
+      return Response.json({
+        markets: [
+          {
+            market_ticker: TICKER,
+            candlesticks: [
+              rawCandle({ t: END - 2 * HOUR_MS, bid: 0, ask: 1, close: 0.47 }),
+              rawCandle({ t: END - HOUR_MS, bid: 0.5, ask: 0.52 }),
+            ],
+          },
+        ],
+      });
+    });
+    const result = await getKalshiResearchHistory(TICKER);
+
+    expect(requests).toHaveLength(1);
+    const q = requests[0].searchParams;
+    expect(requests[0].pathname).toBe("/trade-api/v2/markets/candlesticks");
+    expect(q.get("period_interval")).toBe("60");
+    expect(Number(q.get("end_ts"))).toBe(END / 1000);
+    expect(Number(q.get("end_ts")) - Number(q.get("start_ts"))).toBe(97 * 24 * 60 * 60);
+    expect(result).toEqual({
+      ok: true,
+      data: [
+        { t: END - 2 * HOUR_MS, value: 0.47, source: "last_price" },
+        { t: END - HOUR_MS, value: 0.51, source: "midpoint" },
+      ],
+    });
+  });
+
+  it("reports a failed request with the same wording as the market lookup", async () => {
+    vi.stubGlobal("fetch", async () => Response.json({ error: "not found" }, { status: 404 }));
+    const result = await getKalshiResearchHistory(TICKER);
+    expect(result).toMatchObject({ ok: false, error: { code: "not_found" } });
   });
 });
