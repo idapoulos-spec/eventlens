@@ -1,12 +1,19 @@
 export const TRADING_DAYS_PER_YEAR = 252;
 
-/** Log returns ln(p[i] / p[i-1]) for a chronologically ordered price series. */
+function isPositivePrice(price: number): boolean {
+  return Number.isFinite(price) && price > 0;
+}
+
+/**
+ * Log returns ln(p[i] / p[i-1]) for a chronologically ordered price series.
+ * Pairs involving a price that is not a positive, finite number are skipped.
+ */
 export function logReturns(prices: number[]): number[] {
   const returns: number[] = [];
   for (let i = 1; i < prices.length; i++) {
     const prev = prices[i - 1];
     const curr = prices[i];
-    if (prev > 0 && curr > 0) returns.push(Math.log(curr / prev));
+    if (isPositivePrice(prev) && isPositivePrice(curr)) returns.push(Math.log(curr / prev));
   }
   return returns;
 }
