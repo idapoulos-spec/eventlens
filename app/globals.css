@@ -36,7 +36,28 @@
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
-body {
-  background: var(--page);
-  color: var(--ink);
+@layer base {
+  body {
+    background: var(--page);
+    color: var(--ink);
+    /* Figures line up in columns and don't change width as values update. */
+    font-variant-numeric: tabular-nums;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--series-kalshi) 40%, transparent);
+  }
+
+  /* One keyboard focus ring for buttons, links, and charts. */
+  :focus-visible {
+    outline: 2px solid var(--series-kalshi);
+    outline-offset: 2px;
+  }
+
+  /* Recharts makes charts focusable for keyboard navigation; skip the ring after a click. */
+  .recharts-surface:focus:not(:focus-visible),
+  .recharts-wrapper:focus:not(:focus-visible) {
+    outline: none;
+  }
 }
