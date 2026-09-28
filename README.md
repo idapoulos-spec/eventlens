@@ -54,6 +54,8 @@ pnpm dev
 
 Open <http://localhost:3000>.
 
+The dev server only listens on `127.0.0.1`, so other devices on your network cannot reach it (or spend your API credits). To test from a phone on the same network, run `pnpm exec next dev -H 0.0.0.0` instead.
+
 ### Other scripts
 
 ```bash
@@ -95,6 +97,21 @@ lib/
 ```
 
 Third-party API calls live in `lib/kalshi` and `lib/market-data`, run only on the server (enforced with `server-only`), and return normalized TypeScript types. The UI never calls third-party APIs directly.
+
+## Security
+
+- `TWELVE_DATA_API_KEY` is read only in server-only code and sent to Twelve Data in an `Authorization` header, never in a URL, so it stays out of browser code, cached request URLs, and logs.
+- Ticker inputs are validated on the server before any upstream request.
+- Users see fixed error messages. Twelve Data's own error text is logged on the server only, with the key redacted.
+- Each client IP can run 5 analyses a minute and 30 an hour (`lib/analysis-rate-limit.ts`).
+
+**How much the rate limit protects you.** The limiter keeps its counts in the server's memory. That is enough to stop one person repeatedly hammering the site, but it is not a hard guarantee:
+
+- On Vercel, each server instance keeps its own counts, and counts reset when an instance restarts. A quiet site usually runs on one warm instance, so the limit mostly holds; under heavier traffic Vercel starts more instances and each one allows its own 5 per minute.
+- Limits are per IP. People behind the same IP (an office, a mobile carrier) share one limit, and someone using many IPs can get around it.
+- It does not cap total usage across all visitors, so it cannot stop the site as a whole from using up the Twelve Data plan.
+
+For a hard limit, use a shared store such as Upstash Redis (`@upstash/ratelimit`) or a rate-limiting rule in the Vercel Firewall.
 
 ## Deploying to Vercel
 

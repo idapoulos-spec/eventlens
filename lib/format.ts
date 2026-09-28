@@ -32,6 +32,12 @@ export function formatCompact(value: number | null): string {
   return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(value);
 }
 
+/** A wait time in words, e.g. 45 -> "45 seconds", 600 -> "10 minutes". */
+export function formatWait(seconds: number): string {
+  if (seconds < 90) return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  return `${Math.ceil(seconds / 60)} minutes`;
+}
+
 export function formatDateTime(ms: number): string {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",

@@ -32,8 +32,11 @@ async function twelveGet<T>(
   apiKey: string,
   cache: RequestInit,
 ): Promise<T> {
-  const query = new URLSearchParams({ ...params, apikey: apiKey });
-  const res = await fetch(`${TWELVE_DATA_BASE_URL}${path}?${query}`, cache);
+  // The key goes in a header, not the URL, so it never appears in cached URLs or logs.
+  const res = await fetch(`${TWELVE_DATA_BASE_URL}${path}?${new URLSearchParams(params)}`, {
+    ...cache,
+    headers: { Authorization: `apikey ${apiKey}` },
+  });
   const body = (await res.json().catch(() => null)) as T | RawError | null;
   if (!body) throw new TwelveDataError(res.status, "Invalid response from Twelve Data");
   // Twelve Data reports errors in the body, sometimes with HTTP 200.
@@ -100,20 +103,31 @@ function getTimeSeries(symbol: string, interval: Interval, outputsize: number, a
   ).then((raw) => normalizeSeries(raw, interval));
 }
 
-function describeError(err: unknown, symbol: string): Result<never> {
-  if (err instanceof TwelveDataError) {
-    if (err.code === 401 || err.code === 403) {
-      return fail("auth", `Twelve Data rejected the request: ${err.message.replace(/\*\*/g, "")}`);
-    }
-    if (err.code === 404 || (err.code === 400 && /symbol/i.test(err.message))) {
-      return fail("not_found", `Twelve Data has no data for "${symbol}". Check the ticker symbol.`);
-    }
-    if (err.code === 429) {
-      return fail("rate_limited", "Twelve Data rate limit reached (the free plan allows 8 requests per minute). Try again in a minute.");
-    }
-    return fail("upstream", `Twelve Data error: ${err.message}`);
+/**
+ * Map a failure to fixed, user-facing wording. Twelve Data's own error text is
+ * logged on the server only, with the key redacted, and never shown to users.
+ */
+function describeError(err: unknown, symbol: string, apiKey: string): Result<never> {
+  const status = err instanceof TwelveDataError ? err.code : "network";
+  const detail = err instanceof Error ? err.message : String(err);
+  console.error(`[twelve-data] ${symbol}: ${status} ${detail.replaceAll(apiKey, "[redacted]")}`);
+
+  if (!(err instanceof TwelveDataError)) {
+    return fail("unavailable", "Could not reach Twelve Data. Please try again shortly.");
   }
-  return fail("unavailable", "Could not reach Twelve Data. Please try again shortly.");
+  if (err.code === 401) {
+    return fail("auth", "Twelve Data rejected this app's API key, so stock data is unavailable.");
+  }
+  if (err.code === 403) {
+    return fail("plan", `"${symbol}" is not included in this app's Twelve Data plan.`);
+  }
+  if (err.code === 404 || (err.code === 400 && /symbol/i.test(err.message))) {
+    return fail("not_found", `Twelve Data has no data for "${symbol}". Check the ticker symbol.`);
+  }
+  if (err.code === 429) {
+    return fail("rate_limited", "Twelve Data rate limit reached (the free plan allows 8 requests per minute). Try again in a minute.");
+  }
+  return fail("upstream", "Twelve Data returned an error. Please try again later.");
 }
 
 /** Quote, intraday and daily history, and realized volatility for one stock. */
@@ -145,6 +159,6 @@ export async function getStockOverview(symbol: string): Promise<Result<StockOver
       fetchedAt: Date.now(),
     });
   } catch (err) {
-    return describeError(err, symbol);
+    return describeError(err, symbol, apiKey);
   }
 }

@@ -3,6 +3,8 @@ import { Dashboard, DashboardSkeleton } from "@/components/Dashboard";
 import { Disclaimer } from "@/components/Disclaimer";
 import { TickerForm } from "@/components/TickerForm";
 import { Notice } from "@/components/ui";
+import { ANALYSIS_LIMIT_SUMMARY, checkAnalysisRateLimit } from "@/lib/analysis-rate-limit";
+import { formatWait } from "@/lib/format";
 import { validateKalshiTicker, validateStockTicker } from "@/lib/validation";
 
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
@@ -15,6 +17,8 @@ export default async function Home({ searchParams }: PageProps<"/">) {
 
   const stock = validateStockTicker(rawStock);
   const kalshi = validateKalshiTicker(rawKalshi);
+  // Only valid analyses reach the upstream APIs, so only they count against the limit.
+  const rateLimit = stock.ok && kalshi.ok ? await checkAnalysisRateLimit() : { ok: true as const };
 
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6 lg:py-10">
@@ -41,6 +45,12 @@ export default async function Home({ searchParams }: PageProps<"/">) {
         </div>
       ) : !stock.ok || !kalshi.ok ? (
         <Notice title="Invalid input" message={!stock.ok ? stock.message : !kalshi.ok ? kalshi.message : ""} />
+      ) : !rateLimit.ok ? (
+        <Notice
+          tone="info"
+          title="Too many analyses"
+          message={`To protect the shared market-data quota, each visitor can run ${ANALYSIS_LIMIT_SUMMARY}. Try again in ${formatWait(rateLimit.retryAfterSec)}.`}
+        />
       ) : (
         <Suspense key={`${stock.value}|${kalshi.value}`} fallback={<DashboardSkeleton />}>
           <Dashboard stock={stock.value} kalshi={kalshi.value} />
