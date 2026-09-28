@@ -5,8 +5,8 @@ EventLens is a research dashboard that compares [Kalshi](https://kalshi.com) pre
 Enter a stock ticker (e.g. `NVDA`) and a Kalshi market ticker (e.g. `KXFEDDECISION-26OCT-H25`), click **Analyze**, and EventLens shows:
 
 - **Kalshi market:** title, implied probability, YES bid / ask, last price, 24-hour volume, open interest, 1-hour and 24-hour probability change, and an event-uncertainty score
-- **Stock:** current price, daily change, volume, and 30-day realized volatility (via [Twelve Data](https://twelvedata.com))
-- **Charts:** Kalshi probability vs. stock return over the last 7 days, aligned on timestamps, plus the probability history and a ~3-month stock price chart
+- **Stock:** current price, daily change, volume (compared with average volume once the market has closed), and 30-day realized volatility (via [Twelve Data](https://twelvedata.com))
+- **Charts:** Kalshi probability vs. stock return over the last 7 days, aligned on timestamps, plus the probability history and ~3 months of daily closes
 
 > Experimental market-research tool. Metrics are informational and are not investment recommendations.
 
@@ -60,6 +60,7 @@ The dev server only listens on `127.0.0.1`, so other devices on your network can
 
 ```bash
 pnpm lint    # ESLint
+pnpm test    # unit tests (Vitest)
 pnpm build   # production build (includes type checking)
 pnpm start   # serve the production build
 ```
@@ -74,12 +75,12 @@ All calculations are pure functions in `lib/analytics/`.
 
 | Metric | Definition |
 | --- | --- |
-| Implied probability | Midpoint of YES bid and YES ask: `(yesBid + yesAsk) / 2`. If one side of the book is empty, the last trade price is used. Only shown while a market is open for trading: closed and settled markets show their result instead, and no probability, change, or uncertainty is derived from their last trade. |
-| 1h change | Current probability minus the probability in effect exactly 60 minutes ago, in percentage points. Uses 1-minute candles. Kalshi only records a candle when something changes, so the comparison point is the last one at or before that moment; the dashboard shows its time. |
-| 24h change | Same as the 1h change, but against hourly candles, so the comparison point is 24–25 hours old. |
+| Implied probability | Midpoint of YES bid and YES ask: `(yesBid + yesAsk) / 2`. If one side of the book is empty, the last trade price is used, and the dashboard says when that trade happened. History points are estimated the same way from each candle, using the previous trade if none happened in that period. Only shown while a market is open for trading: closed and settled markets show their result instead, and no probability, change, or uncertainty is derived from their last trade. |
+| 1h change | Current probability minus the probability in effect exactly 60 minutes ago, in percentage points. Uses 1-minute candles. Kalshi only records a candle when something changes, so the comparison point is the last one at or before that moment; the dashboard shows its time, and notes when it was estimated differently from the current probability (midpoint vs. last trade). |
+| 24h change | Same as the 1h change, against the probability in effect exactly 24 hours ago, from the hour of 1-minute candles before that moment. |
 | Uncertainty | Binary entropy `H(p) = −p·log₂p − (1−p)·log₂(1−p)`, scaled to 0–100. 100 at 50%, 0 at 0% or 100%. |
-| Realized volatility | Sample standard deviation of the last 30 daily log returns, annualized with √252. |
-| Relative volume | Today's volume as a percentage of average volume. |
+| Realized volatility | Sample standard deviation of the last 30 daily log returns, annualized with √252. Uses completed sessions only: while the market is open, today's unfinished bar is left out (the daily close chart leaves it out too). |
+| Relative volume | The latest session's volume as a percentage of average volume. Not shown while the market is open: today's volume is still accumulating, and on Twelve Data's free plan it can miss part of the market, so it isn't comparable with the average until the close. |
 | Alignment | The two hourly series are merged on the union of their timestamps, each carrying forward its last value (an as-of join). Stock bars are stamped at their close time; for US stocks the shortened last bar of the day is stamped at the 4:00 PM New York close. |
 
 ## Project structure
