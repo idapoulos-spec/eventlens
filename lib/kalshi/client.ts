@@ -6,12 +6,13 @@ import {
   mergeSeries,
   probabilityChange,
   uncertaintyScore,
-  type ProbabilityChange,
   type TimePoint,
 } from "@/lib/analytics";
 import { cachedFor, LIVE } from "@/lib/fetch-cache";
+import { isTimeout, timeoutSignal } from "@/lib/request-timeout";
 import { fail, ok, type Result } from "@/lib/result";
-import type { KalshiMarket, KalshiOverview, RawCandlestick, RawEvent, RawMarket } from "./types";
+import { marketPhase } from "./status";
+import type { KalshiChange, KalshiMarket, KalshiOverview, RawCandlestick, RawEvent, RawMarket } from "./types";
 
 // Public, unauthenticated market-data endpoints of the Kalshi Trade API v2.
 const KALSHI_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2";
@@ -30,6 +31,7 @@ async function kalshiGet<T>(path: string, cache: RequestInit): Promise<T> {
   const res = await fetch(`${KALSHI_BASE_URL}${path}`, {
     ...cache,
     headers: { Accept: "application/json" },
+    signal: timeoutSignal(),
   });
   if (!res.ok) throw new KalshiHttpError(res.status);
   return res.json() as Promise<T>;
@@ -48,6 +50,7 @@ function normalizeMarket(raw: RawMarket): KalshiMarket {
     title: raw.title ?? raw.ticker,
     subtitle: raw.yes_sub_title || raw.subtitle || null,
     status: raw.status ?? "unknown",
+    result: raw.result || null,
     yesBid: toNumber(raw.yes_bid_dollars),
     yesAsk: toNumber(raw.yes_ask_dollars),
     lastPrice: toNumber(raw.last_price_dollars),
@@ -101,24 +104,46 @@ async function getCandles(
   return normalizeCandles(data.candlesticks ?? []);
 }
 
+/** Each series is null if it failed to load, so callers can tell failure from an empty history. */
 interface ProbabilityHistory {
   /** Hourly points covering the last HISTORY_DAYS days. */
-  hourly: TimePoint[];
-  /** Minute points covering the last RECENT_HOURS hours, or null if unavailable. */
+  hourly: TimePoint[] | null;
+  /** Minute points covering the last RECENT_HOURS hours. */
   recent: TimePoint[] | null;
 }
 
 export async function getProbabilityHistory(market: KalshiMarket, asOf: number): Promise<ProbabilityHistory> {
-  const series = await getSeriesTicker(market.eventTicker);
+  let series: string;
+  try {
+    series = await getSeriesTicker(market.eventTicker);
+  } catch {
+    return { hourly: null, recent: null };
+  }
   const end = Math.floor(asOf / 1000);
   const [hourly, recent] = await Promise.allSettled([
     getCandles(series, market.ticker, end - HISTORY_DAYS * 24 * 60 * 60, end, HOURLY),
     getCandles(series, market.ticker, end - RECENT_HOURS * 60 * 60, end, MINUTE),
   ]);
   return {
-    hourly: hourly.status === "fulfilled" ? hourly.value : [],
+    hourly: hourly.status === "fulfilled" ? hourly.value : null,
     recent: recent.status === "fulfilled" ? recent.value : null,
   };
+}
+
+/** A probability change, or the reason there isn't one. */
+function changeOver(
+  history: TimePoint[] | null,
+  current: number | null,
+  lookbackMs: number,
+  asOf: number,
+  live: boolean,
+): KalshiChange {
+  const none = { pp: null, from: null };
+  if (!live) return { ...none, unavailable: "market_not_live" };
+  if (current === null) return { ...none, unavailable: "no_probability" };
+  if (history === null) return { ...none, unavailable: "history_failed" };
+  const change = probabilityChange(history, current, lookbackMs, asOf);
+  return { ...change, unavailable: change.pp === null ? "not_enough_history" : null };
 }
 
 /** Market snapshot, history, and derived metrics for one Kalshi market. */
@@ -133,36 +158,40 @@ export async function getKalshiOverview(ticker: string): Promise<Result<KalshiOv
     if (err instanceof KalshiHttpError && err.status === 429) {
       return fail("rate_limited", "Kalshi rate limit reached. Please wait a moment and try again.");
     }
+    if (isTimeout(err)) {
+      return fail("timeout", "Kalshi didn't respond in time. Please try again shortly.");
+    }
     return fail("unavailable", "Could not reach the Kalshi API. Please try again shortly.");
   }
 
   const fetchedAt = Date.now();
+  const phase = marketPhase(market.status);
+  // Only an open market has live quotes. Once trading stops, the last trade is a
+  // historical price, not a probability, so no live metrics are derived from it.
+  const live = phase === "open";
 
-  // History is optional: show the snapshot even if candlesticks are unavailable.
-  let history: ProbabilityHistory = { hourly: [], recent: null };
-  try {
-    history = await getProbabilityHistory(market, fetchedAt);
-  } catch {
-    // Keep the empty history.
-  }
+  // History is optional: show the snapshot even if candlesticks fail to load.
+  const history = await getProbabilityHistory(market, fetchedAt);
 
-  const { value: probability, source } = impliedProbability(market.yesBid, market.yesAsk, market.lastPrice);
+  const { value: probability, source } = live
+    ? impliedProbability(market.yesBid, market.yesAsk, market.lastPrice)
+    : { value: null, source: "unavailable" as const };
 
   // Hourly candles alone would compare against a point up to 2 hours old, so the
   // 1h change uses minute candles, merged onto the hourly series in case the market
   // was quiet for the whole minute window. Without minute data, show no 1h change
   // rather than an imprecise one.
-  const change1h: ProbabilityChange = history.recent
-    ? probabilityChange(mergeSeries(history.hourly, history.recent), probability, HOUR_MS, fetchedAt)
-    : { pp: null, from: null };
+  const recent = history.recent === null ? null : mergeSeries(history.hourly ?? [], history.recent);
 
   return ok({
     market,
+    phase,
+    closePassed: market.closeTime !== null && Date.parse(market.closeTime) <= fetchedAt,
     probability,
     probabilitySource: source,
-    change1h,
-    change24h: probabilityChange(history.hourly, probability, 24 * HOUR_MS, fetchedAt),
-    uncertainty: uncertaintyScore(probability),
+    change1h: changeOver(recent, probability, HOUR_MS, fetchedAt, live),
+    change24h: changeOver(history.hourly, probability, 24 * HOUR_MS, fetchedAt, live),
+    uncertainty: live ? uncertaintyScore(probability) : null,
     history: history.hourly,
     fetchedAt,
   });

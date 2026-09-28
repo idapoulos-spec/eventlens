@@ -1,5 +1,4 @@
-import { Suspense } from "react";
-import { Dashboard, DashboardSkeleton } from "@/components/Dashboard";
+import { Dashboard } from "@/components/Dashboard";
 import { Disclaimer } from "@/components/Disclaimer";
 import { TickerForm } from "@/components/TickerForm";
 import { Notice } from "@/components/ui";
@@ -52,9 +51,8 @@ export default async function Home({ searchParams }: PageProps<"/">) {
           message={`To protect the shared market-data quota, each visitor can run ${ANALYSIS_LIMIT_SUMMARY}. Try again in ${formatWait(rateLimit.retryAfterSec)}.`}
         />
       ) : (
-        <Suspense key={`${stock.value}|${kalshi.value}`} fallback={<DashboardSkeleton />}>
-          <Dashboard stock={stock.value} kalshi={kalshi.value} />
-        </Suspense>
+        // The key remounts the dashboard for each new analysis, so every section shows its loading state again.
+        <Dashboard key={`${stock.value}|${kalshi.value}`} stock={stock.value} kalshi={kalshi.value} />
       )}
 
       <footer className="mt-10 border-t border-border pt-4">

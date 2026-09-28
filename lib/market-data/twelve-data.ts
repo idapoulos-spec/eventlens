@@ -2,6 +2,7 @@ import "server-only";
 
 import { realizedVolatility, relativeVolume } from "@/lib/analytics";
 import { cachedFor, LIVE } from "@/lib/fetch-cache";
+import { isTimeout, timeoutSignal } from "@/lib/request-timeout";
 import { fail, ok, type Result } from "@/lib/result";
 import { barCloseTime } from "./session";
 import type { RawError, RawQuote, RawTimeSeries, StockBar, StockOverview, StockQuote } from "./types";
@@ -36,6 +37,7 @@ async function twelveGet<T>(
   const res = await fetch(`${TWELVE_DATA_BASE_URL}${path}?${new URLSearchParams(params)}`, {
     ...cache,
     headers: { Authorization: `apikey ${apiKey}` },
+    signal: timeoutSignal(),
   });
   const body = (await res.json().catch(() => null)) as T | RawError | null;
   if (!body) throw new TwelveDataError(res.status, "Invalid response from Twelve Data");
@@ -112,6 +114,9 @@ function describeError(err: unknown, symbol: string, apiKey: string): Result<nev
   const detail = err instanceof Error ? err.message : String(err);
   console.error(`[twelve-data] ${symbol}: ${status} ${detail.replaceAll(apiKey, "[redacted]")}`);
 
+  if (isTimeout(err)) {
+    return fail("timeout", "Twelve Data didn't respond in time. Please try again shortly.");
+  }
   if (!(err instanceof TwelveDataError)) {
     return fail("unavailable", "Could not reach Twelve Data. Please try again shortly.");
   }

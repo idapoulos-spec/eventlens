@@ -74,7 +74,7 @@ All calculations are pure functions in `lib/analytics/`.
 
 | Metric | Definition |
 | --- | --- |
-| Implied probability | Midpoint of YES bid and YES ask: `(yesBid + yesAsk) / 2`. If one side of the book is empty, the last trade price is used. |
+| Implied probability | Midpoint of YES bid and YES ask: `(yesBid + yesAsk) / 2`. If one side of the book is empty, the last trade price is used. Only shown while a market is open for trading: closed and settled markets show their result instead, and no probability, change, or uncertainty is derived from their last trade. |
 | 1h change | Current probability minus the probability in effect exactly 60 minutes ago, in percentage points. Uses 1-minute candles. Kalshi only records a candle when something changes, so the comparison point is the last one at or before that moment; the dashboard shows its time. |
 | 24h change | Same as the 1h change, but against hourly candles, so the comparison point is 24–25 hours old. |
 | Uncertainty | Binary entropy `H(p) = −p·log₂p − (1−p)·log₂(1−p)`, scaled to 0–100. 100 at 50%, 0 at 0% or 100%. |
@@ -104,6 +104,7 @@ Third-party API calls live in `lib/kalshi` and `lib/market-data`, run only on th
 - Ticker inputs are validated on the server before any upstream request.
 - Users see fixed error messages. Twelve Data's own error text is logged on the server only, with the key redacted.
 - Each client IP can run 5 analyses a minute and 30 an hour (`lib/analysis-rate-limit.ts`).
+- Every upstream request times out after 6 seconds, and the Kalshi and stock sections load independently, so one slow API never hides the other's data.
 
 **How much the rate limit protects you.** The limiter keeps its counts in the server's memory. That is enough to stop one person repeatedly hammering the site, but it is not a hard guarantee:
 
