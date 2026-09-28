@@ -23,13 +23,9 @@ interface Props {
   currency: string;
 }
 
-interface Row extends AlignedPoint {
-  probabilityChange: number | null;
-}
-
 /** Tooltip content keyed off the hovered row, so every series shows at that timestamp. */
-function makeTooltip(render: (row: Row) => { color: string; label: string; value: string }[]) {
-  function TooltipContent({ active, payload }: { active?: boolean; payload?: readonly { payload?: Row }[] }) {
+function makeTooltip(render: (row: AlignedPoint) => { color: string; label: string; value: string }[]) {
+  function TooltipContent({ active, payload }: { active?: boolean; payload?: readonly { payload?: AlignedPoint }[] }) {
     const row = payload?.[0]?.payload;
     if (!active || !row) return null;
     return <ChartTooltip t={row.t} rows={render(row)} />;
@@ -52,14 +48,7 @@ const xAxisProps = {
 export function ComparisonChart({ points, stockSymbol, currency }: Props) {
   const [mode, setMode] = useState<Mode>("change");
 
-  const rows: Row[] = useMemo(() => {
-    const base = points[0]?.probability ?? null;
-    return points.map((p) => ({
-      ...p,
-      probabilityChange: p.probability !== null && base !== null ? p.probability - base : null,
-    }));
-  }, [points]);
-  const ticks = useMemo(() => dayTicks(rows), [rows]);
+  const ticks = useMemo(() => dayTicks(points), [points]);
 
   const probLabel = "Kalshi probability";
   const stockLabel = `${stockSymbol} return`;
@@ -96,7 +85,7 @@ export function ComparisonChart({ points, stockSymbol, currency }: Props) {
       {mode === "change" ? (
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={rows} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+            <LineChart data={points} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
               <CartesianGrid stroke={CHART_COLORS.grid} vertical={false} />
               <XAxis {...xAxisProps} ticks={ticks} />
               <YAxis
@@ -124,7 +113,7 @@ export function ComparisonChart({ points, stockSymbol, currency }: Props) {
         <div className="grid gap-2">
           <div className="h-44">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={rows} syncId="eventlens-levels" margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+              <LineChart data={points} syncId="eventlens-levels" margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
                 <CartesianGrid stroke={CHART_COLORS.grid} vertical={false} />
                 <XAxis {...xAxisProps} ticks={ticks} hide />
                 <YAxis
@@ -149,7 +138,7 @@ export function ComparisonChart({ points, stockSymbol, currency }: Props) {
           </div>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={rows} syncId="eventlens-levels" margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+              <LineChart data={points} syncId="eventlens-levels" margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
                 <CartesianGrid stroke={CHART_COLORS.grid} vertical={false} />
                 <XAxis {...xAxisProps} ticks={ticks} />
                 <YAxis

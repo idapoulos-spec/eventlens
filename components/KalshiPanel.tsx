@@ -1,5 +1,6 @@
+import type { ProbabilityChange } from "@/lib/analytics";
 import type { KalshiOverview } from "@/lib/kalshi";
-import { formatCents, formatCompact, formatProbability, formatSigned } from "@/lib/format";
+import { formatCents, formatCompact, formatDateTime, formatProbability, formatSigned } from "@/lib/format";
 import { Card, Delta, Stat } from "./ui";
 
 const SOURCE_LABEL = {
@@ -12,6 +13,16 @@ function uncertaintyLabel(score: number): string {
   if (score >= 80) return "High — close to a coin flip";
   if (score >= 40) return "Moderate";
   return "Low — market leans strongly one way";
+}
+
+function ChangeStat({ label, change }: { label: string; change: ProbabilityChange }) {
+  return (
+    <Stat
+      label={label}
+      value={<Delta value={change.pp} formatted={formatSigned(change.pp, 1, " pp")} />}
+      detail={change.from === null ? undefined : `vs. ${formatDateTime(change.from)}`}
+    />
+  );
 }
 
 export function KalshiPanel({ data }: { data: KalshiOverview }) {
@@ -41,8 +52,8 @@ export function KalshiPanel({ data }: { data: KalshiOverview }) {
         <Stat label="YES bid" value={formatCents(market.yesBid)} />
         <Stat label="YES ask" value={formatCents(market.yesAsk)} />
         <Stat label="Last price" value={formatCents(market.lastPrice)} />
-        <Stat label="1h change" value={<Delta value={data.change1hPp} formatted={formatSigned(data.change1hPp, 1, " pp")} />} />
-        <Stat label="24h change" value={<Delta value={data.change24hPp} formatted={formatSigned(data.change24hPp, 1, " pp")} />} />
+        <ChangeStat label="1h change" change={data.change1h} />
+        <ChangeStat label="24h change" change={data.change24h} />
         <Stat
           label="Uncertainty"
           value={data.uncertainty === null ? "—" : `${data.uncertainty.toFixed(0)} / 100`}

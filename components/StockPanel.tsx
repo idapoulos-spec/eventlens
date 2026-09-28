@@ -4,8 +4,7 @@ import { Card, Delta, Stat } from "./ui";
 
 export function StockPanel({ data }: { data: StockOverview }) {
   const { quote } = data;
-  const volumeVsAvg =
-    quote.volume !== null && quote.averageVolume ? `${((quote.volume / quote.averageVolume) * 100).toFixed(0)}% of average` : undefined;
+  const volumeVsAvg = data.relativeVolume === null ? undefined : `${data.relativeVolume.toFixed(0)}% of average`;
 
   return (
     <Card

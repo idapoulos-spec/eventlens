@@ -12,7 +12,10 @@ export interface StockQuote {
   isMarketOpen: boolean;
 }
 
-/** OHLCV bar. `t` is the bar's close time as a Unix timestamp in milliseconds. */
+/**
+ * OHLCV bar. `t` is a Unix timestamp in milliseconds: the close time for intraday
+ * bars, and 00:00 UTC of the trading date for daily bars.
+ */
 export interface StockBar {
   t: number;
   open: number;
@@ -30,6 +33,8 @@ export interface StockOverview {
   daily: StockBar[];
   /** Annualized 30-trading-day realized volatility, in percent. */
   realizedVol30d: number | null;
+  /** Today's volume as a percentage of average volume. */
+  relativeVolume: number | null;
   fetchedAt: number;
 }
 
@@ -57,5 +62,6 @@ export interface RawQuote {
 
 export interface RawTimeSeries {
   status: "ok";
+  meta?: { exchange_timezone?: string };
   values: { datetime: string; open: string; high: string; low: string; close: string; volume?: string }[];
 }

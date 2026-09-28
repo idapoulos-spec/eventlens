@@ -1,7 +1,8 @@
 import "server-only";
 
-import { realizedVolatility } from "@/lib/analytics";
+import { realizedVolatility, relativeVolume } from "@/lib/analytics";
 import { fail, ok, type Result } from "@/lib/result";
+import { barCloseTime } from "./session";
 import type { RawError, RawQuote, RawTimeSeries, StockBar, StockOverview, StockQuote } from "./types";
 
 const TWELVE_DATA_BASE_URL = "https://api.twelvedata.com";
@@ -60,15 +61,19 @@ function normalizeQuote(raw: RawQuote): StockQuote {
   };
 }
 
-/** Twelve Data returns bar open times, newest first. Convert to close times, oldest first. */
+/**
+ * Twelve Data returns bar open times, newest first. Stamp intraday bars at their
+ * close time (see barCloseTime) and return them oldest first.
+ */
 function normalizeSeries(raw: RawTimeSeries, interval: Interval): StockBar[] {
-  const barMs = interval === "1h" ? HOUR_MS : 0;
+  const exchangeTimeZone = raw.meta?.exchange_timezone;
   return raw.values
     .map((v) => {
       // Requested with timezone=UTC, so datetimes are UTC ("YYYY-MM-DD" or "YYYY-MM-DD HH:mm:ss").
       const iso = v.datetime.length > 10 ? `${v.datetime.replace(" ", "T")}Z` : `${v.datetime}T00:00:00Z`;
+      const open = Date.parse(iso);
       return {
-        t: Date.parse(iso) + barMs,
+        t: interval === "1h" ? barCloseTime(open, HOUR_MS, exchangeTimeZone) : open,
         open: Number(v.open),
         high: Number(v.high),
         low: Number(v.low),
@@ -121,13 +126,15 @@ export async function getStockOverview(symbol: string): Promise<Result<StockOver
       getTimeSeries(symbol, "1day", 90, apiKey),
     ]);
 
+    const quote = normalizeQuote(rawQuote);
     const volWindow = daily.slice(-(VOL_WINDOW_DAYS + 1)).map((b) => b.close);
 
     return ok({
-      quote: normalizeQuote(rawQuote),
+      quote,
       intraday,
       daily,
       realizedVol30d: realizedVolatility(volWindow),
+      relativeVolume: relativeVolume(quote.volume, quote.averageVolume),
       fetchedAt: Date.now(),
     });
   } catch (err) {

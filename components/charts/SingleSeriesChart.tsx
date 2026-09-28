@@ -2,15 +2,15 @@
 
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { TimePoint } from "@/lib/analytics";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatProbability } from "@/lib/format";
 import { AXIS_TICK, CHART_COLORS, ChartTooltip, dayTicks } from "./ChartTooltip";
 
 interface Props {
   points: TimePoint[];
   color: "kalshi" | "stock";
   label: string;
-  /** How values appear in the tooltip and on the Y axis. */
-  format: "percent" | "currency";
+  /** How values appear in the tooltip and on the Y axis. "probability" expects values in [0, 1]. */
+  format: "probability" | "currency";
   currency?: string;
 }
 
@@ -18,8 +18,8 @@ interface Props {
 export function SingleSeriesChart({ points, color, label, format, currency = "USD" }: Props) {
   const stroke = CHART_COLORS[color];
   const fmt = (v: number, digits: number) =>
-    format === "percent"
-      ? `${v.toFixed(digits)}%`
+    format === "probability"
+      ? formatProbability(v, digits)
       : new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: digits }).format(v);
 
   return (

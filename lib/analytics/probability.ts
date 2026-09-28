@@ -1,6 +1,6 @@
-import type { ProbabilityEstimate, TimePoint } from "./types";
+import type { ProbabilityChange, ProbabilityEstimate, TimePoint } from "./types";
 
-const HOUR_MS = 60 * 60 * 1000;
+export const HOUR_MS = 60 * 60 * 1000;
 
 function isPrice(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
@@ -33,30 +33,26 @@ export function impliedProbability(
 /**
  * Change in probability over a lookback window, in percentage points.
  *
- * Compares `current` against the latest historical point at or before
- * `asOf - lookbackMs`. Returns null if history does not reach back far enough.
+ * Compares `current` against the probability in effect at `asOf - lookbackMs`:
+ * the latest point in the chronologically sorted `history` at or before that
+ * moment. Kalshi only emits candles when something changes, so that point is
+ * the prevailing value even if its timestamp is a little earlier. The result's
+ * precision is therefore the resolution of `history`: use minute candles for
+ * short lookbacks.
  */
-export function probabilityChangePp(
+export function probabilityChange(
   history: TimePoint[],
   current: number | null,
   lookbackMs: number,
   asOf: number = Date.now(),
-): number | null {
-  if (current === null) return null;
-
+): ProbabilityChange {
   const cutoff = asOf - lookbackMs;
   let reference: TimePoint | undefined;
   for (const point of history) {
     if (point.t > cutoff) break;
     reference = point;
   }
-  if (!reference) return null;
+  if (current === null || !reference) return { pp: null, from: null };
 
-  return (current - reference.value) * 100;
+  return { pp: (current - reference.value) * 100, from: reference.t };
 }
-
-export const probabilityChange1hPp = (history: TimePoint[], current: number | null, asOf?: number) =>
-  probabilityChangePp(history, current, HOUR_MS, asOf);
-
-export const probabilityChange24hPp = (history: TimePoint[], current: number | null, asOf?: number) =>
-  probabilityChangePp(history, current, 24 * HOUR_MS, asOf);

@@ -64,10 +64,10 @@ export async function Dashboard({ stock, kalshi }: { stock: string; kalshi: stri
         <Card title="Kalshi implied probability" subtitle="Hourly midpoint, last 7 days">
           {k.ok && k.data.history.length > 1 ? (
             <SingleSeriesChart
-              points={k.data.history.map((p) => ({ t: p.t, value: p.value * 100 }))}
+              points={k.data.history}
               color="kalshi"
               label="Implied probability"
-              format="percent"
+              format="probability"
             />
           ) : (
             <Notice tone="info" title="No history" message="No probability history is available for this market." />

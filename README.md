@@ -73,10 +73,12 @@ All calculations are pure functions in `lib/analytics/`.
 | Metric | Definition |
 | --- | --- |
 | Implied probability | Midpoint of YES bid and YES ask: `(yesBid + yesAsk) / 2`. If one side of the book is empty, the last trade price is used. |
-| 1h / 24h change | Current probability minus the hourly probability 1h / 24h ago, in percentage points. |
+| 1h change | Current probability minus the probability in effect exactly 60 minutes ago, in percentage points. Uses 1-minute candles. Kalshi only records a candle when something changes, so the comparison point is the last one at or before that moment; the dashboard shows its time. |
+| 24h change | Same as the 1h change, but against hourly candles, so the comparison point is 24–25 hours old. |
 | Uncertainty | Binary entropy `H(p) = −p·log₂p − (1−p)·log₂(1−p)`, scaled to 0–100. 100 at 50%, 0 at 0% or 100%. |
 | Realized volatility | Sample standard deviation of the last 30 daily log returns, annualized with √252. |
-| Alignment | The two hourly series are merged on the union of their timestamps, each carrying forward its last value (an as-of join). |
+| Relative volume | Today's volume as a percentage of average volume. |
+| Alignment | The two hourly series are merged on the union of their timestamps, each carrying forward its last value (an as-of join). Stock bars are stamped at their close time; for US stocks the shortened last bar of the day is stamped at the 4:00 PM New York close. |
 
 ## Project structure
 

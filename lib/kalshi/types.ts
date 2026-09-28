@@ -1,4 +1,4 @@
-import type { ProbabilitySource, TimePoint } from "@/lib/analytics";
+import type { ProbabilityChange, ProbabilitySource, TimePoint } from "@/lib/analytics";
 
 /** Normalized Kalshi market. Prices are in dollars (0–1), i.e. probability units. */
 export interface KalshiMarket {
@@ -19,8 +19,10 @@ export interface KalshiOverview {
   market: KalshiMarket;
   probability: number | null;
   probabilitySource: ProbabilitySource;
-  change1hPp: number | null;
-  change24hPp: number | null;
+  /** Compared against minute-level history. */
+  change1h: ProbabilityChange;
+  /** Compared against hourly history, so the reference point is 24–25 hours old. */
+  change24h: ProbabilityChange;
   uncertainty: number | null;
   /** Hourly implied probability history (0–1), oldest first. */
   history: TimePoint[];

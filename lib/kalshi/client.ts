@@ -1,10 +1,12 @@
 import "server-only";
 
 import {
+  HOUR_MS,
   impliedProbability,
-  probabilityChange1hPp,
-  probabilityChange24hPp,
+  mergeSeries,
+  probabilityChange,
   uncertaintyScore,
+  type ProbabilityChange,
   type TimePoint,
 } from "@/lib/analytics";
 import { fail, ok, type Result } from "@/lib/result";
@@ -13,7 +15,9 @@ import type { KalshiMarket, KalshiOverview, RawCandlestick, RawEvent, RawMarket 
 // Public, unauthenticated market-data endpoints of the Kalshi Trade API v2.
 const KALSHI_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2";
 const HISTORY_DAYS = 7;
+const RECENT_HOURS = 3;
 const HOURLY = 60;
+const MINUTE = 1;
 
 class KalshiHttpError extends Error {
   constructor(public status: number) {
@@ -70,24 +74,50 @@ export async function getMarket(ticker: string): Promise<KalshiMarket> {
   return normalizeMarket(data.market);
 }
 
-/** Hourly implied-probability history. Candlesticks are keyed by series, so resolve it via the event. */
-export async function getProbabilityHistory(market: KalshiMarket, days = HISTORY_DAYS): Promise<TimePoint[]> {
-  const { event } = await kalshiGet<{ event: RawEvent }>(
-    `/events/${encodeURIComponent(market.eventTicker)}`,
-    3600,
-  );
-  const end = Math.floor(Date.now() / 1000);
-  const start = end - days * 24 * 60 * 60;
+/** Candlesticks are keyed by series, so resolve the series via the market's event. */
+async function getSeriesTicker(eventTicker: string): Promise<string> {
+  const { event } = await kalshiGet<{ event: RawEvent }>(`/events/${encodeURIComponent(eventTicker)}`, 3600);
+  return event.series_ticker;
+}
+
+/** Implied-probability points from candlesticks of `periodMinutes` (1, 60, or 1440). */
+async function getCandles(
+  seriesTicker: string,
+  marketTicker: string,
+  startSec: number,
+  endSec: number,
+  periodMinutes: number,
+): Promise<TimePoint[]> {
   const query = new URLSearchParams({
-    start_ts: String(start),
-    end_ts: String(end),
-    period_interval: String(HOURLY),
+    start_ts: String(startSec),
+    end_ts: String(endSec),
+    period_interval: String(periodMinutes),
   });
   const data = await kalshiGet<{ candlesticks?: RawCandlestick[] }>(
-    `/series/${encodeURIComponent(event.series_ticker)}/markets/${encodeURIComponent(market.ticker)}/candlesticks?${query}`,
+    `/series/${encodeURIComponent(seriesTicker)}/markets/${encodeURIComponent(marketTicker)}/candlesticks?${query}`,
     60,
   );
   return normalizeCandles(data.candlesticks ?? []);
+}
+
+interface ProbabilityHistory {
+  /** Hourly points covering the last HISTORY_DAYS days. */
+  hourly: TimePoint[];
+  /** Minute points covering the last RECENT_HOURS hours, or null if unavailable. */
+  recent: TimePoint[] | null;
+}
+
+export async function getProbabilityHistory(market: KalshiMarket, asOf: number): Promise<ProbabilityHistory> {
+  const series = await getSeriesTicker(market.eventTicker);
+  const end = Math.floor(asOf / 1000);
+  const [hourly, recent] = await Promise.allSettled([
+    getCandles(series, market.ticker, end - HISTORY_DAYS * 24 * 60 * 60, end, HOURLY),
+    getCandles(series, market.ticker, end - RECENT_HOURS * 60 * 60, end, MINUTE),
+  ]);
+  return {
+    hourly: hourly.status === "fulfilled" ? hourly.value : [],
+    recent: recent.status === "fulfilled" ? recent.value : null,
+  };
 }
 
 /** Market snapshot, history, and derived metrics for one Kalshi market. */
@@ -105,25 +135,34 @@ export async function getKalshiOverview(ticker: string): Promise<Result<KalshiOv
     return fail("unavailable", "Could not reach the Kalshi API. Please try again shortly.");
   }
 
+  const fetchedAt = Date.now();
+
   // History is optional: show the snapshot even if candlesticks are unavailable.
-  let history: TimePoint[] = [];
+  let history: ProbabilityHistory = { hourly: [], recent: null };
   try {
-    history = await getProbabilityHistory(market);
+    history = await getProbabilityHistory(market, fetchedAt);
   } catch {
-    history = [];
+    // Keep the empty history.
   }
 
-  const fetchedAt = Date.now();
   const { value: probability, source } = impliedProbability(market.yesBid, market.yesAsk, market.lastPrice);
+
+  // Hourly candles alone would compare against a point up to 2 hours old, so the
+  // 1h change uses minute candles, merged onto the hourly series in case the market
+  // was quiet for the whole minute window. Without minute data, show no 1h change
+  // rather than an imprecise one.
+  const change1h: ProbabilityChange = history.recent
+    ? probabilityChange(mergeSeries(history.hourly, history.recent), probability, HOUR_MS, fetchedAt)
+    : { pp: null, from: null };
 
   return ok({
     market,
     probability,
     probabilitySource: source,
-    change1hPp: probabilityChange1hPp(history, probability, fetchedAt),
-    change24hPp: probabilityChange24hPp(history, probability, fetchedAt),
+    change1h,
+    change24h: probabilityChange(history.hourly, probability, 24 * HOUR_MS, fetchedAt),
     uncertainty: uncertaintyScore(probability),
-    history,
+    history: history.hourly,
     fetchedAt,
   });
 }
