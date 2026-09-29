@@ -79,3 +79,15 @@ export interface RawTimeSeries {
   meta?: { exchange_timezone?: string };
   values: { datetime: string; open: string; high: string; low: string; close: string; volume?: string }[];
 }
+
+/** One entry of /stocks or /etfs. /etfs entries have no `type`. */
+export interface RawSymbol {
+  symbol: string;
+  name?: string;
+  exchange?: string;
+  type?: string;
+}
+
+export interface RawSymbolList {
+  data: RawSymbol[];
+}
