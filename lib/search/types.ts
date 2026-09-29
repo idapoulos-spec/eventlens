@@ -64,6 +64,8 @@ interface SearchFieldProps<T> {
    * and the result itself when the user picks one.
    */
   onSelect: (ticker: string, result: T | null) => void;
+  /** True when TickerForm rejected this field's ticker; the field shows it with aria-invalid and a red border. */
+  invalid?: boolean;
 }
 
 export type StockSearchProps = SearchFieldProps<StockSearchResult>;

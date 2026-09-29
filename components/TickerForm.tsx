@@ -12,18 +12,20 @@ export const EXAMPLES = [
   { stock: "SPY", kalshi: "KXRECSSNBER-27", label: "US recession in 2027" },
 ];
 
+type Field = "stock" | "kalshi";
+
 export function TickerForm({ initialStock = "", initialKalshi = "" }: { initialStock?: string; initialKalshi?: string }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [stock, setStock] = useState(initialStock);
   const [kalshi, setKalshi] = useState(initialKalshi);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ field: Field; message: string } | null>(null);
 
   function analyze(stockInput: string, kalshiInput: string) {
     const s = validateStockTicker(stockInput);
     const k = validateKalshiTicker(kalshiInput);
-    if (!s.ok) return setError(s.message);
-    if (!k.ok) return setError(k.message);
+    if (!s.ok) return setError({ field: "stock", message: s.message });
+    if (!k.ok) return setError({ field: "kalshi", message: k.message });
     setError(null);
     setStock(s.value);
     setKalshi(k.value);
@@ -40,8 +42,8 @@ export function TickerForm({ initialStock = "", initialKalshi = "" }: { initialS
     <div>
       <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_auto] sm:items-end">
         {/* Both fields accept a typed ticker as well as a picked search result. */}
-        <StockSearch value={stock} onSelect={(ticker) => setStock(ticker)} />
-        <KalshiSearch value={kalshi} onSelect={(ticker) => setKalshi(ticker)} />
+        <StockSearch value={stock} onSelect={(ticker) => setStock(ticker)} invalid={error?.field === "stock"} />
+        <KalshiSearch value={kalshi} onSelect={(ticker) => setKalshi(ticker)} invalid={error?.field === "kalshi"} />
         <button
           type="submit"
           disabled={isPending}
@@ -58,7 +60,7 @@ export function TickerForm({ initialStock = "", initialKalshi = "" }: { initialS
       </form>
       {error && (
         <p role="alert" className="mt-2 text-sm text-down">
-          {error}
+          {error.message}
         </p>
       )}
       <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">

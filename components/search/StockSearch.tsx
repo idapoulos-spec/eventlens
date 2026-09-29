@@ -8,7 +8,7 @@ import { inputClass, inputProps, labelTextClass } from "./field";
  * onSelect; no search yet. The name "stock" lets the form submit as
  * /?stock=… before JavaScript loads.
  */
-export function StockSearch({ value, onSelect }: StockSearchProps) {
+export function StockSearch({ value, onSelect, invalid }: StockSearchProps) {
   return (
     <label className="block">
       <span className={labelTextClass}>Stock ticker</span>
@@ -17,6 +17,7 @@ export function StockSearch({ value, onSelect }: StockSearchProps) {
         name="stock"
         className={inputClass}
         value={value}
+        aria-invalid={invalid || undefined}
         onChange={(e) => onSelect(e.target.value, null)}
         placeholder="e.g. NVDA"
         maxLength={12}

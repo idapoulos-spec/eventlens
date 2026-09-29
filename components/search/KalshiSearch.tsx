@@ -8,7 +8,7 @@ import { inputClass, inputProps, labelTextClass } from "./field";
  * through onSelect; no search yet. The name "kalshi" lets the form submit as
  * /?kalshi=… before JavaScript loads.
  */
-export function KalshiSearch({ value, onSelect }: KalshiSearchProps) {
+export function KalshiSearch({ value, onSelect, invalid }: KalshiSearchProps) {
   return (
     <label className="block">
       <span className={labelTextClass}>Kalshi market ticker</span>
@@ -17,6 +17,7 @@ export function KalshiSearch({ value, onSelect }: KalshiSearchProps) {
         name="kalshi"
         className={inputClass}
         value={value}
+        aria-invalid={invalid || undefined}
         onChange={(e) => onSelect(e.target.value, null)}
         placeholder="e.g. KXFEDDECISION-26OCT-H25"
         maxLength={100}
