@@ -1,6 +1,7 @@
 import "server-only";
 
 import { headers } from "next/headers";
+import { clientIp } from "./client-ip";
 import { createRateLimiter, type RateLimitResult } from "./rate-limit";
 
 // Each analysis costs up to 3 Twelve Data credits, so cap how often one client can run them.
@@ -14,18 +15,7 @@ const limiter = createRateLimiter([
   { windowMs: 60 * 60 * 1000, max: PER_HOUR },
 ]);
 
-/**
- * Best-effort client IP. On Vercel, x-real-ip and x-forwarded-for are set by
- * Vercel's network and overwrite anything the client sends. Elsewhere they are
- * only as trustworthy as the proxy in front of the app.
- */
-async function getClientIp(): Promise<string> {
-  const h = await headers();
-  const forwarded = h.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return h.get("x-real-ip") || forwarded || "unknown";
-}
-
 /** Count one analysis against the caller's IP and report whether it is allowed. */
 export async function checkAnalysisRateLimit(): Promise<RateLimitResult> {
-  return limiter(await getClientIp());
+  return limiter(clientIp(await headers()));
 }
