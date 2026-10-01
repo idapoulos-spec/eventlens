@@ -1,7 +1,7 @@
 // Hand-picked symbols for stock search. Twelve Data's symbol lists have no popularity or
 // volume data, and some well-known names aren't in a company's listed name, so without this
 // list "s&p 500" would rank Vanguard's ETF (the shortest name) above SPY, and "google" would
-// find nothing (Alphabet Inc.).
+// find Google-themed ETFs but not GOOGL (listed as Alphabet Inc.).
 
 export interface PopularSymbol {
   symbol: string;
