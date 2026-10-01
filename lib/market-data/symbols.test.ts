@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { validateStockTicker } from "@/lib/validation";
+import { POPULAR_SYMBOLS } from "./popular";
 import { buildSymbolIndex, searchSymbols } from "./symbols";
 import type { RawSymbol } from "./types";
 
@@ -20,6 +22,10 @@ const STOCKS = [
   stock("BRKC", "Brick Capital Inc.", "NYSE"),
   stock("BAC", "Bank of America Corporation", "NYSE"),
   stock("BAC.PR.S", "Bank of America Corporation Pref. Series S", "NYSE", "Preferred Stock"),
+  stock("GOOG", "Alphabet Inc."),
+  stock("GOOGL", "Alphabet Inc."),
+  stock("META", "Meta Platforms, Inc."),
+  stock("DOW", "Dow Inc.", "NYSE"),
   stock("KO", "The Coca-Cola Company", "NYSE"),
   stock("COKE", "Coca-Cola Consolidated Inc."),
   stock("T", "AT&T Inc.", "NYSE"),
@@ -44,6 +50,9 @@ const ETFS = [
   etf("SPY", "State Street SPDR S&P 500 ETF Trust"),
   etf("SPYX", "SPDR S&P 500 Fossil Fuel Reserves Free ETF"),
   etf("VOO", "Vanguard S&P 500 ETF"),
+  etf("IVV", "iShares Core S&P 500 ETF"),
+  etf("SPLG", "SPDR Portfolio S&P 500 ETF"),
+  etf("DIA", "SPDR Dow Jones Industrial Average ETF Trust"),
   etf("NVDL", "GraniteShares 2x Long NVDA Daily ETF", "NASDAQ"),
   etf("BRTR", "iShares Total Return Active ETF", "NASDAQ"),
   // Mutual fund and unit investment trust quoted through Nasdaq's fund network.
@@ -96,7 +105,8 @@ describe("searchSymbols", () => {
   });
 
   it("matches ticker prefixes, class shares before longer tickers", () => {
-    expect(symbols("brk")).toEqual(["BRK.A", "BRK.B", "BRKC"]);
+    // BRK.B is popular, so it comes before BRK.A.
+    expect(symbols("brk")).toEqual(["BRK.B", "BRK.A", "BRKC"]);
   });
 
   it("finds companies by name, listed common stock before REITs' longer names and OTC listings", () => {
@@ -135,13 +145,46 @@ describe("searchSymbols", () => {
     expect(symbols("os")).toEqual([]);
   });
 
-  it("breaks ties between name matches by name length, and returns at most `limit` results", () => {
-    expect(symbols("s&p 500")).toEqual(["VOO", "SPY", "SPYX"]);
-    expect(symbols("s&p 500", 2)).toEqual(["VOO", "SPY"]);
+  it("breaks ties between name matches by popularity, then name length, and returns at most `limit` results", () => {
+    // SPY is first as the alias; VOO is popular; the rest are equally good matches.
+    expect(symbols("s&p 500")).toEqual(["SPY", "VOO", "IVV", "SPLG", "SPYX"]);
+    expect(symbols("s&p 500", 2)).toEqual(["SPY", "VOO"]);
+  });
+
+  it("finds popular symbols by common names that aren't in the company's name", () => {
+    expect(symbols("google")).toEqual(["GOOGL", "GOOG"]);
+    expect(symbols("Facebook")).toEqual(["META"]);
+    for (const query of ["s&p 500", "S&P500", "sp 500", "S & P 500"]) expect(symbols(query)[0]).toBe("SPY");
+  });
+
+  it("matches the start of an alias like the start of a name", () => {
+    expect(symbols("goog")).toEqual(["GOOG", "GOOGL"]);
+    expect(symbols("faceb")).toEqual(["META"]);
+    expect(symbols("s&p")[0]).toBe("SPY");
+  });
+
+  it("puts an exact ticker before an alias", () => {
+    expect(symbols("dow")).toEqual(["DOW", "DIA"]);
+    expect(symbols("dow jones")).toEqual(["DIA"]);
+  });
+
+  it("ranks popular symbols first among equally good matches, in the list's order", () => {
+    expect(symbols("alphabet")).toEqual(["GOOGL", "GOOG"]);
   });
 
   it("returns nothing for text with no letters or digits, or no match", () => {
     expect(symbols("&&")).toEqual([]);
     expect(symbols("zzzz")).toEqual([]);
+  });
+});
+
+describe("POPULAR_SYMBOLS", () => {
+  it("lists each valid ticker once, with aliases that have letters or digits", () => {
+    const listed = POPULAR_SYMBOLS.map((p) => p.symbol);
+    expect(new Set(listed).size).toBe(listed.length);
+    for (const { symbol, aliases = [] } of POPULAR_SYMBOLS) {
+      expect(validateStockTicker(symbol)).toEqual({ ok: true, value: symbol });
+      for (const alias of aliases) expect(alias).toMatch(/[a-z0-9]/);
+    }
   });
 });
