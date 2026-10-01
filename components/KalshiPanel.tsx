@@ -27,10 +27,18 @@ const NOT_LIVE_NOTE: Record<Exclude<MarketPhase, "open">, string> = {
   not_trading: "Not scored: market not trading",
 };
 
-function uncertaintyLabel(score: number): string {
-  if (score >= 80) return "High — close to a coin flip";
-  if (score >= 40) return "Moderate";
-  return "Low — market leans strongly one way";
+/**
+ * Words for the uncertainty score, whose tiers they keep. The score measures only how far the
+ * probability is from certainty, the same on either side of 50% (70% scores like 30%), so the
+ * words say which side the market favors, and call it a coin flip only from 40% to 60% as shown.
+ */
+export function uncertaintyLabel(score: number, probability: number): string {
+  const percent = Number(formatProbability(probability).slice(0, -1));
+  if (percent >= 40 && percent <= 60) return "High — close to a coin flip";
+  const side = percent > 50 ? "YES" : "NO";
+  if (score >= 80) return `High — leans ${side}, but far from certain`;
+  if (score >= 40) return `Moderate — favors ${side}`;
+  return `Low — strongly favors ${side}`;
 }
 
 function resultLabel(result: string | null): string {
@@ -187,7 +195,11 @@ export function KalshiPanel({ data }: { data: KalshiOverview }) {
           label="Uncertainty"
           value={data.uncertainty === null ? "—" : `${data.uncertainty.toFixed(0)} / 100`}
           detail={
-            phase !== "open" ? NOT_LIVE_NOTE[phase] : data.uncertainty === null ? undefined : uncertaintyLabel(data.uncertainty)
+            phase !== "open"
+              ? NOT_LIVE_NOTE[phase]
+              : data.uncertainty === null || data.probability === null
+                ? undefined
+                : uncertaintyLabel(data.uncertainty, data.probability)
           }
         />
         <Stat label="24h volume" value={formatCompact(market.volume24h)} detail="contracts" />

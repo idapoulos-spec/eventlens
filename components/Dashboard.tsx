@@ -4,6 +4,7 @@ import { formatDateTime } from "@/lib/format";
 import { getKalshiOverview, getKalshiResearchHistory, type KalshiOverview } from "@/lib/kalshi";
 import { getStockOverview, type StockOverview } from "@/lib/market-data";
 import type { Result } from "@/lib/result";
+import { RememberAnalysis } from "./analysis/RecentAnalyses";
 import { ComparisonChart } from "./charts/ComparisonChart";
 import { SingleSeriesChart } from "./charts/SingleSeriesChart";
 import { tradingDayClose } from "./charts/time";
@@ -19,7 +20,8 @@ type StockResult = Promise<Result<StockOverview>>;
  * Starts every data request at once. Each section waits only for the data it
  * needs, so a slow Kalshi response never hides the stock data, or vice versa.
  * While a section loads, its card already shows its title, and a placeholder
- * the size of its content, so the page doesn't jump as sections arrive.
+ * the size of its content, so the page doesn't jump as sections arrive; each
+ * section then fades in over its placeholder.
  */
 export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) {
   const kalshiData = getKalshiOverview(kalshi);
@@ -31,10 +33,14 @@ export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) 
     <div className="grid gap-4 sm:gap-5">
       <div className="grid gap-4 sm:gap-5 lg:grid-cols-2">
         <Suspense fallback={<PanelSkeleton title={<KalshiTitle ticker={kalshi} />} label="Loading Kalshi market" stats={8} />}>
-          <KalshiSummary data={kalshiData} ticker={kalshi} />
+          <Reveal>
+            <KalshiSummary data={kalshiData} ticker={kalshi} />
+          </Reveal>
         </Suspense>
         <Suspense fallback={<PanelSkeleton title={<StockTitle symbol={stock} />} label="Loading stock data" stats={4} />}>
-          <StockSummary data={stockData} symbol={stock} />
+          <Reveal>
+            <StockSummary data={stockData} symbol={stock} />
+          </Reveal>
         </Suspense>
       </div>
 
@@ -45,7 +51,9 @@ export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) 
           </ComparisonCard>
         }
       >
-        <Comparison kalshiData={kalshiData} stockData={stockData} kalshi={kalshi} stock={stock} />
+        <Reveal>
+          <Comparison kalshiData={kalshiData} stockData={stockData} kalshi={kalshi} stock={stock} />
+        </Reveal>
       </Suspense>
 
       <div className="grid gap-4 sm:gap-5 lg:grid-cols-2">
@@ -56,7 +64,9 @@ export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) 
             </KalshiHistoryCard>
           }
         >
-          <KalshiHistory data={kalshiData} />
+          <Reveal>
+            <KalshiHistory data={kalshiData} />
+          </Reveal>
         </Suspense>
         <Suspense
           fallback={
@@ -65,7 +75,9 @@ export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) 
             </StockHistoryCard>
           }
         >
-          <StockHistory data={stockData} stock={stock} />
+          <Reveal>
+            <StockHistory data={stockData} stock={stock} />
+          </Reveal>
         </Suspense>
       </div>
 
@@ -76,14 +88,28 @@ export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) 
           </ResearchCard>
         }
       >
-        <Research kalshiData={kalshiData} stockData={stockData} historyData={researchHistory} stock={stock} kalshi={kalshi} />
+        <Reveal>
+          <Research kalshiData={kalshiData} stockData={stockData} historyData={researchHistory} stock={stock} kalshi={kalshi} />
+        </Reveal>
       </Suspense>
 
       <Suspense fallback={null}>
         <SourcesNote kalshiData={kalshiData} stockData={stockData} />
       </Suspense>
+
+      <Suspense fallback={null}>
+        <RememberRecent kalshiData={kalshiData} stockData={stockData} kalshi={kalshi} stock={stock} />
+      </Suspense>
     </div>
   );
+}
+
+/**
+ * Fades a section in as its data arrives, rather than letting it pop in over its
+ * placeholder. As a grid, it keeps the card stretched to its row's height.
+ */
+function Reveal({ children }: { children: ReactNode }) {
+  return <div className="grid transition-opacity duration-300 ease-out starting:opacity-0">{children}</div>;
 }
 
 // ---- Card titles, shared by each section's loading, error, and loaded states ----
@@ -241,6 +267,29 @@ async function StockHistory({ data, stock }: { data: StockResult; stock: string 
     );
   }
   return <StockHistoryCard stock={stock}>{content}</StockHistoryCard>;
+}
+
+// A ticker that doesn't exist, or that the Twelve Data plan doesn't cover, isn't worth coming back to.
+const UNUSABLE_TICKER = new Set(["not_found", "plan"]);
+
+/**
+ * Adds the analysis to this browser's recent analyses, named after its Kalshi market,
+ * once the data has loaded. Temporary failures (timeouts, rate limits) still count.
+ */
+async function RememberRecent({
+  kalshiData,
+  stockData,
+  kalshi,
+  stock,
+}: {
+  kalshiData: KalshiResult;
+  stockData: StockResult;
+  kalshi: string;
+  stock: string;
+}) {
+  const [k, s] = await Promise.all([kalshiData, stockData]);
+  if ((!k.ok && UNUSABLE_TICKER.has(k.error.code)) || (!s.ok && UNUSABLE_TICKER.has(s.error.code))) return null;
+  return <RememberAnalysis stock={stock} kalshi={kalshi} title={k.ok ? k.data.market.title : null} />;
 }
 
 async function SourcesNote({ kalshiData, stockData }: { kalshiData: KalshiResult; stockData: StockResult }) {

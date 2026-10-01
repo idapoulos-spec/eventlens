@@ -30,13 +30,13 @@ const DAY_SEC = 24 * HOUR_SEC;
 const HOURLY = 60;
 const MINUTE = 1;
 
-class KalshiHttpError extends Error {
+export class KalshiHttpError extends Error {
   constructor(public status: number) {
     super(`Kalshi API responded with ${status}`);
   }
 }
 
-async function kalshiGet<T>(path: string, cache: RequestInit): Promise<T> {
+export async function kalshiGet<T>(path: string, cache: RequestInit): Promise<T> {
   const res = await fetch(`${KALSHI_BASE_URL}${path}`, {
     ...cache,
     headers: { Accept: "application/json" },
@@ -68,7 +68,7 @@ function describeError(err: unknown, ticker: string): Result<never> {
  */
 const windowEndSec = (asOf: number) => Math.floor(asOf / 60_000) * 60;
 
-function toNumber(value: string | number | null | undefined): number | null {
+export function toNumber(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined || value === "") return null;
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? n : null;

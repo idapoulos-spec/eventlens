@@ -73,6 +73,23 @@ export interface RawMarket {
   close_time?: string | null;
 }
 
+export interface RawEvent {
+  event_ticker: string;
+  series_ticker?: string;
+  title?: string;
+  sub_title?: string;
+  /** Deprecated by Kalshi in favor of the series' category, but still filled in. */
+  category?: string;
+  /** Only with `with_nested_markets=true`. */
+  markets?: RawMarket[];
+}
+
+/** One page of GET /events; `cursor` is empty on the last page. */
+export interface RawEventsPage {
+  events?: RawEvent[];
+  cursor?: string;
+}
+
 export interface RawTrade {
   created_time: string;
 }

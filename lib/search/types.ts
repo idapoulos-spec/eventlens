@@ -21,6 +21,11 @@ export interface KalshiSearchResult {
   ticker: string;
   /** The market's own title, e.g. "Will the Fed hike 25bps?". */
   title: string;
+  /**
+   * What tells the market apart from others in its event with the same title: its YES side,
+   * e.g. "Pietro Parolin" for "Who will the next Pope be?". Absent when the title is enough.
+   */
+  subtitle?: string;
   /** Title of the event the market belongs to. */
   eventTitle: string;
   /** Kalshi's category for the event, e.g. "Economics". */
