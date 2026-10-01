@@ -173,6 +173,22 @@ export class ResultCache {
   }
 }
 
+/** Results the Kalshi field loaded recently; TickerForm reads them too (see isKalshiSearchText). */
+export const kalshiResults = new ResultCache();
+
+/**
+ * Whether `text`, submitted without picking a result, is a search rather than a market
+ * ticker: the field found markets for it, none with it as its ticker, and it has no "-"
+ * (market tickers start with their event's ticker and a "-"). A single word such as
+ * "recession" passes validateKalshiTicker, but analyzing it would only fail. Sends no request.
+ */
+export function isKalshiSearchText(text: string, results: ResultCache = kalshiResults): boolean {
+  const query = searchableQuery(text);
+  if (query === null || query.includes("-")) return false;
+  const found = results.get(query);
+  return !!found?.length && !found.some((r) => r.ticker === query.toUpperCase());
+}
+
 // ---- Formatting ----
 
 /** Whole percents like Kalshi, but never a rounded "0%" or "100%" for an open market. */

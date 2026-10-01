@@ -2,13 +2,15 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { validateKalshiTicker, validateStockTicker } from "@/lib/validation";
+import { validateKalshiTicker, validateStockTicker, type Validated } from "@/lib/validation";
 import { useAnalysisFlow } from "./analysis/AnalysisFlow";
 import { AnalysisLink } from "./analysis/AnalysisLink";
 import { analysisHref, submitAction, type Analysis } from "./analysis/navigation";
 import { RecentAnalyses } from "./analysis/RecentAnalyses";
 import { KalshiSearch } from "./search/KalshiSearch";
+import { isKalshiSearchText } from "./search/KalshiSearchModel";
 import { StockSearch } from "./search/StockSearch";
+import { unlistedTickerMatch } from "./search/StockSearchFetch";
 
 export const EXAMPLES = [
   { stock: "NVDA", kalshi: "KXNASDAQ100Y-26DEC31H1600-T33000", label: "Nasdaq-100 above 33,000 at year-end" },
@@ -24,6 +26,29 @@ export type PageView = "start" | "analysis" | "notice";
 /** The analysis in the URL, if both tickers are valid. The page passes valid tickers normalized. */
 function urlAnalysis(stock: string, kalshi: string): Analysis | null {
   return validateStockTicker(stock).ok && validateKalshiTicker(kalshi).ok ? { stock, kalshi } : null;
+}
+
+// Both fields also take search text. Text that isn't a ticker is pointed to the search results,
+// and so is text that looks like one but that the field's search found to be a name or keyword
+// (e.g. "nvidia"): analyzing it would spend Twelve Data credits on an error.
+
+/** The stock field's ticker, or why it can't be analyzed. */
+function checkStock(text: string): Validated {
+  const ticker = validateStockTicker(text);
+  if (!ticker.ok) return text.trim() ? { ok: false, message: "Pick a stock from the list, or enter a ticker such as NVDA." } : ticker;
+  const match = unlistedTickerMatch(text);
+  if (!match) return ticker;
+  return {
+    ok: false,
+    message: `No US stock or ETF has the ticker ${ticker.value}. Pick one from the list, such as ${match.symbol} (${match.name}).`,
+  };
+}
+
+/** The Kalshi field's ticker, or why it can't be analyzed. */
+function checkKalshi(text: string): Validated {
+  const ticker = validateKalshiTicker(text);
+  if (!text.trim() || (ticker.ok && !isKalshiSearchText(text))) return ticker;
+  return { ok: false, message: "Pick a market from the list, or paste a Kalshi market ticker." };
 }
 
 /** On touch screens, close the on-screen keyboard so the results have the screen. */
@@ -66,8 +91,8 @@ export function TickerForm({
   }, [view, initialStock, initialKalshi]);
 
   function analyze(stockInput: string, kalshiInput: string) {
-    const s = validateStockTicker(stockInput);
-    const k = validateKalshiTicker(kalshiInput);
+    const s = checkStock(stockInput);
+    const k = checkKalshi(kalshiInput);
     if (!s.ok) return setError({ field: "stock", message: s.message });
     if (!k.ok) return setError({ field: "kalshi", message: k.message });
     setError(null);

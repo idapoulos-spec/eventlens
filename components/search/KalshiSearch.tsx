@@ -8,7 +8,7 @@ import {
   DEBOUNCE_MS,
   fetchKalshiSearch,
   initialSearchState,
-  ResultCache,
+  kalshiResults,
   searchableQuery,
   searchReducer,
   SLOW_SEARCH_MS,
@@ -27,10 +27,17 @@ export function KalshiSearch({ value, onSelect, invalid }: KalshiSearchProps) {
   const listboxId = `${id}listbox`;
   const optionId = (index: number) => `${id}option-${index}`;
   const [state, dispatch] = useReducer(searchReducer, initialSearchState);
-  const [cache] = useState(() => new ResultCache());
   const wrapperRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { query, status, attempt, active, open, results } = state;
+
+  // TickerForm also changes the text itself (Clear, Back, a recent analysis). The search
+  // for the old text no longer applies, so focusing the field doesn't show it again.
+  const [ownText, setOwnText] = useState(value);
+  if (value !== ownText) {
+    setOwnText(value);
+    dispatch({ type: "reset" });
+  }
 
   // Search once typing pauses. A newer query aborts the older request, and the reducer
   // ignores any response that isn't for the current query.
@@ -42,7 +49,7 @@ export function KalshiSearch({ value, onSelect, invalid }: KalshiSearchProps) {
       try {
         const outcome = await fetchKalshiSearch(query, controller.signal);
         if (!outcome.ok) return dispatch({ type: "failed", query, message: outcome.message });
-        cache.set(query, outcome.results);
+        kalshiResults.set(query, outcome.results);
         dispatch({ type: "loaded", query, results: outcome.results });
       } catch {
         // Aborted: a newer query or an unmount replaced this search.
@@ -53,7 +60,7 @@ export function KalshiSearch({ value, onSelect, invalid }: KalshiSearchProps) {
       clearTimeout(slowTimer);
       controller.abort();
     };
-  }, [query, status, attempt, cache]);
+  }, [query, status, attempt]);
 
   // Keep the highlighted result in view as the arrow keys move through a scrolled list.
   useEffect(() => {
@@ -61,14 +68,16 @@ export function KalshiSearch({ value, onSelect, invalid }: KalshiSearchProps) {
   }, [id, open, active]);
 
   function pick(result: KalshiSearchResult) {
+    setOwnText(result.ticker);
     onSelect(result.ticker, result);
     dispatch({ type: "reset" });
   }
 
   function onChange(text: string) {
+    setOwnText(text);
     onSelect(text, null);
     const next = searchableQuery(text);
-    dispatch({ type: "input", query: next, cached: next === null ? undefined : cache.get(next) });
+    dispatch({ type: "input", query: next, cached: next === null ? undefined : kalshiResults.get(next) });
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {

@@ -5,6 +5,7 @@ import {
   formatChance,
   formatCloses,
   initialSearchState,
+  isKalshiSearchText,
   ResultCache,
   searchableQuery,
   searchReducer,
@@ -190,6 +191,29 @@ describe("ResultCache", () => {
     expect(cache.get("b", 0)).toBeUndefined();
     expect(cache.get("a", 0)).toEqual([A]);
     expect(cache.get("c", 0)).toEqual([C]);
+  });
+});
+
+describe("isKalshiSearchText", () => {
+  it("is true for text the field found markets for, none with it as its ticker", () => {
+    const cache = new ResultCache();
+    cache.set("recession", [A, B]);
+    expect(isKalshiSearchText(" Recession ", cache)).toBe(true);
+  });
+
+  it("is false until the field has found markets for the text, since it could still be a ticker", () => {
+    const cache = new ResultCache();
+    cache.set("nothing", []);
+    expect(isKalshiSearchText("inflation", cache)).toBe(false);
+    expect(isKalshiSearchText("nothing", cache)).toBe(false);
+  });
+
+  it("is false for text with a '-', as every market ticker has, or a ticker among the results", () => {
+    const cache = new ResultCache();
+    cache.set("KXA-1", [A, B]);
+    cache.set("kxodd", [result("KXODD")]);
+    expect(isKalshiSearchText("KXA-1", cache)).toBe(false);
+    expect(isKalshiSearchText("kxodd", cache)).toBe(false);
   });
 });
 

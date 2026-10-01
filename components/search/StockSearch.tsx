@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useReducer, type KeyboardEvent } from "react";
+import { useEffect, useId, useReducer, useState, type KeyboardEvent } from "react";
 import { MAX_SEARCH_QUERY_LENGTH, validateSearchQuery } from "@/lib/search/api";
 import type { StockSearchProps, StockSearchResult } from "@/lib/search/types";
 import { inputClass, inputProps, labelTextClass } from "./field";
@@ -28,6 +28,14 @@ export function StockSearch({ value, onSelect, invalid }: StockSearchProps) {
   const { query, status, open, active, results } = state;
   const expanded = open && results.length > 0;
 
+  // TickerForm also changes the text itself (Clear, Back, a recent analysis). The search
+  // for the old text no longer applies, so it isn't shown again.
+  const [ownText, setOwnText] = useState(value);
+  if (value !== ownText) {
+    setOwnText(value);
+    dispatch({ type: "reset" });
+  }
+
   // Search once typing pauses. Another edit cancels the pending search or request.
   useEffect(() => {
     if (status !== "loading") return;
@@ -54,6 +62,7 @@ export function StockSearch({ value, onSelect, invalid }: StockSearchProps) {
   }, [expanded, active, listboxId]);
 
   function edit(text: string) {
+    setOwnText(text);
     onSelect(text, null);
     const normalized = validateSearchQuery(text);
     const q = normalized.ok ? normalized.value : "";
@@ -61,6 +70,7 @@ export function StockSearch({ value, onSelect, invalid }: StockSearchProps) {
   }
 
   function pick(result: StockSearchResult) {
+    setOwnText(result.symbol);
     onSelect(result.symbol, result);
     dispatch({ type: "reset" });
   }

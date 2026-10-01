@@ -1,7 +1,7 @@
 // Browser client for GET /api/search/stocks. Results stay in memory for the page view, so
 // deleting back to an earlier query shows its results again without another request.
 
-import { SEARCH_QUERY_PARAM } from "@/lib/search/api";
+import { SEARCH_QUERY_PARAM, validateSearchQuery } from "@/lib/search/api";
 import type { SearchErrorResponse, StockSearchResponse, StockSearchResult } from "@/lib/search/types";
 
 const SEARCH_URL = "/api/search/stocks";
@@ -11,6 +11,21 @@ const cache = new Map<string, StockSearchResult[]>();
 
 export function cachedStockResults(query: string): StockSearchResult[] | undefined {
   return cache.get(query);
+}
+
+/**
+ * For text submitted without picking a result: the best match, if the field loaded results
+ * for the text and none of them has it as its ticker. Such text is most likely a name:
+ * "nvidia" passes validateStockTicker, but analyzing it would only spend Twelve Data credits
+ * on an error. Null when the text is a listed ticker or no results for it have loaded; sends
+ * no request.
+ */
+export function unlistedTickerMatch(text: string): StockSearchResult | null {
+  const query = validateSearchQuery(text);
+  const results = query.ok ? cache.get(query.value) : undefined;
+  if (!query.ok || !results?.length) return null;
+  const ticker = query.value.toUpperCase();
+  return results.some((r) => r.symbol === ticker) ? null : results[0];
 }
 
 function remember(query: string, results: StockSearchResult[]) {

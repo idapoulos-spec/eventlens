@@ -72,3 +72,23 @@ describe("fetchStockResults", () => {
     expect(client.cachedStockResults("nv")).toBeUndefined();
   });
 });
+
+describe("unlistedTickerMatch", () => {
+  it("returns the best result for text the search found to be a name, not a ticker", async () => {
+    stubSearchApi(() => Response.json({ query: "nvidia", results: [NVDA] }));
+    // Nothing is known before the search has run.
+    expect(client.unlistedTickerMatch("nvidia")).toBeNull();
+    await client.fetchStockResults("nvidia");
+    expect(client.unlistedTickerMatch(" nvidia ")).toEqual(NVDA);
+  });
+
+  it("returns null for a listed ticker, or text the search found nothing for", async () => {
+    stubSearchApi(() => Response.json({ query: "nvda", results: [NVDA] }));
+    await client.fetchStockResults("nvda");
+    expect(client.unlistedTickerMatch("nvda")).toBeNull();
+
+    stubSearchApi(() => Response.json({ query: "zzzz", results: [] }));
+    await client.fetchStockResults("zzzz");
+    expect(client.unlistedTickerMatch("zzzz")).toBeNull();
+  });
+});
