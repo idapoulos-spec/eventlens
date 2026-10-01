@@ -2,7 +2,7 @@ import "server-only";
 
 import { realizedVolatility, relativeVolume } from "@/lib/analytics";
 import { cachedFor, LIVE } from "@/lib/fetch-cache";
-import { isTimeout, timeoutSignal } from "@/lib/request-timeout";
+import { isTimeout, REQUEST_TIMEOUT_MS } from "@/lib/request-timeout";
 import { fail, ok, type Result } from "@/lib/result";
 import { barCloseTime, toHourlyBars } from "./session";
 import type { RawError, RawQuote, RawTimeSeries, StockBar, StockOverview, StockQuote } from "./types";
@@ -19,7 +19,7 @@ const DAILY_BARS = 90;
 
 type Interval = "30min" | "1day";
 
-class TwelveDataError extends Error {
+export class TwelveDataError extends Error {
   constructor(
     public code: number,
     message: string,
@@ -30,7 +30,7 @@ class TwelveDataError extends Error {
 
 let warnedMissingKey = false;
 
-function getApiKey(): string | null {
+export function getApiKey(): string | null {
   const key = process.env.TWELVE_DATA_API_KEY?.trim();
   if (!key && !warnedMissingKey) {
     // Setup instructions are for whoever runs the site, so they go to the server log, not the page.
@@ -43,17 +43,18 @@ function getApiKey(): string | null {
   return key ? key : null;
 }
 
-async function twelveGet<T>(
+export async function twelveGet<T>(
   path: string,
   params: Record<string, string>,
   apiKey: string,
   cache: RequestInit,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<T> {
   // The key goes in a header, not the URL, so it never appears in cached URLs or logs.
   const res = await fetch(`${TWELVE_DATA_BASE_URL}${path}?${new URLSearchParams(params)}`, {
     ...cache,
     headers: { Authorization: `apikey ${apiKey}` },
-    signal: timeoutSignal(),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const body = (await res.json().catch(() => null)) as T | RawError | null;
   if (!body) throw new TwelveDataError(res.status, "Invalid response from Twelve Data");
