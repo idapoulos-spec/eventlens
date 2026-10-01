@@ -95,7 +95,7 @@ function toEntries(event: RawEvent): Entry[] {
   const categoryWords = spaced(category);
 
   // Some events give every market the same title (e.g. "Who will the next Pope be?") and
-  // tell them apart only by the YES side, so those titles get it appended.
+  // tell them apart only by the YES side, so those markets get it as their subtitle.
   const titleCounts = new Map<string, number>();
   for (const m of markets) {
     const title = m.title || m.ticker;
@@ -109,7 +109,8 @@ function toEntries(event: RawEvent): Entry[] {
     return {
       result: {
         ticker: m.ticker,
-        title: yes && (titleCounts.get(title) ?? 0) > 1 ? `${title} — ${yes}` : title,
+        title,
+        ...(yes && (titleCounts.get(title) ?? 0) > 1 ? { subtitle: yes } : {}),
         eventTitle,
         category,
         status: "open",

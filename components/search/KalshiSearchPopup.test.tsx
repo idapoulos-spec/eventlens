@@ -15,7 +15,8 @@ const FED: KalshiSearchResult = {
 };
 const POPE: KalshiSearchResult = {
   ticker: "KXNEWPOPE-70-LANT",
-  title: "Who will the next Pope be? — Luis Antonio Tagle",
+  title: "Who will the next Pope be?",
+  subtitle: "Luis Antonio Tagle",
   eventTitle: "Who will the next Pope be?",
   category: "Elections",
   status: "open",
@@ -54,6 +55,8 @@ describe("KalshiSearchPopup", () => {
     expect(html).toContain('id="opt-1" role="option" aria-selected="true"');
     expect(html).toContain("Will the Fed hike rates by 25bps in October 2026?");
     expect(html).toContain("Fed decision in October 2026");
+    expect(html).toContain(">Who will the next Pope be?</p><p");
+    expect(html).toContain(">Luis Antonio Tagle</p>");
     expect(html).toContain("Economics · Closes Oct 28 · ");
     expect(html).toContain("KXFEDDECISION-26OCT-H25");
     expect(html).toContain("4%");

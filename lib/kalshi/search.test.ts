@@ -182,17 +182,21 @@ describe("searchKalshiMarkets", () => {
     expect(nasdaq.probability).toBe(0.37);
   });
 
-  it("adds the YES side to titles that repeat within an event, and has no probability without a quote", async () => {
+  it("gives markets whose titles repeat within an event their YES side as a subtitle, and has no probability without a quote", async () => {
     stubEvents([EVENTS]);
     const mod = await loadSearch();
     const pope = await results(mod, "pope");
 
-    expect(pope.map((r) => [r.title, r.probability])).toEqual([
-      ["Who will the next Pope be? — Pietro Parolin", expect.closeTo(0.42, 12)],
-      ["Who will the next Pope be? — Luis Antonio Tagle", null],
+    expect(pope.map((r) => [r.title, r.subtitle, r.probability])).toEqual([
+      ["Who will the next Pope be?", "Pietro Parolin", expect.closeTo(0.42, 12)],
+      ["Who will the next Pope be?", "Luis Antonio Tagle", null],
     ]);
+    // A unique title is enough on its own, even when the market has a YES side.
     const [romania] = await results(mod, "romania");
     expect(romania.title).toBe("Will Mugur Isărescu be the next Prime Minister of Romania?");
+    expect(romania).not.toHaveProperty("subtitle");
+    const [nasdaq] = await results(mod, "nasdaq");
+    expect(nasdaq).not.toHaveProperty("subtitle");
   });
 
   it("matches every word as the start of a word in the market, event, category, or ticker", async () => {

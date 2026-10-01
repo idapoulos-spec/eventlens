@@ -125,6 +125,7 @@ function ResultOption({ id, result, active, onMouseDown, onClick, onMouseMove }:
     >
       <div className="min-w-0 flex-1">
         <p className="line-clamp-2 text-sm leading-snug text-ink">{result.title}</p>
+        {result.subtitle && <p className="truncate text-sm font-medium leading-snug text-ink">{result.subtitle}</p>}
         <p className="mt-0.5 truncate text-xs text-ink-secondary">{result.eventTitle}</p>
         <p className="mt-0.5 text-xs text-ink-muted">
           {meta && <span>{meta} · </span>}
