@@ -2,7 +2,7 @@
 
 EventLens is a research dashboard that compares [Kalshi](https://kalshi.com) prediction-market data with stock-market data.
 
-Enter a stock ticker (e.g. `NVDA`) and a Kalshi market ticker (e.g. `KXFEDDECISION-26OCT-H25`), click **Analyze**, and EventLens shows:
+Pick a stock or ETF (search by ticker or name, e.g. `NVDA` or "nvidia") and a Kalshi market (search by keyword, e.g. "fed october", or paste a market ticker such as `KXFEDDECISION-26OCT-H25`), click **Analyze**, and EventLens shows:
 
 - **Kalshi market:** title, implied probability, YES bid / ask, last price, 24-hour volume, open interest, 1-hour and 24-hour probability change, and an event-uncertainty score
 - **Stock:** current price, daily change, volume (compared with average volume once the market has closed), and 30-day realized volatility (via [Twelve Data](https://twelvedata.com))
@@ -43,9 +43,11 @@ Stock data comes from Twelve Data. Kalshi data uses public endpoints and needs n
    TWELVE_DATA_API_KEY=your_key_here
    ```
 
-The key is only read on the server and is never sent to the browser. Without it, the app still runs: Kalshi data loads and the stock section explains how to add the key.
+The key is only read on the server and is never sent to the browser. Without it, the app still runs: Kalshi data and Kalshi search work, stock search says it's unavailable (a typed ticker still works), and the stock section explains how to add the key.
 
-The free Twelve Data plan allows 8 requests per minute. Each analysis uses 3 (quote, 30-minute bars, daily bars). Current quotes from Twelve Data and Kalshi are fetched fresh on every request; price history is cached for 60 seconds, so re-analyzing the same ticker within a minute uses only 1. The Research section adds no Twelve Data requests: changing its window, resolution, or jump size, and downloading the CSV, all happen in the browser with data that's already loaded.
+The free Twelve Data plan allows 8 requests per minute and 800 per day. Each analysis uses 3 (quote, 30-minute bars, daily bars). Current quotes from Twelve Data and Kalshi are fetched fresh on every request; price history is cached for 60 seconds, so re-analyzing the same ticker within a minute uses only 1. Submitting the analysis that's already on screen again within 60 seconds only scrolls to its results and uses none. The Research section adds no Twelve Data requests: changing its window, resolution, or jump size, and downloading the CSV, all happen in the browser with data that's already loaded.
+
+Stock search uses 2 requests per server instance per day, however much people type: see [Search](#search).
 
 ### Run locally
 
@@ -66,9 +68,37 @@ pnpm build   # production build (includes type checking)
 pnpm start   # serve the production build
 ```
 
-## Finding a Kalshi market ticker
+## Search
+
+Both fields take a ticker or search text. Results appear once typing pauses (250 ms); ↑ and ↓ move through them, Enter picks one, and Esc closes the list. Searching never sends the query to Twelve Data or Kalshi: each search route answers from an index it keeps in the server's memory.
+
+### Stock search
+
+Finds US stocks and ETFs by ticker or company name, 10 results at a time. Exact tickers come first, then common stock and ETFs listed on NASDAQ, NYSE, or Cboe before warrants, rights, units, and OTC listings, then ticker prefixes before name matches. In the stock field, Enter on a typed ticker that is also the top result analyzes it right away.
+
+- **Index:** Twelve Data's `/stocks` and `/etfs` lists for the United States (about 20,000 and 11,000 entries), downloaded once a day per server instance: 2 Twelve Data requests. The first search of the day waits for the download, which has taken anywhere from 1 to 25 seconds, so the field says why if it's slow (the download times out after 45 seconds). Concurrent searches share one download. After a failed download, searches report the error for 5 minutes instead of retrying; if a daily refresh fails, the previous day's lists keep serving.
+- **Left out:** mutual funds and unit trusts from the ETF list (5- and 6-letter symbols ending in X, which have no intraday prices) and symbols the dashboard can't analyze, such as preferreds (`BAC.PR.S`).
+- **Popular symbols and aliases:** the lists carry no popularity data, so `lib/market-data/popular.ts` names about 30 popular symbols, most popular first, some with aliases: "google" finds GOOGL, and "s&p 500" ranks SPY first. Among equally good matches, popular symbols come first.
+
+### Kalshi search
+
+Kalshi's API has no keyword search, so the server builds an index of every open market in every open event by paging through `GET /events` (about 12,000 events and 114,000 markets in September 2026: 61 pages, about 15 seconds). Pages are requested one at a time, at most 4 a second. The index is used as is for 3 minutes; after that, searches keep using it for up to 15 minutes while a single refresh runs in the background. After a failed build, Kalshi isn't asked again for 30 seconds. So Kalshi traffic doesn't grow with the number of searches.
+
+- **Matching:** every word of the query must start a word in the market's title or YES side, its event, its category, or its ticker ("fed hik" finds "Will the Fed hike…"). A pasted ticker ranks first; among equal matches, the most traded markets come first. Up to 20 results, each with its chance (at most a few minutes old) and close date. Markets that share a title within an event show their YES side underneath (e.g. each candidate in "Who will the next Pope be?").
+- **Open markets only.** To analyze a closed or settled market, paste its ticker.
 
 Use a **market** ticker, not an event or series ticker. Market tickers appear in Kalshi market URLs and API responses, and look like `KXFEDDECISION-26OCT-H25` or `KXRECSSNBER-27`. The example buttons in the app use real markets, but markets close over time, so an example may stop working.
+
+### Typed text that isn't a ticker
+
+Some names and keywords also look like tickers ("nvidia", "recession"). Analyzing one would only fail, and would spend Twelve Data requests on the stock side. So when a field's search has already shown that its text isn't a listed ticker, **Analyze** asks to pick from the list instead (e.g. "Pick one from the list, such as NVDA (NVIDIA Corporation)"). Tickers the search hasn't seen go straight through.
+
+## Recent analyses and sharing
+
+- **Links:** every analysis has its own URL (`/?stock=NVDA&kalshi=KXFEDDECISION-26OCT-H25`). **Copy link** above the results copies it, and a shared link's tab title names the analysis. Back and Forward move between analyses, and the fields follow.
+- **Recent analyses:** the last 6 analyses viewed in this browser, newest first and named after the Kalshi market, are listed under the form, except the one on screen. Each has a remove button. They're kept in `localStorage` and never sent to the server. Analyses with a ticker that doesn't exist, or a stock the Twelve Data plan doesn't cover, aren't kept. The row is one line tall from the first render (chips scroll sideways), so it never moves the results when it loads.
+- **Clear** empties both fields and returns to the start screen.
+- **Twelve Data requests:** examples and recent analyses are ordinary links, so they can be opened in a new tab, but they're never prefetched: nothing loads until one is picked.
 
 ## How metrics are calculated
 
@@ -150,26 +180,30 @@ print(len(used), used.prob_change_pp.corr(used.stock_log_return))
 
 ```
 app/                  Next.js routes (page.tsx renders the dashboard server-side)
+  api/search/         Search API routes: stocks/ and kalshi/ (GET ?q=…)
 components/           UI components (cards, form, panels)
+  analysis/           Loading analyses, shareable links, Copy link, recent analyses
   charts/             Recharts client components
   research/           Research panel (window, resolution, analyses, CSV download)
+  search/             Stock and Kalshi search fields (comboboxes)
 lib/
-  kalshi/             Kalshi API client + normalized types (server-only)
-  market-data/        Twelve Data client + normalized types (server-only)
+  kalshi/             Kalshi API client, market search index, normalized types (server-only)
+  market-data/        Twelve Data client, symbol lists and search, popular symbols (server-only)
   analytics/          Pure metric, alignment, and research functions (and the CSV export)
+  search/             Search contract: result types, query validation, error responses
   validation.ts       Ticker input validation
   format.ts           Number and date formatting
 ```
 
-Third-party API calls live in `lib/kalshi` and `lib/market-data`, run only on the server (enforced with `server-only`), and return normalized TypeScript types. The UI never calls third-party APIs directly.
+Third-party API calls live in `lib/kalshi` and `lib/market-data`, run only on the server (enforced with `server-only`), and return normalized TypeScript types. The UI never calls third-party APIs directly: the search fields call this app's `/api/search/…` routes.
 
 ## Security
 
 - `TWELVE_DATA_API_KEY` is read only in server-only code and sent to Twelve Data in an `Authorization` header, never in a URL, so it stays out of browser code, cached request URLs, and logs.
-- Ticker inputs are validated on the server before any upstream request.
+- Ticker inputs are validated on the server before any upstream request. Search queries are validated too (at most 100 characters, no control characters) and never reach an upstream API.
 - Users see fixed error messages. Twelve Data's own error text is logged on the server only, with the key redacted.
-- Each client IP can run 5 analyses a minute and 30 an hour (`lib/analysis-rate-limit.ts`).
-- Every upstream request times out after 6 seconds, and the Kalshi and stock sections load independently, so one slow API never hides the other's data.
+- Each client IP can run 5 analyses a minute and 30 an hour (`lib/analysis-rate-limit.ts`), and 30 searches a minute and 300 an hour in each search field (`app/api/search/*/route.ts`).
+- Every upstream request times out after 6 seconds (the daily stock-list download after 45), and the Kalshi and stock sections load independently, so one slow API never hides the other's data.
 
 **How much the rate limit protects you.** The limiter keeps its counts in the server's memory. That is enough to stop one person repeatedly hammering the site, but it is not a hard guarantee:
 
@@ -185,7 +219,7 @@ For a hard limit, use a shared store such as Upstash Redis (`@upstash/ratelimit`
 2. Add `TWELVE_DATA_API_KEY` under **Project → Settings → Environment Variables** (Production, plus Preview if you want preview deployments to show stock data). The key is only read at request time, so the build does not need it. If it is missing, the site still works and shows that stock data isn't set up; the server log explains how to fix it.
 3. Deploy. Vercel detects Next.js, installs with pnpm 10 from `pnpm-lock.yaml`, and uses Node.js 24 from `engines`.
 
-The page's server function is capped at 30 seconds (`maxDuration` in `app/page.tsx`). All timestamps are shown in New York time with the zone labeled, regardless of the server's time zone.
+The page's server function is capped at 30 seconds (`maxDuration` in `app/page.tsx`), and the search routes at 60, since the first search on a new instance waits for its index. Each instance builds its own search indexes, so every instance that serves a stock search downloads the symbol lists once a day (2 Twelve Data requests). All timestamps are shown in New York time with the zone labeled, regardless of the server's time zone.
 
 ## Scope
 
