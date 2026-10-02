@@ -45,7 +45,7 @@ Stock data comes from Twelve Data. Kalshi data uses public endpoints and needs n
 
 The key is only read on the server and is never sent to the browser. Without it, the app still runs: Kalshi data and Kalshi search work, stock search says it's unavailable (a typed ticker still works), and the stock section explains how to add the key.
 
-The free Twelve Data plan allows 8 requests per minute and 800 per day. Each analysis uses 3 (quote, 30-minute bars, daily bars). Current quotes from Twelve Data and Kalshi are fetched fresh on every request; price history is cached for 60 seconds, so re-analyzing the same ticker within a minute uses only 1. Submitting the analysis that's already on screen again within 60 seconds only scrolls to its results and uses none.
+The free Twelve Data plan allows 8 requests per minute and 800 per day. Each analysis uses 3 (quote, 30-minute bars, daily bars). Current quotes from Twelve Data and Kalshi are fetched fresh on every request. Twelve Data price history is kept in the server's memory for 60 seconds after it was fetched, so re-analyzing the same ticker within a minute uses only 1; after that it's always fetched again, never served from an older copy. (Next.js's data cache isn't used for it: after a quiet period it would serve the last copy, however old, while refreshing in the background, so the page could show bars from days ago as current.) Submitting the analysis that's already on screen again within 60 seconds only scrolls to its results and uses none.
 
 Research's benchmark (SPY by default) adds 2 more (30-minute and daily bars, no quote) when the server doesn't already have it in memory, so an analysis uses 3 or 5. Each server instance keeps a benchmark until its next 30-minute bar has settled (at most about 30 minutes), so SPY costs at most 2 requests per half hour per instance however many analyses run; it isn't requested when the stock is SPY. Picking another benchmark in the Research section costs 2 if the server doesn't have it either, and switching back to one already loaded costs none. Everything else in Research (window, resolution, raw or market-adjusted returns, jump size, the CSV) happens in the browser with data that's already loaded.
 
@@ -133,7 +133,7 @@ Left out, and counted on the page:
 - **Intervals that span time the stock wasn't trading** (hourly mode: overnight, weekends, holidays, halts). Hourly results are intraday only, so Kalshi moves on overnight news, and the first half hour (9:30–10:00, which has no Kalshi value at 9:30), are not included there. Daily close-to-close returns include overnight moves.
 - **Kalshi values estimated from the last trade** (when the book is one-sided). The trade may be hours or days old.
 - **Times before Kalshi's first candle** in the loaded history, and **after the market's close time**.
-- **Stock bars that are still forming** (or closed less than 5 minutes ago).
+- **Stock bars that were still forming** when they were fetched (or had closed less than 5 minutes before).
 
 ### Metrics
 

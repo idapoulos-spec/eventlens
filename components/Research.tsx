@@ -61,7 +61,8 @@ export async function Research({
   const { market } = k.data;
   const closeTime = market.closeTime === null ? null : Date.parse(market.closeTime);
   const common = { kalshi: h.data, closeTime: Number.isFinite(closeTime) ? closeTime : null };
-  const asOf = s.data.fetchedAt;
+  // When the bars were fetched: bars that hadn't closed by then may still have been forming.
+  const asOf = s.data.historyFetchedAt;
   const from = asOf - MAX_WINDOW_DAYS * DAY_MS;
 
   const hourly = buildResearchRows({

@@ -49,6 +49,8 @@ export interface StockOverview {
    * miss part of the market, so it isn't comparable with the average until the close.
    */
   relativeVolume: number | null;
+  /** When the bars in `intraday`, `halfHourly`, and `daily` were fetched (ms): up to a minute before `fetchedAt`. */
+  historyFetchedAt: number;
   fetchedAt: number;
 }
 
