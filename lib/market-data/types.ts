@@ -1,3 +1,5 @@
+import type { TimePoint } from "@/lib/analytics/types";
+
 export interface StockQuote {
   symbol: string;
   name: string;
@@ -47,6 +49,21 @@ export interface StockOverview {
    * miss part of the market, so it isn't comparable with the average until the close.
    */
   relativeVolume: number | null;
+  /** When the bars in `intraday`, `halfHourly`, and `daily` were fetched (ms): up to a minute before `fetchedAt`. */
+  historyFetchedAt: number;
+  fetchedAt: number;
+}
+
+/**
+ * A benchmark's closes at the moments research observes a stock: top-of-hour closes during
+ * trading hours, and session closes. Only bars that had closed at least 5 minutes before
+ * `fetchedAt` are included, so none is still forming.
+ */
+export interface BenchmarkSeries {
+  symbol: string;
+  hourly: TimePoint[];
+  daily: TimePoint[];
+  /** When the bars were fetched from Twelve Data (ms). */
   fetchedAt: number;
 }
 

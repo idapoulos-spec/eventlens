@@ -12,3 +12,6 @@ export * from "./lead-lag";
 export * from "./rolling";
 export * from "./event-study";
 export * from "./csv";
+export * from "./t-distribution";
+export * from "./regression";
+export * from "./market-model";

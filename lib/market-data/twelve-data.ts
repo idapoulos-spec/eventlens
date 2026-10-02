@@ -1,10 +1,11 @@
 import "server-only";
 
 import { realizedVolatility, relativeVolume } from "@/lib/analytics";
-import { cachedFor, LIVE } from "@/lib/fetch-cache";
+import { LIVE } from "@/lib/fetch-cache";
 import { isTimeout, REQUEST_TIMEOUT_MS } from "@/lib/request-timeout";
 import { fail, ok, type Result } from "@/lib/result";
-import { barCloseTime, toHourlyBars } from "./session";
+import { memoryCache } from "./memory-cache";
+import { barCloseTime, sessionCloseTimes, toHourlyBars, tradingDayClose } from "./session";
 import type { RawError, RawQuote, RawTimeSeries, StockBar, StockOverview, StockQuote } from "./types";
 
 const TWELVE_DATA_BASE_URL = "https://api.twelvedata.com";
@@ -12,12 +13,17 @@ const HALF_HOUR_MS = 30 * 60 * 1000;
 const VOL_WINDOW_DAYS = 30;
 // 900 half-hour bars is about 70 sessions (13 a day), enough for the 90-day research window.
 // A time series costs one API credit whatever its length.
-const HALF_HOURLY_BARS = 900;
+export const HALF_HOURLY_BARS = 900;
 // Hourly bars for the 7-day comparison chart: about 10 sessions, as before.
 const HOURLY_BARS = 70;
-const DAILY_BARS = 90;
+export const DAILY_BARS = 90;
+/**
+ * Price history is kept in this server instance's memory for this long after it was
+ * fetched, so analyzing the same stock again within a minute costs only the quote.
+ */
+export const STOCK_HISTORY_TTL_MS = 60 * 1000;
 
-type Interval = "30min" | "1day";
+export type Interval = "30min" | "1day";
 
 export class TwelveDataError extends Error {
   constructor(
@@ -123,12 +129,17 @@ function normalizeSeries(raw: RawTimeSeries, interval: Interval): Series {
   return { bars, exchangeTimeZone };
 }
 
-function getTimeSeries(symbol: string, interval: Interval, outputsize: number, apiKey: string) {
+/**
+ * One symbol's bars, oldest first, intraday bars stamped at their close. One API credit
+ * whatever the length. Never from Next.js's data cache: callers keep bars in memory along
+ * with when they were fetched (see memoryCache), since which bars are final depends on it.
+ */
+export function getTimeSeries(symbol: string, interval: Interval, outputsize: number, apiKey: string) {
   return twelveGet<RawTimeSeries>(
     "/time_series",
     { symbol, interval, outputsize: String(outputsize), timezone: "UTC" },
     apiKey,
-    cachedFor(60),
+    LIVE,
   ).then((raw) => normalizeSeries(raw, interval));
 }
 
@@ -136,7 +147,7 @@ function getTimeSeries(symbol: string, interval: Interval, outputsize: number, a
  * Map a failure to fixed, user-facing wording. Twelve Data's own error text is
  * logged on the server only, with the key redacted, and never shown to users.
  */
-function describeError(err: unknown, symbol: string, apiKey: string): Result<never> {
+export function describeError(err: unknown, symbol: string, apiKey: string): Result<never> {
   const status = err instanceof TwelveDataError ? err.code : "network";
   const detail = err instanceof Error ? err.message : String(err);
   console.error(`[twelve-data] ${symbol}: ${status} ${detail.replaceAll(apiKey, "[redacted]")}`);
@@ -162,6 +173,35 @@ function describeError(err: unknown, symbol: string, apiKey: string): Result<nev
   return fail("upstream", "Twelve Data returned an error. Please try again later.");
 }
 
+interface StockHistory {
+  halfHourly: Series;
+  daily: Series;
+  /** When the bars were requested (ms): bars that hadn't closed by then may still have been forming. */
+  fetchedAt: number;
+}
+
+const historyCache = memoryCache<StockHistory>(50);
+
+/** A stock's 30-minute and daily bars: from memory if fetched within STOCK_HISTORY_TTL_MS, otherwise 2 credits. */
+function getStockHistory(symbol: string, apiKey: string): Promise<Result<StockHistory>> {
+  return historyCache(
+    symbol,
+    async () => {
+      const fetchedAt = Date.now();
+      try {
+        const [halfHourly, daily] = await Promise.all([
+          getTimeSeries(symbol, "30min", HALF_HOURLY_BARS, apiKey),
+          getTimeSeries(symbol, "1day", DAILY_BARS, apiKey),
+        ]);
+        return ok({ halfHourly, daily, fetchedAt });
+      } catch (err) {
+        return describeError(err, symbol, apiKey);
+      }
+    },
+    (history) => history.fetchedAt + STOCK_HISTORY_TTL_MS,
+  );
+}
+
 /** Quote, intraday and daily history, and realized volatility for one stock. */
 export async function getStockOverview(symbol: string): Promise<Result<StockOverview>> {
   const apiKey = getApiKey();
@@ -175,19 +215,24 @@ export async function getStockOverview(symbol: string): Promise<Result<StockOver
   try {
     // Half-hour bars serve both the hourly comparison chart (combined into Twelve Data's
     // hourly bars) and research, whose top-of-hour closes line up with Kalshi's hourly
-    // candles, so research costs no extra API credit.
-    const [rawQuote, halfHourly, { bars: allDaily }] = await Promise.all([
+    // candles, so research costs no extra API credit. The quote is always fetched fresh.
+    const [rawQuote, history] = await Promise.all([
       twelveGet<RawQuote>("/quote", { symbol }, apiKey, LIVE),
-      getTimeSeries(symbol, "30min", HALF_HOURLY_BARS, apiKey),
-      getTimeSeries(symbol, "1day", DAILY_BARS, apiKey),
+      getStockHistory(symbol, apiKey),
     ]);
+    if (!history.ok) return history;
+    const { halfHourly, daily: allDaily, fetchedAt: historyFetchedAt } = history.data;
 
     const quote = normalizeQuote(rawQuote);
-    // While the market is open, the daily bar for the quote's session is still forming and
-    // its close is just the latest price, so daily history (the close chart and volatility)
-    // uses completed sessions only.
+    // A day's bar is still forming until its session ends, and its close is just the latest
+    // price, so daily history (the close chart and volatility) uses completed sessions only:
+    // not the quote's session while the market is open, nor a session that hadn't ended
+    // when the bars were fetched (bars in memory from just before the close).
     const session = rawQuote.datetime ? parseDatetime(rawQuote.datetime) : null;
-    const daily = quote.isMarketOpen ? allDaily.filter((b) => b.t !== session) : allDaily;
+    const closes = sessionCloseTimes(halfHourly.bars);
+    const daily = allDaily.bars.filter(
+      (b) => !(quote.isMarketOpen && b.t === session) && (closes.get(b.t) ?? tradingDayClose(b.t)) <= historyFetchedAt,
+    );
     const volWindow = daily.slice(-(VOL_WINDOW_DAYS + 1)).map((b) => b.close);
 
     return ok({
@@ -198,6 +243,7 @@ export async function getStockOverview(symbol: string): Promise<Result<StockOver
       realizedVol30d: realizedVolatility(volWindow),
       // Today's volume isn't comparable with a full-day average until the session ends.
       relativeVolume: quote.isMarketOpen ? null : relativeVolume(quote.volume, quote.averageVolume),
+      historyFetchedAt,
       fetchedAt: Date.now(),
     });
   } catch (err) {

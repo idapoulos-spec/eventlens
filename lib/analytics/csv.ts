@@ -2,6 +2,7 @@ import { DISPLAY_TIME_ZONE } from "@/lib/format";
 // Imported directly: the lib/market-data index also loads the server-only Twelve Data client.
 import { timeZoneOffsetMs } from "@/lib/market-data/session";
 import { computeChanges } from "./changes";
+import { benchmarkCloses, benchmarkReturnsByT, type ReturnAdjustment } from "./market-model";
 import type { ResearchRow, Resolution } from "./research";
 
 export const RESEARCH_CSV_COLUMNS = [
@@ -18,7 +19,24 @@ export const RESEARCH_CSV_COLUMNS = [
   "interval_exclusion",
   "prob_change_pp",
   "stock_log_return",
+  // Market adjustment, appended so the columns above keep their positions.
+  "benchmark_symbol",
+  "benchmark_close",
+  "benchmark_log_return",
+  "market_beta",
+  "market_alpha",
+  "abnormal_log_return",
+  "excess_log_return",
 ] as const;
+
+/** The benchmark for the CSV's market-adjustment columns. */
+export interface CsvBenchmark {
+  symbol: string;
+  /** Benchmark closes by observation time. */
+  closesByT: ReadonlyMap<number, number>;
+  /** The market model behind `abnormal_log_return`, or null if it couldn't be fitted. */
+  model: ReturnAdjustment | null;
+}
 
 type Cell = string | number | boolean | null;
 
@@ -45,13 +63,18 @@ function isoNewYork(ms: number): string {
  * The aligned research dataset as CSV: every row, including excluded ones with the
  * reason, so the analysis can be redone or filtered differently elsewhere. The change
  * columns describe the interval ending at each row. Numbers are unrounded; missing
- * values are empty.
+ * values are empty, including every benchmark column when there's no benchmark.
  */
-export function researchCsv(rows: ResearchRow[], resolution: Resolution): string {
+export function researchCsv(rows: ResearchRow[], resolution: Resolution, benchmark: CsvBenchmark | null = null): string {
   const { intervals } = computeChanges(rows);
+  const closes = benchmark ? benchmarkCloses(rows, benchmark.closesByT) : null;
+  const benchReturns = benchmark ? benchmarkReturnsByT(rows, benchmark.closesByT) : null;
+  const model = benchmark?.model ?? null;
   const lines = [RESEARCH_CSV_COLUMNS.join(",")];
   rows.forEach((row, i) => {
     const interval = intervals[i];
+    const rm = benchReturns?.get(row.t) ?? null;
+    const r = interval.logReturn;
     const cells: Cell[] = [
       isoUtc(row.t),
       isoNewYork(row.t),
@@ -66,6 +89,13 @@ export function researchCsv(rows: ResearchRow[], resolution: Resolution): string
       interval.exclusion,
       interval.probChangePp,
       interval.logReturn,
+      benchmark?.symbol ?? null,
+      closes?.[i] ?? null,
+      rm,
+      model?.beta ?? null,
+      model?.alpha ?? null,
+      model && r !== null && rm !== null ? r - model.alpha - model.beta * rm : null,
+      r !== null && rm !== null ? r - rm : null,
     ];
     lines.push(cells.map(csvField).join(","));
   });

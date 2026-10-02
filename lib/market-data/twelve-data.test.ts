@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { realizedVolatility } from "@/lib/analytics";
-import { getStockOverview } from "./twelve-data";
+import type { getStockOverview as GetStockOverview } from "./twelve-data";
 
 // server-only throws outside React's server environment; the client only uses it as a marker.
 vi.mock("server-only", () => ({}));
@@ -56,11 +56,17 @@ function stubTwelveData({ isMarketOpen, datetime = TODAY, volume = 4_000_000 }: 
   return requests;
 }
 
-beforeEach(() => {
+// Price history is kept in the module's memory, so each test loads a fresh copy.
+let getStockOverview: typeof GetStockOverview;
+
+beforeEach(async () => {
   vi.stubEnv("TWELVE_DATA_API_KEY", "test-key");
+  vi.resetModules();
+  ({ getStockOverview } = await import("./twelve-data"));
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -117,3 +123,99 @@ describe("getStockOverview", () => {
     expect((await overview()).daily).toHaveLength(41);
   });
 });
+
+describe("getStockOverview price history", () => {
+  const HALF_HOUR_MS = 30 * 60 * 1000;
+  const at = (iso: string) => Date.parse(iso);
+  const datetime = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace("T", " ");
+
+  /**
+   * Fakes Twelve Data as of the current (fake) time: today's 30-minute bars that have opened
+   * (9:30 AM–4:00 PM New York, during daylight time), and daily bars for the last three days
+   * including today. Requests made with Next.js's time-based cache are answered the way its
+   * data cache answers them: with the stored response, however old, refreshed in the background.
+   */
+  function stubLiveTwelveData(isMarketOpen: () => boolean) {
+    const requests: { url: URL; init?: RequestInit & { next?: { revalidate?: number } } }[] = [];
+    const nextDataCache = new Map<string, unknown>();
+    function body(url: URL) {
+      const now = Date.now();
+      const today = new Date(now).toISOString().slice(0, 10);
+      if (url.pathname === "/quote") return { symbol: "NVDA", close: "150", datetime: today, is_market_open: isMarketOpen() };
+      if (url.searchParams.get("interval") === "1day") {
+        const days = [0, 1, 2].map((d) => new Date(at(`${today}T00:00:00Z`) - d * DAY_MS).toISOString().slice(0, 10));
+        return { status: "ok", values: days.map((d, i) => ({ datetime: d, open: "1", high: "1", low: "1", close: String(150 - i) })) };
+      }
+      const opens: number[] = [];
+      for (let t = at(`${today}T13:30:00Z`); t <= now && t < at(`${today}T20:00:00Z`); t += HALF_HOUR_MS) opens.push(t);
+      return {
+        status: "ok",
+        meta: { exchange_timezone: "America/New_York" },
+        values: opens.reverse().map((t) => ({ datetime: datetime(t), open: "1", high: "1", low: "1", close: "1", volume: "1" })),
+      };
+    }
+    vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit & { next?: { revalidate?: number } }) => {
+      const url = new URL(String(input));
+      requests.push({ url, init });
+      if (init?.next?.revalidate !== undefined && init.cache !== "no-store") {
+        const stored = nextDataCache.get(url.href);
+        nextDataCache.set(url.href, body(url));
+        if (stored) return Response.json(stored);
+      }
+      return Response.json(body(url));
+    });
+    return requests;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+  });
+
+  it("never shows bars from before a quiet period as current", async () => {
+    const requests = stubLiveTwelveData(() => true);
+    vi.setSystemTime(at("2026-09-28T17:12:00Z")); // Mon 1:12 PM New York
+    await overview();
+
+    vi.setSystemTime(at("2026-10-02T18:50:00Z")); // Four days later, Fri 2:50 PM
+    const data = await overview();
+    // Today's still-forming 2:30–3:00 PM bar, not Monday's 1:00–1:30 PM bar.
+    expect(new Date(data.halfHourly.at(-1)!.t).toISOString()).toBe("2026-10-02T19:00:00.000Z");
+    expect(data.daily.at(-1)!.t).toBe(at("2026-10-01T00:00:00Z"));
+    expect(data.historyFetchedAt).toBe(at("2026-10-02T18:50:00Z"));
+    const series = requests.filter((r) => r.url.pathname === "/time_series");
+    expect(series).toHaveLength(4);
+    expect(series.every((r) => r.init?.cache === "no-store" && r.init.next === undefined)).toBe(true);
+  });
+
+  it("reuses price history for a minute after fetching it, then fetches it again", async () => {
+    const requests = stubLiveTwelveData(() => true);
+    vi.setSystemTime(at("2026-10-02T18:50:00Z"));
+    await overview();
+    expect(requests).toHaveLength(3);
+
+    vi.setSystemTime(at("2026-10-02T18:50:59Z"));
+    const reused = await overview();
+    expect(requests).toHaveLength(4); // the quote only
+    expect(reused.historyFetchedAt).toBe(at("2026-10-02T18:50:00Z"));
+
+    vi.setSystemTime(at("2026-10-02T18:51:00Z"));
+    expect((await overview()).historyFetchedAt).toBe(at("2026-10-02T18:51:00Z"));
+    expect(requests).toHaveLength(7);
+  });
+
+  it("leaves out a day whose bars were fetched before its session closed", async () => {
+    let open = true;
+    stubLiveTwelveData(() => open);
+    vi.setSystemTime(at("2026-10-02T19:59:30Z")); // 3:59:30 PM
+    expect((await overview()).daily.at(-1)!.t).toBe(at("2026-10-01T00:00:00Z"));
+
+    // After the close the quote says so, but the bars in memory are from before it.
+    open = false;
+    vi.setSystemTime(at("2026-10-02T20:00:20Z"));
+    expect((await overview()).daily.at(-1)!.t).toBe(at("2026-10-01T00:00:00Z"));
+
+    vi.setSystemTime(at("2026-10-02T20:01:30Z"));
+    expect((await overview()).daily.at(-1)).toMatchObject({ t: at("2026-10-02T00:00:00Z"), close: 150 });
+  });
+});
+

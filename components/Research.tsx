@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import { buildResearchRows, rowsSince, topOfHourCloses } from "@/lib/analytics";
 import type { KalshiOverview, KalshiPoint } from "@/lib/kalshi";
-import type { StockOverview } from "@/lib/market-data";
+import type { BenchmarkSeries, StockOverview } from "@/lib/market-data";
 // Imported directly: the lib/market-data index also loads the server-only Twelve Data client.
-import { sessionCloseTimes, tradingDayClose } from "@/lib/market-data/session";
+import { sessionClosePoints } from "@/lib/market-data/session";
 import type { Result } from "@/lib/result";
 import { ResearchPanel } from "./research/ResearchPanel";
 import { Card, Notice } from "./ui";
@@ -29,16 +29,19 @@ export async function Research({
   kalshiData,
   stockData,
   historyData,
+  benchmarkData,
   stock,
   kalshi,
 }: {
   kalshiData: Promise<Result<KalshiOverview>>;
   stockData: Promise<Result<StockOverview>>;
   historyData: Promise<Result<KalshiPoint[]>>;
+  /** The default benchmark, or null if it wasn't requested (the stock failed, or is the benchmark). */
+  benchmarkData: Promise<Result<BenchmarkSeries> | null>;
   stock: string;
   kalshi: string;
 }) {
-  const [k, s, h] = await Promise.all([kalshiData, stockData, historyData]);
+  const [k, s, h, b] = await Promise.all([kalshiData, stockData, historyData, benchmarkData]);
   const notice = (title: string, message: string, tone: "info" | "error" = "info") => (
     <ResearchCard>
       <Notice tone={tone} title={title} message={message} />
@@ -58,7 +61,8 @@ export async function Research({
   const { market } = k.data;
   const closeTime = market.closeTime === null ? null : Date.parse(market.closeTime);
   const common = { kalshi: h.data, closeTime: Number.isFinite(closeTime) ? closeTime : null };
-  const asOf = s.data.fetchedAt;
+  // When the bars were fetched: bars that hadn't closed by then may still have been forming.
+  const asOf = s.data.historyFetchedAt;
   const from = asOf - MAX_WINDOW_DAYS * DAY_MS;
 
   const hourly = buildResearchRows({
@@ -70,10 +74,9 @@ export async function Research({
     resolution: "hourly",
   });
   // Each session's real close, so early-close days line up with Kalshi at the right moment.
-  const closes = sessionCloseTimes(s.data.halfHourly);
   const daily = buildResearchRows({
     ...common,
-    stock: s.data.daily.map((b) => ({ t: closes.get(b.t) ?? tradingDayClose(b.t), value: b.close })),
+    stock: sessionClosePoints(s.data.daily, s.data.halfHourly),
     resolution: "daily",
   });
 
@@ -89,6 +92,7 @@ export async function Research({
       stockSymbol={s.data.quote.symbol || stock}
       kalshiTicker={kalshi}
       yesLabel={market.subtitle ?? market.title}
+      initialBenchmark={b}
     />
   );
 }

@@ -41,7 +41,15 @@ export interface EventStudy {
   skippedOverlap: number;
   /** Jumps skipped because the data doesn't reach `before` bars before or `after` bars after them. */
   skippedEdge: number;
+  /** Jumps skipped because a price the path needs is missing (e.g. no benchmark bar at that time). */
+  skippedMissing: number;
 }
+
+/**
+ * Log change ln(P[to] / P[from]) between rows `from` and `to` of whatever is being
+ * studied (the stock, or the stock net of a benchmark), or null if it can't be measured.
+ */
+export type LogChange = (from: number, to: number) => number | null;
 
 function meanPath(paths: number[][]): number[] | null {
   if (paths.length === 0) return null;
@@ -52,27 +60,58 @@ function group(paths: number[][], events: EventGroup["events"]): EventGroup {
   return { mean: meanPath(paths), n: paths.length, events, flag: sampleFlag(paths.length, 1, SMALL_EVENT_COUNT) };
 }
 
+/** Changes of at least `thresholdPp` in either direction, oldest first. */
+export function detectJumps(changes: ChangePoint[], thresholdPp: number): ChangePoint[] {
+  return changes.filter((c) => Math.abs(c.probChangePp) >= thresholdPp - EPSILON).sort((a, b) => a.t - b.t);
+}
+
+/**
+ * Indices of the rows within `before` bars before to `after` bars after any jump, counting
+ * every jump at or above the threshold, including ones the event study skips.
+ */
+export function eventWindowRows(rows: ResearchRow[], changes: ChangePoint[], { thresholdPp, before, after }: EventStudyOptions): Set<number> {
+  const index = new Map(rows.map((r, i) => [r.t, i]));
+  const inside = new Set<number>();
+  for (const jump of detectJumps(changes, thresholdPp)) {
+    const i = index.get(jump.t);
+    if (i === undefined) continue;
+    for (let j = Math.max(0, i - before); j <= Math.min(rows.length - 1, i + after); j++) inside.add(j);
+  }
+  return inside;
+}
+
 /**
  * The stock's average cumulative log return, in percent, in the bars around Kalshi jumps.
  * For a jump during bar i (the interval ending at row i), the path at offset k is
  * ln(S[i+k] / S[i−1]) · 100: zero at the close just before the jump, so bar 0 is the
  * jump interval itself, negative offsets show the run-up, and positive ones what followed.
  * Offsets count rows (bars), so a window can span a night or weekend between sessions.
+ * `logChange` replaces the stock's log change, e.g. with one net of a benchmark; windows
+ * where it's missing are skipped.
  */
-export function eventStudy(rows: ResearchRow[], changes: ChangePoint[], options: EventStudyOptions): EventStudy {
+export function eventStudy(
+  rows: ResearchRow[],
+  changes: ChangePoint[],
+  options: EventStudyOptions,
+  logChange: LogChange = (from, to) => Math.log(rows[to].stockClose / rows[from].stockClose),
+): EventStudy {
   const { thresholdPp, before, after } = options;
   const offsets = Array.from({ length: before + after + 1 }, (_, i) => i - before);
   const index = new Map(rows.map((r, i) => [r.t, i]));
   const hasWindow = (i: number) => i - before >= 0 && i >= 1 && i + after < rows.length;
-  const path = (i: number) => offsets.map((k) => Math.log(rows[i + k].stockClose / rows[i - 1].stockClose) * 100);
+  const path = (i: number): number[] | null => {
+    const values = offsets.map((k) => logChange(i - 1, i + k));
+    return values.every((v) => v !== null) ? values.map((v) => v! * 100) : null;
+  };
 
-  const jumps = changes.filter((c) => Math.abs(c.probChangePp) >= thresholdPp - EPSILON).sort((a, b) => a.t - b.t);
+  const jumps = detectJumps(changes, thresholdPp);
   const rises: number[][] = [];
   const falls: number[][] = [];
   const riseEvents: EventGroup["events"] = [];
   const fallEvents: EventGroup["events"] = [];
   let skippedOverlap = 0;
   let skippedEdge = 0;
+  let skippedMissing = 0;
   let lastKept = -Infinity;
 
   for (const jump of jumps) {
@@ -83,13 +122,18 @@ export function eventStudy(rows: ResearchRow[], changes: ChangePoint[], options:
     } else if (!hasWindow(i)) {
       skippedEdge++;
     } else {
+      const p = path(i);
+      if (p === null) {
+        skippedMissing++;
+        continue;
+      }
       lastKept = i;
       const event = { t: jump.t, probChangePp: jump.probChangePp };
       if (jump.probChangePp > 0) {
-        rises.push(path(i));
+        rises.push(p);
         riseEvents.push(event);
       } else {
-        falls.push(path(i));
+        falls.push(p);
         fallEvents.push(event);
       }
     }
@@ -98,7 +142,8 @@ export function eventStudy(rows: ResearchRow[], changes: ChangePoint[], options:
   // Anchor the baseline where a jump could be: after a regular interval, one grid slot long.
   const baseline: number[][] = [];
   for (let i = 1; i < rows.length; i++) {
-    if (hasWindow(i) && rows[i].step - rows[i - 1].step === 1) baseline.push(path(i));
+    const p = hasWindow(i) && rows[i].step - rows[i - 1].step === 1 ? path(i) : null;
+    if (p) baseline.push(p);
   }
 
   return {
@@ -109,5 +154,6 @@ export function eventStudy(rows: ResearchRow[], changes: ChangePoint[], options:
     detected: jumps.length,
     skippedOverlap,
     skippedEdge,
+    skippedMissing,
   };
 }

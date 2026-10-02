@@ -7,7 +7,7 @@ Pick a stock or ETF (search by ticker or name, e.g. `NVDA` or "nvidia") and a Ka
 - **Kalshi market:** title, implied probability, YES bid / ask, last price, 24-hour volume, open interest, 1-hour and 24-hour probability change, and an event-uncertainty score
 - **Stock:** current price, daily change, volume (compared with average volume once the market has closed), and 30-day realized volatility (via [Twelve Data](https://twelvedata.com))
 - **Charts:** Kalshi probability vs. stock return over the last 7 days, aligned on timestamps, plus the probability history and ~3 months of daily closes
-- **Research:** how Kalshi probability changes relate to stock returns over 7, 30, or 90 days (hourly or daily): lead-lag correlation, rolling correlation, and an event study around Kalshi jumps, with sample sizes, caveats, and a CSV export of the aligned data
+- **Research:** how Kalshi probability changes relate to stock returns over 7, 30, or 90 days (hourly or daily): lead-lag correlation, rolling correlation, and an event study around Kalshi jumps, on raw or market-adjusted returns (net of SPY or another benchmark), with sample sizes, caveats, and a CSV export of the aligned data
 
 > Experimental market-research tool. Metrics are informational and are not investment recommendations.
 
@@ -45,7 +45,9 @@ Stock data comes from Twelve Data. Kalshi data uses public endpoints and needs n
 
 The key is only read on the server and is never sent to the browser. Without it, the app still runs: Kalshi data and Kalshi search work, stock search says it's unavailable (a typed ticker still works), and the stock section explains how to add the key.
 
-The free Twelve Data plan allows 8 requests per minute and 800 per day. Each analysis uses 3 (quote, 30-minute bars, daily bars). Current quotes from Twelve Data and Kalshi are fetched fresh on every request; price history is cached for 60 seconds, so re-analyzing the same ticker within a minute uses only 1. Submitting the analysis that's already on screen again within 60 seconds only scrolls to its results and uses none. The Research section adds no Twelve Data requests: changing its window, resolution, or jump size, and downloading the CSV, all happen in the browser with data that's already loaded.
+The free Twelve Data plan allows 8 requests per minute and 800 per day. Each analysis uses 3 (quote, 30-minute bars, daily bars). Current quotes from Twelve Data and Kalshi are fetched fresh on every request. Twelve Data price history is kept in the server's memory for 60 seconds after it was fetched, so re-analyzing the same ticker within a minute uses only 1; after that it's always fetched again, never served from an older copy. (Next.js's data cache isn't used for it: after a quiet period it would serve the last copy, however old, while refreshing in the background, so the page could show bars from days ago as current.) Submitting the analysis that's already on screen again within 60 seconds only scrolls to its results and uses none.
+
+Research's benchmark (SPY by default) adds 2 more (30-minute and daily bars, no quote) when the server doesn't already have it in memory, so an analysis uses 3 or 5. Each server instance keeps a benchmark until its next 30-minute bar has settled (at most about 30 minutes), so SPY costs at most 2 requests per half hour per instance however many analyses run; it isn't requested when the stock is SPY. Picking another benchmark in the Research section costs 2 if the server doesn't have it either, and switching back to one already loaded costs none. Everything else in Research (window, resolution, raw or market-adjusted returns, jump size, the CSV) happens in the browser with data that's already loaded.
 
 Stock search uses 2 requests per server instance per day, however much people type: see [Search](#search).
 
@@ -131,7 +133,7 @@ Left out, and counted on the page:
 - **Intervals that span time the stock wasn't trading** (hourly mode: overnight, weekends, holidays, halts). Hourly results are intraday only, so Kalshi moves on overnight news, and the first half hour (9:30–10:00, which has no Kalshi value at 9:30), are not included there. Daily close-to-close returns include overnight moves.
 - **Kalshi values estimated from the last trade** (when the book is one-sided). The trade may be hours or days old.
 - **Times before Kalshi's first candle** in the loaded history, and **after the market's close time**.
-- **Stock bars that are still forming** (or closed less than 5 minutes ago).
+- **Stock bars that were still forming** when they were fetched (or had closed less than 5 minutes before).
 
 ### Metrics
 
@@ -152,6 +154,27 @@ Left out, and counted on the page:
 - **Market lifetime:** a market younger than the window covers less of it (the page shows the actual date range). Stock data covers the last ~90 days, so a market that settled before then won't overlap.
 - **History depth:** Kalshi returns at most 10,000 candles per request, so 90 days (plus a week before, to know the probability in effect when the window starts) is one request of hourly candles. The Twelve Data free plan returns up to 900 30-minute bars (about 70 sessions) of regular-hours data.
 
+### Market-adjusted returns
+
+A Kalshi move and a stock move in the same hour can both be the whole market moving. **Returns: Market-adjusted** takes out what a benchmark explains, so what's left is how the stock moved differently from the market. It applies to the same-interval correlation, lead-lag, rolling correlation, and the event study. Raw is the default and is unchanged.
+
+- **Benchmark:** SPY by default; any US stock or ETF can be picked in the Research section with the same search field as the form (e.g. QQQ, or a sector ETF such as XLK or XLF). It resets to SPY for each analysis and isn't part of the shareable link. Its bars are read at exactly the stock's observation times (top-of-hour closes, and session closes stamped the same way as the stock's); an interval without a benchmark price at both ends is left out of the adjusted results and counted. Only benchmark bars that had closed at least 5 minutes before they were fetched are used.
+- **Market model:** OLS of the stock's log return on the benchmark's, *r = α + β·r_benchmark*, over **every interval in the loaded 90 days** at the chosen resolution where both have prices (Kalshi isn't needed): about 380 hourly or 62 daily intervals. The page shows β (with a 95% interval), α, R², and n, and says that they come from the full 90 days whatever window is selected. The **abnormal return** is *r − α − β·r_benchmark*.
+- **Event study:** its β and α are fitted the same way but leaving out every interval within the event window (6 bars hourly, 5 sessions daily, each side) of every jump at or above the chosen size anywhere in the 90 days, so the jumps being studied don't shape β. Paths are the cumulative abnormal log return, *ln(S/S₀) − β·ln(B/B₀) − α·bars*; the baseline is adjusted the same way. With large or frequent jumps (e.g. daily, 3 pp) too few intervals may be left, and the page says so.
+- **Simple excess return**, *r − r_benchmark* (β = 1, α = 0), is shown next to the beta-adjusted and raw results for the same-interval correlation and the event study's end values.
+- **Kalshi with the market held fixed:** OLS of the stock's return (%) on the benchmark's return (%) and the Kalshi change (pp) over the selected window, reporting the Kalshi coefficient (stock return per 1 pp), a 95% interval, and a p-value. Standard errors are Newey–West (Bartlett weights, ⌊4(n/100)^{2/9}⌋ lags, 3–5 here) with an HC3-style leverage correction, and the p-value uses a t distribution with n − 3 degrees of freedom:
+  - Stock moves are larger in the hours news moves Kalshi, so ordinary standard errors (which assume constant variance) are too small.
+  - Kalshi often reprices over several hours, and the Newey–West sum covers that autocorrelation. Lags pair intervals exactly that many grid slots apart, so no lag reaches across a night or a missing session.
+  - Kalshi doesn't move in most hours, so the coefficient rests on the few intervals where it did. OLS fits those high-leverage points closely, which makes their residuals understate the noise; dividing each residual by (1 − leverage), as HC3 does, corrects for that.
+  - The p-value isn't shown when Kalshi moved in fewer than 10 intervals. Clustering by day was not used (about 5 clusters in 7 days), nor a bootstrap (lumpy with few moves, and its random results would change from one view to the next).
+
+Caveats shown on the page:
+
+- If the event moves the whole market (an index level, the Fed, a recession), adjusting removes the part of the move the stock shares with the market, which may be the very effect being studied. The page flags when Kalshi changes correlate with the benchmark's returns beyond the no-relationship range.
+- A benchmark that holds the stock (NVDA is in SPY and QQQ, and a large weight in tech sector ETFs) absorbs part of the stock's own move. A benchmark that explains almost all of it (R² ≥ 0.95, e.g. VOO for SPY) leaves mostly noise, and the page says so. When the stock is the benchmark, adjustment is unavailable.
+- Hourly β is intraday (trading hours only) and daily β includes overnight moves, so they differ. For thinly traded stocks the last trade in an hour can be stale, which pulls hourly β toward 0.
+- β is assumed stable over the 90 days. Event-study windows span nights and weekends, and β and α apply per bar there too.
+
 ### CSV export
 
 **Download CSV** saves the aligned dataset for the selected window and resolution, e.g. `eventlens_NVDA_KXFEDDECISION-26OCT-H25_90d_hourly_2026-09-28.csv`. It has one row per stock observation, including excluded rows with the reason, so the analysis can be redone or filtered differently elsewhere:
@@ -167,6 +190,10 @@ Left out, and counted on the page:
 | `kalshi_valid`, `kalshi_exclusion` | Whether the Kalshi value is usable, and why not (`before_kalshi`, `market_closed`, `kalshi_last_price`) |
 | `interval_valid`, `interval_exclusion` | Whether the interval ending at this row is used, and why not (`first_row`, `non_trading`, or a Kalshi reason) |
 | `prob_change_pp`, `stock_log_return` | Changes over the interval ending at this row, filled in whenever both ends have values, even for excluded intervals |
+| `benchmark_symbol`, `benchmark_close` | The benchmark in use, and its close at exactly this time (empty if it has no bar then, or the stock is the benchmark) |
+| `benchmark_log_return` | The benchmark's log return over the same interval |
+| `market_beta`, `market_alpha` | β and α (per interval, as a log return) of the market model from the full 90 days at this resolution; the same on every row |
+| `abnormal_log_return`, `excess_log_return` | `stock_log_return − market_alpha − market_beta × benchmark_log_return`, and `stock_log_return − benchmark_log_return` |
 
 ```python
 import pandas as pd
@@ -174,35 +201,41 @@ import pandas as pd
 df = pd.read_csv("eventlens_NVDA_KXFEDDECISION-26OCT-H25_90d_hourly_2026-09-28.csv", parse_dates=["timestamp_utc"])
 used = df[df.interval_valid]
 print(len(used), used.prob_change_pp.corr(used.stock_log_return))
+
+adjusted = used[used.abnormal_log_return.notna()]
+print(len(adjusted), adjusted.prob_change_pp.corr(adjusted.abnormal_log_return))
 ```
+
+The market model is fitted on all 90 days, so to reproduce β and α, use the 90-day CSV: regress `stock_log_return` on `benchmark_log_return` over rows whose `interval_exclusion` isn't `first_row` or `non_trading` (Kalshi exclusions still count) and that have both returns.
 
 ## Project structure
 
 ```
 app/                  Next.js routes (page.tsx renders the dashboard server-side)
   api/search/         Search API routes: stocks/ and kalshi/ (GET ?q=…)
+  api/benchmark/      Research benchmark prices (GET ?symbol=…)
 components/           UI components (cards, form, panels)
   analysis/           Loading analyses, shareable links, Copy link, recent analyses
   charts/             Recharts client components
-  research/           Research panel (window, resolution, analyses, CSV download)
+  research/           Research panel (window, resolution, raw or market-adjusted returns, benchmark, analyses, CSV download)
   search/             Stock and Kalshi search fields (comboboxes)
 lib/
   kalshi/             Kalshi API client, market search index, normalized types (server-only)
-  market-data/        Twelve Data client, symbol lists and search, popular symbols (server-only)
-  analytics/          Pure metric, alignment, and research functions (and the CSV export)
+  market-data/        Twelve Data client, symbol lists and search, popular symbols, research benchmarks (server-only)
+  analytics/          Pure metric, alignment, research, and regression functions (and the CSV export)
   search/             Search contract: result types, query validation, error responses
   validation.ts       Ticker input validation
   format.ts           Number and date formatting
 ```
 
-Third-party API calls live in `lib/kalshi` and `lib/market-data`, run only on the server (enforced with `server-only`), and return normalized TypeScript types. The UI never calls third-party APIs directly: the search fields call this app's `/api/search/…` routes.
+Third-party API calls live in `lib/kalshi` and `lib/market-data`, run only on the server (enforced with `server-only`), and return normalized TypeScript types. The UI never calls third-party APIs directly: the search fields call this app's `/api/search/…` routes, and picking a benchmark calls `/api/benchmark`.
 
 ## Security
 
 - `TWELVE_DATA_API_KEY` is read only in server-only code and sent to Twelve Data in an `Authorization` header, never in a URL, so it stays out of browser code, cached request URLs, and logs.
 - Ticker inputs are validated on the server before any upstream request. Search queries are validated too (at most 100 characters, no control characters) and never reach an upstream API.
 - Users see fixed error messages. Twelve Data's own error text is logged on the server only, with the key redacted.
-- Each client IP can run 5 analyses a minute and 30 an hour (`lib/analysis-rate-limit.ts`), and 30 searches a minute and 300 an hour in each search field (`app/api/search/*/route.ts`).
+- Each client IP can run 5 analyses a minute and 30 an hour (`lib/analysis-rate-limit.ts`), pick 5 benchmarks a minute and 30 an hour (`app/api/benchmark/route.ts`), and run 30 searches a minute and 300 an hour in each search field (`app/api/search/*/route.ts`).
 - Every upstream request times out after 6 seconds (the daily stock-list download after 45), and the Kalshi and stock sections load independently, so one slow API never hides the other's data.
 
 **How much the rate limit protects you.** The limiter keeps its counts in the server's memory. That is enough to stop one person repeatedly hammering the site, but it is not a hard guarantee:
