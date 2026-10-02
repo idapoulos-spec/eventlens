@@ -4,7 +4,8 @@ import { headers } from "next/headers";
 import { clientIp } from "./client-ip";
 import { createRateLimiter, type RateLimitResult } from "./rate-limit";
 
-// Each analysis costs up to 3 Twelve Data credits, so cap how often one client can run them.
+// Each analysis costs up to 3 Twelve Data credits, plus 2 when Research's SPY benchmark isn't
+// in memory, so cap how often one client can run them.
 const PER_MINUTE = 5;
 const PER_HOUR = 30;
 

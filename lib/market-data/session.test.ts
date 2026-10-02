@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sessionCloseTimes, toHourlyBars, tradingDayClose } from "./session";
+import { sessionClosePoints, sessionCloseTimes, toHourlyBars, tradingDayClose } from "./session";
 import type { StockBar } from "./types";
 
 const HALF_HOUR_MS = 30 * 60 * 1000;
@@ -62,6 +62,18 @@ describe("sessionCloseTimes", () => {
     expect([...closes.entries()]).toEqual([
       [Date.parse("2026-11-25T00:00:00Z"), Date.parse("2026-11-25T21:00:00Z")],
       [Date.parse("2026-11-27T00:00:00Z"), Date.parse("2026-11-27T18:00:00Z")],
+    ]);
+  });
+});
+
+describe("sessionClosePoints", () => {
+  it("stamps each daily close at its session's end, or 4:00 PM where the 30-minute bars don't reach", () => {
+    // Fri, Nov 27, 2026 closes early at 1:00 PM (18:00 UTC); Mon, Nov 30 has no 30-minute bars.
+    const bars = halfHourBars("2026-11-27T14:30:00Z", 7);
+    const day = (date: string, close: number): StockBar => ({ t: Date.parse(`${date}T00:00:00Z`), open: close, high: close, low: close, close, volume: 1 });
+    expect(sessionClosePoints([day("2026-11-27", 10), day("2026-11-30", 11)], bars)).toEqual([
+      { t: Date.parse("2026-11-27T18:00:00Z"), value: 10 },
+      { t: Date.parse("2026-11-30T21:00:00Z"), value: 11 },
     ]);
   });
 });

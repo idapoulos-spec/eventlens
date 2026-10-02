@@ -5,22 +5,30 @@ import {
   computeChanges,
   crossCorrelation,
   eventStudy,
+  marketAdjustment,
   researchCsv,
   rollingCorrelation,
   rowsSince,
+  type ChangePoint,
   type ChangeSeries,
   type CorrelationStats,
   type EventStudy,
   type LagCorrelation,
+  type MarketModel,
   type Resolution,
   type ResearchRow,
   type RollingPoint,
 } from "@/lib/analytics";
 import { formatShortDate, formatSigned } from "@/lib/format";
+import type { BenchmarkSeries } from "@/lib/market-data/types";
+import type { Result } from "@/lib/result";
 import { EventStudyChart } from "../charts/EventStudyChart";
 import { formatLag, LeadLagChart, type LagUnit } from "../charts/LeadLagChart";
 import { RollingCorrelationChart } from "../charts/RollingCorrelationChart";
 import { Card, Notice } from "../ui";
+import { MarketAdjustmentCard, modelSample } from "./MarketAdjustmentCard";
+import { Caption, Flag, fmtR, plural, Segmented, ValuesTable } from "./parts";
+import { useBenchmark } from "./useBenchmark";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WINDOWS = [7, 30, 90] as const;
@@ -94,48 +102,101 @@ interface Props {
   kalshiTicker: string;
   /** What a YES outcome means for this market, quoted in the sign notes. */
   yesLabel: string;
+  /** The default benchmark as the server loaded it, or null if it wasn't requested (the stock is the benchmark). */
+  initialBenchmark: Result<BenchmarkSeries> | null;
 }
 
-interface Analysis {
-  rows: ResearchRow[];
-  series: ChangeSeries;
+/** Raw: the stock's own returns. Adjusted: net of the benchmark (alpha + beta × its return). */
+type Returns = "raw" | "adjusted";
+
+/** What the lead-lag, rolling, and event-study cards show. */
+interface View {
+  changes: ChangePoint[];
   lags: LagCorrelation[];
   sameInterval: CorrelationStats;
   rolling: RollingPoint[];
-  study: EventStudy;
+  /** Null in market-adjusted mode when beta can't be estimated outside the jump windows. */
+  study: EventStudy | null;
 }
 
-const plural = (n: number, [one, many]: [string, string]) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
-const fmtR = (r: number | null) => (r === null ? "—" : formatSigned(r, 2));
+/** How the market-adjusted view was adjusted, for its captions. */
+interface Adjustment {
+  benchmark: string;
+  model: MarketModel;
+  eventModel: MarketModel | null;
+  missingBenchmark: number;
+  /** The selected window, in days. */
+  days: number;
+}
 
-export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, yesLabel }: Props) {
+function view(changes: ChangePoint[], study: EventStudy | null, settings: Settings): View {
+  const lags = crossCorrelation(changes, settings.maxLag);
+  return { changes, lags, sameInterval: lags.find((l) => l.lag === 0)!, rolling: rollingCorrelation(changes, settings.rollingWindow), study };
+}
+
+export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, yesLabel, initialBenchmark }: Props) {
   const [days, setDays] = useState<WindowDays>(30);
   const [chosenResolution, setResolution] = useState<Resolution>("hourly");
   const [thresholds, setThresholds] = useState<Record<Resolution, number>>({
     hourly: SETTINGS.hourly.defaultThreshold,
     daily: SETTINGS.daily.defaultThreshold,
   });
+  const [chosenReturns, setReturns] = useState<Returns>("raw");
+  const benchmark = useBenchmark(initialBenchmark);
   // Seven days hold only about five daily closes, so that window is hourly only.
   const resolution: Resolution = days === 7 ? "hourly" : chosenResolution;
   const settings = SETTINGS[resolution];
   const threshold = thresholds[resolution];
+  const isSelf = benchmark.active.symbol === stockSymbol;
 
-  const analysis = useMemo<Analysis>(() => {
-    const rows = rowsSince(resolution === "hourly" ? hourly : daily, asOf - days * DAY_MS);
+  const analysis = useMemo(() => {
+    // Every loaded row (90 days): the market model is fitted on these, whatever the window.
+    const full = resolution === "hourly" ? hourly : daily;
+    const rows = rowsSince(full, asOf - days * DAY_MS);
     const series = computeChanges(rows);
-    const lags = crossCorrelation(series.changes, settings.maxLag);
-    return {
-      rows,
-      series,
-      lags,
-      sameInterval: lags.find((l) => l.lag === 0)!,
-      rolling: rollingCorrelation(series.changes, settings.rollingWindow),
-      study: eventStudy(rows, series.changes, { thresholdPp: threshold, before: settings.eventBars, after: settings.eventBars }),
-    };
+    const event = { thresholdPp: threshold, before: settings.eventBars, after: settings.eventBars };
+    return { full, rows, series, event, raw: view(series.changes, eventStudy(rows, series.changes, event), settings) };
   }, [hourly, daily, asOf, days, resolution, settings, threshold]);
 
+  const benchSeries = isSelf ? null : benchmark.series;
+  const closesByT = useMemo(
+    () => benchSeries && new Map((resolution === "hourly" ? benchSeries.hourly : benchSeries.daily).map((p) => [p.t, p.value])),
+    [benchSeries, resolution],
+  );
+  const market = useMemo(
+    () =>
+      closesByT &&
+      marketAdjustment({ full: analysis.full, rows: analysis.rows, changes: analysis.series.changes, closesByT, event: analysis.event }),
+    [analysis, closesByT],
+  );
+  const adjusted = useMemo(
+    () => (market?.model && market.abnormal ? view(market.abnormal, market.studies.abnormal, settings) : null),
+    [market, settings],
+  );
+
+  const returns: Returns = adjusted ? chosenReturns : "raw";
+  const shown = returns === "adjusted" ? adjusted! : analysis.raw;
+  const adjustment: Adjustment | null =
+    returns === "adjusted" && market?.model
+      ? {
+          benchmark: benchmark.active.symbol,
+          model: market.model,
+          eventModel: market.eventModel,
+          missingBenchmark: market.missingBenchmark,
+          days,
+        }
+      : null;
+  const unavailable = isSelf
+    ? `${stockSymbol} is the benchmark itself`
+    : benchmark.status.state === "loading" && !benchmark.series
+      ? "Loading the benchmark"
+      : !benchmark.series
+        ? "Benchmark prices aren’t available"
+        : "Too few prices to estimate beta";
+
   function downloadCsv() {
-    const blob = new Blob([researchCsv(analysis.rows, resolution)], { type: "text/csv;charset=utf-8" });
+    const csvBenchmark = closesByT && { symbol: benchmark.active.symbol, closesByT, model: market?.model ?? null };
+    const blob = new Blob([researchCsv(analysis.rows, resolution, csvBenchmark)], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -144,8 +205,8 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
     URL.revokeObjectURL(url);
   }
 
-  const { series, sameInterval } = analysis;
-  const changes = series.changes;
+  const { series } = analysis;
+  const { changes, sameInterval } = shown;
 
   return (
     <div className="grid gap-4 sm:gap-5">
@@ -168,6 +229,15 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
               { value: "daily" as const, label: "Daily", disabled: days === 7, title: "Seven days hold only about five daily closes" },
             ]}
             onChange={setResolution}
+          />
+          <Segmented
+            label="Returns"
+            value={returns}
+            options={[
+              { value: "raw" as const, label: "Raw" },
+              { value: "adjusted" as const, label: "Market-adjusted", disabled: !adjusted, title: unavailable },
+            ]}
+            onChange={setReturns}
           />
           <label className="block">
             <span className="mb-1.5 block text-xs font-medium text-ink-secondary">Jump size (event study)</span>
@@ -192,7 +262,15 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
           </button>
         </div>
 
-        <Summary series={series} stats={sameInterval} resolution={resolution} settings={settings} />
+        <Summary
+          changes={changes}
+          excluded={series.excluded}
+          stats={sameInterval}
+          resolution={resolution}
+          settings={settings}
+          adjustment={adjustment}
+          rawR={analysis.raw.sameInterval.r}
+        />
 
         <p className="mt-3 text-xs text-ink-secondary">
           <span className="font-medium text-ink">How to read the sign.</span> Positive means {stockSymbol} tended to rise
@@ -200,6 +278,20 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
           {stockSymbol}, negative values are what you’d expect.
         </p>
       </Card>
+
+      <MarketAdjustmentCard
+        stockSymbol={stockSymbol}
+        benchmark={benchmark}
+        isSelf={isSelf}
+        market={market}
+        raw={{ same: analysis.raw.sameInterval, study: analysis.raw.study! }}
+        resolution={resolution}
+        days={days}
+        unit={settings.unit}
+        same={settings.same}
+        noun={settings.noun}
+        yesLabel={yesLabel}
+      />
 
       {changes.length === 0 ? (
         <Notice
@@ -210,10 +302,31 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
       ) : (
         <>
           <div className="grid gap-4 sm:gap-5 lg:grid-cols-2">
-            <LeadLagCard lags={analysis.lags} settings={settings} stockSymbol={stockSymbol} yesLabel={yesLabel} />
-            <RollingCard points={analysis.rolling} changes={changes.length} settings={settings} resolution={resolution} />
+            <LeadLagCard
+              lags={shown.lags}
+              settings={settings}
+              stockSymbol={stockSymbol}
+              yesLabel={yesLabel}
+              adjustment={adjustment}
+              resolution={resolution}
+            />
+            <RollingCard
+              points={shown.rolling}
+              changes={changes.length}
+              settings={settings}
+              resolution={resolution}
+              adjustment={adjustment}
+            />
           </div>
-          <EventStudyCard study={analysis.study} settings={settings} stockSymbol={stockSymbol} threshold={threshold} yesLabel={yesLabel} />
+          <EventStudyCard
+            study={shown.study}
+            settings={settings}
+            stockSymbol={stockSymbol}
+            threshold={threshold}
+            yesLabel={yesLabel}
+            adjustment={adjustment}
+            resolution={resolution}
+          />
         </>
       )}
 
@@ -225,63 +338,7 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
   );
 }
 
-// ---- Controls ----
-
-interface SegmentOption<T> {
-  value: T;
-  label: string;
-  disabled?: boolean;
-  title?: string;
-}
-
-function Segmented<T extends string | number>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: T;
-  options: SegmentOption<T>[];
-  onChange: (value: T) => void;
-}) {
-  return (
-    <div>
-      <span className="mb-1.5 block text-xs font-medium text-ink-secondary">{label}</span>
-      <div role="group" aria-label={label} className="grid auto-cols-fr grid-flow-col rounded-lg border border-border p-0.5 text-xs sm:inline-grid">
-        {options.map((o) => (
-          <button
-            key={o.value}
-            type="button"
-            aria-pressed={value === o.value}
-            disabled={o.disabled}
-            title={o.disabled ? o.title : undefined}
-            onClick={() => onChange(o.value)}
-            className={`rounded-md px-3 py-2.5 transition disabled:cursor-not-allowed disabled:opacity-40 sm:py-1.5 ${
-              value === o.value ? "bg-surface-raised text-ink" : "text-ink-muted hover:text-ink-secondary"
-            }`}
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ---- Summary and flags ----
-
-/** A warning that never relies on color alone: an icon and a label. */
-function Flag({ children }: { children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-md border border-warn/40 bg-surface-raised px-2 py-1 text-xs text-ink">
-      <span aria-hidden className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-warn text-[0.6rem] font-bold text-page">
-        !
-      </span>
-      {children}
-    </span>
-  );
-}
 
 function sampleFlags(stats: CorrelationStats): string[] {
   const flags: string[] = [];
@@ -292,23 +349,41 @@ function sampleFlags(stats: CorrelationStats): string[] {
   return flags;
 }
 
+/** e.g. "beta 1.18 from the full 90 days (n = 412 hourly intervals), not only this window". */
+function betaFrom(model: MarketModel, resolution: Resolution, days: number): string {
+  return `beta ${model.beta.toFixed(2)} from ${modelSample(model, resolution)}${days < 90 ? ", not only this window" : ""}`;
+}
+
+/** The adjustment in one sentence, for a chart's small print. */
+function adjustmentNote({ benchmark, model, days }: Adjustment, stockSymbol: string, resolution: Resolution): string {
+  return `Market-adjusted: ${stockSymbol}’s return minus (alpha + beta × ${benchmark}’s return), with ${betaFrom(model, resolution, days)}.`;
+}
+
 function Summary({
-  series,
+  changes,
+  excluded,
   stats,
   resolution,
   settings,
+  adjustment,
+  rawR,
 }: {
-  series: ChangeSeries;
+  changes: ChangePoint[];
+  excluded: ChangeSeries["excluded"];
   stats: CorrelationStats;
   resolution: Resolution;
   settings: Settings;
+  adjustment: Adjustment | null;
+  rawR: number | null;
 }) {
-  const { changes, excluded } = series;
   const intervalNoun: [string, string] = resolution === "hourly" ? ["hourly interval", "hourly intervals"] : ["daily interval", "daily intervals"];
   const range = changes.length > 0 ? ` (${formatShortDate(changes[0].t)} – ${formatShortDate(changes[changes.length - 1].t)})` : "";
   const left = Object.entries(excluded)
     .filter(([, n]) => n > 0)
     .map(([reason, n]) => `${n.toLocaleString("en-US")} ${EXCLUSION_LABEL[resolution][reason] ?? reason}`);
+  if (adjustment && adjustment.missingBenchmark > 0) {
+    left.push(`${adjustment.missingBenchmark.toLocaleString("en-US")} without a ${adjustment.benchmark} price at both ends`);
+  }
   const flags = sampleFlags(stats);
   return (
     <div className="mt-4 text-sm text-ink-secondary">
@@ -318,10 +393,17 @@ function Summary({
         {stats.r !== null && (
           <>
             {" "}
-            {settings.same} correlation: <span className="font-semibold text-ink">{fmtR(stats.r)}</span>.
+            {settings.same} correlation{adjustment && `, market-adjusted vs. ${adjustment.benchmark}`}:{" "}
+            <span className="font-semibold text-ink">{fmtR(stats.r)}</span>
+            {adjustment && ` (raw ${fmtR(rawR)})`}.
           </>
         )}
       </p>
+      {adjustment && (
+        <p className="mt-1 text-xs text-ink-secondary">
+          Market-adjusted returns use {betaFrom(adjustment.model, resolution, adjustment.days)}.
+        </p>
+      )}
       {left.length > 0 && <p className="mt-1 text-xs text-ink-muted">Left out: {left.join(" · ")}.</p>}
       {resolution === "hourly" && (
         <p className="mt-1 text-xs text-ink-muted">
@@ -342,21 +424,11 @@ function Summary({
 
 // ---- Chart cards ----
 
-/** Caption and caveats under a chart: one plain-English line, then smaller print. */
-function Caption({ lead, caveats }: { lead: ReactNode; caveats: ReactNode }) {
-  return (
-    <div className="mt-3 space-y-1.5">
-      <p className="text-sm text-ink-secondary">{lead}</p>
-      <p className="text-xs text-ink-muted">{caveats}</p>
-    </div>
-  );
-}
-
-function when(lag: number, settings: Settings, stockSymbol: string): string {
+function when(lag: number, settings: Settings, subject: string): string {
   const n = Math.abs(lag);
   const span = plural(n, settings.noun);
-  if (lag === 0) return `${stockSymbol}’s return in the same ${settings.noun[0]}`;
-  return lag > 0 ? `${stockSymbol}’s return ${span} later` : `${stockSymbol}’s return ${span} earlier`;
+  if (lag === 0) return `${subject} in the same ${settings.noun[0]}`;
+  return lag > 0 ? `${subject} ${span} later` : `${subject} ${span} earlier`;
 }
 
 function LeadLagCard({
@@ -364,12 +436,17 @@ function LeadLagCard({
   settings,
   stockSymbol,
   yesLabel,
+  adjustment,
+  resolution,
 }: {
   lags: LagCorrelation[];
   settings: Settings;
   stockSymbol: string;
   yesLabel: string;
+  adjustment: Adjustment | null;
+  resolution: Resolution;
 }) {
+  const returnNoun = adjustment ? "market-adjusted return" : "return";
   const measured = lags.filter((l) => l.r !== null && l.band !== null);
   const largest = (ls: LagCorrelation[]) =>
     ls.reduce<LagCorrelation | null>((a, b) => (a === null || Math.abs(b.r!) > Math.abs(a.r!) ? b : a), null);
@@ -391,12 +468,12 @@ function LeadLagCard({
     }: Kalshi changes tended to move ${strongest.r! > 0 ? "in the same direction as" : "opposite to"} ${when(
       strongest.lag,
       settings,
-      stockSymbol,
+      `${stockSymbol}’s ${returnNoun}`,
     )} (r = ${fmtR(strongest.r)}, n = ${strongest.n}).`;
   }
 
   return (
-    <Card title="Lead-lag" subtitle={`Correlation of Kalshi changes with ${stockSymbol} returns, shifted by ${settings.noun[1]}`}>
+    <Card title="Lead-lag" subtitle={`Correlation of Kalshi changes with ${stockSymbol} ${returnNoun}s, shifted by ${settings.noun[1]}`}>
       {measured.length === 0 ? (
         <Notice tone="info" title="Not enough data" message="Each lag needs at least 10 matching intervals, with some movement in both series." />
       ) : (
@@ -413,6 +490,7 @@ function LeadLagCard({
               alone.
             </strong>{" "}
             The sign depends on what YES means (“{yesLabel}”).
+            {adjustment && ` ${adjustmentNote(adjustment, stockSymbol, resolution)}`}
           </>
         }
       />
@@ -429,11 +507,13 @@ function RollingCard({
   changes,
   settings,
   resolution,
+  adjustment,
 }: {
   points: RollingPoint[];
   changes: number;
   settings: Settings;
   resolution: Resolution;
+  adjustment: Adjustment | null;
 }) {
   const w = settings.rollingWindow;
   const band = 1.96 / Math.sqrt(w);
@@ -441,7 +521,12 @@ function RollingCard({
   const enough = changes >= w + ROLLING_EXTRA && rs.length > 0;
   const latest = points.at(-1)?.r ?? null;
   return (
-    <Card title="Rolling correlation" subtitle={`${settings.same} correlation over the last ${w} intervals (${settings.rollingSpan})`}>
+    <Card
+      title="Rolling correlation"
+      subtitle={`${settings.same} correlation over the last ${w} intervals (${settings.rollingSpan})${
+        adjustment ? `, market-adjusted vs. ${adjustment.benchmark}` : ""
+      }`}
+    >
       {enough ? (
         <RollingCorrelationChart points={points} band={band} daily={resolution === "daily"} />
       ) : (
@@ -465,6 +550,7 @@ function RollingCard({
             alone produces. Neighboring points share most of their data.
             {points.some((p) => p.r === null) && " Gaps: one series didn't move in that window."} The sign depends on what YES
             means (see above).
+            {adjustment && ` Every window uses the same ${betaFrom(adjustment.model, resolution, adjustment.days)}.`}
           </>
         }
       />
@@ -478,13 +564,35 @@ function EventStudyCard({
   stockSymbol,
   threshold,
   yesLabel,
+  adjustment,
+  resolution,
 }: {
-  study: EventStudy;
+  study: EventStudy | null;
   settings: Settings;
   stockSymbol: string;
   threshold: number;
   yesLabel: string;
+  adjustment: Adjustment | null;
+  resolution: Resolution;
 }) {
+  const kind = adjustment ? "market-adjusted return" : "return";
+  const card = (children: ReactNode) => (
+    <Card
+      title="Around Kalshi jumps"
+      subtitle={`Average ${stockSymbol} cumulative ${kind} in the ${settings.noun[1]} before and after the probability moved ≥${threshold} pp in one ${settings.noun[0]}`}
+    >
+      {children}
+    </Card>
+  );
+  if (study === null) {
+    return card(
+      <Notice
+        tone="info"
+        title="Not enough data for a market-adjusted event study"
+        message={`Fewer than 10 ${resolution} intervals in the last 90 days fall outside the jump windows, so beta can’t be estimated without the jumps shaping it. Try a larger jump size, or Raw.`}
+      />,
+    );
+  }
   const last = study.offsets.length - 1;
   const end = formatLag(study.offsets[last], settings.unit);
   const at = (mean: number[] | null) => formatSigned(mean?.[last] ?? null, 2, "%");
@@ -492,15 +600,17 @@ function EventStudyCard({
     study.rises.n > 0 && `after rises, ${stockSymbol} averaged ${at(study.rises.mean)}`,
     study.falls.n > 0 && `after falls, ${at(study.falls.mean)}`,
   ].filter(Boolean);
-  const skipped = study.skippedOverlap + study.skippedEdge;
+  const skipped = study.skippedOverlap + study.skippedEdge + study.skippedMissing;
   const few = study.rises.flag !== "ok" || study.falls.flag !== "ok";
 
-  return (
-    <Card
-      title="Around Kalshi jumps"
-      subtitle={`Average ${stockSymbol} cumulative return in the ${settings.noun[1]} before and after the probability moved ≥${threshold} pp in one ${settings.noun[0]}`}
-    >
-      <EventStudyChart study={study} unit={settings.unit} stockSymbol={stockSymbol} thresholdPp={threshold} />
+  return card(
+    <>
+      <EventStudyChart
+        study={study}
+        unit={settings.unit}
+        stockSymbol={adjustment ? `${stockSymbol} market-adjusted` : stockSymbol}
+        thresholdPp={threshold}
+      />
       <Caption
         lead={
           <>
@@ -514,7 +624,11 @@ function EventStudyCard({
             YES (“{yesLabel}”){few ? ": too few to generalize, and one large move can dominate an average" : ""}. Paths start at
             the close before the jump (bar −1); the shaded bar is the {settings.noun[0]} the jump happened in. {settings.barNote}
             {skipped > 0 &&
-              ` ${plural(skipped, ["jump was", "jumps were"])} skipped (within ${settings.eventBars} bars of an earlier jump, or too close to the edge of the data).`}
+              ` ${plural(skipped, ["jump was", "jumps were"])} skipped (within ${settings.eventBars} bars of an earlier jump, or too close to the edge of the data${
+                study.skippedMissing > 0 && adjustment ? `, or missing a ${adjustment.benchmark} price` : ""
+              }).`}
+            {adjustment?.eventModel &&
+              ` Market-adjusted with beta ${adjustment.eventModel.beta.toFixed(2)} and alpha from ${modelSample(adjustment.eventModel, resolution)} outside every jump window, so the jumps don’t shape beta; the baseline is adjusted the same way.`}
           </>
         }
       />
@@ -527,39 +641,6 @@ function EventStudyCard({
           formatSigned(study.baseline.mean?.[i] ?? null, 2, "%"),
         ])}
       />
-    </Card>
-  );
-}
-
-/** The chart's values as a table, collapsed by default. */
-function ValuesTable({ head, rows }: { head: string[]; rows: string[][] }) {
-  return (
-    <details className="mt-3 text-xs">
-      <summary className="cursor-pointer text-ink-muted hover:text-ink-secondary">Show values</summary>
-      <div className="mt-2 overflow-x-auto">
-        <table className="w-full text-left tabular-nums">
-          <thead className="text-ink-muted">
-            <tr>
-              {head.map((h) => (
-                <th key={h} scope="col" className="py-1 pr-4 font-medium">
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="text-ink-secondary">
-            {rows.map((r) => (
-              <tr key={r[0]} className="border-t border-border">
-                {r.map((c, i) => (
-                  <td key={i} className="py-1 pr-4">
-                    {c}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </details>
+    </>,
   );
 }

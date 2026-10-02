@@ -31,7 +31,7 @@ Search is built on parallel branches, one per area below, each in its own git wo
 ### Twelve Data limits
 
 - The free plan allows **8 requests a minute and 800 a day**. Every worktree uses the same key from `.env.local`, so those limits cover all parallel branches together, not each one.
-- One analysis costs 3 requests (1 if the same stock was analyzed in the last 60 seconds). Four branches each running one analysis a minute already exceeds the limit. When the quota runs out, the stock panel shows "Twelve Data rate limit reached": that's the shared quota, not your code.
+- One analysis costs 3 requests (1 if the same stock was analyzed in the last 60 seconds), plus 2 for Research's SPY benchmark when the server doesn't have it in memory (it's kept until its next 30-minute bar settles). Picking another benchmark costs 2 more. Four branches each running one analysis a minute already exceeds the limit. When the quota runs out, the stock panel shows "Twelve Data rate limit reached": that's the shared quota, not your code.
 - Test against mocked `fetch` (see `lib/market-data/twelve-data.test.ts` and `lib/kalshi/client.test.ts`), not the live APIs, and never call them in a loop or script.
 - Count every Twelve Data request, search included, as at least 1 credit. Stock search must not call Twelve Data on every keystroke.
 - The app's rate limiters keep counts in each server's memory, so each dev server has its own budget. They don't protect the shared key.

@@ -2,7 +2,7 @@ import { Suspense, type ReactNode } from "react";
 import { alignSeries } from "@/lib/analytics";
 import { formatDateTime } from "@/lib/format";
 import { getKalshiOverview, getKalshiResearchHistory, type KalshiOverview } from "@/lib/kalshi";
-import { getStockOverview, type StockOverview } from "@/lib/market-data";
+import { DEFAULT_BENCHMARK, getBenchmarkSeries, getStockOverview, type StockOverview } from "@/lib/market-data";
 import type { Result } from "@/lib/result";
 import { RememberAnalysis } from "./analysis/RecentAnalyses";
 import { ComparisonChart } from "./charts/ComparisonChart";
@@ -28,6 +28,11 @@ export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) 
   const stockData = getStockOverview(stock);
   // Research's 90-day history is a separate request, so it never slows the sections above.
   const researchHistory = getKalshiResearchHistory(kalshi);
+  // Research's default benchmark waits for the stock's own requests, so the stock gets the
+  // shared Twelve Data quota first. It's skipped if the stock failed or is the benchmark.
+  const benchmarkData = stockData.then((s) =>
+    s.ok && stock !== DEFAULT_BENCHMARK.symbol ? getBenchmarkSeries(DEFAULT_BENCHMARK.symbol) : null,
+  );
 
   return (
     <div className="grid gap-4 sm:gap-5">
@@ -89,7 +94,14 @@ export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) 
         }
       >
         <Reveal>
-          <Research kalshiData={kalshiData} stockData={stockData} historyData={researchHistory} stock={stock} kalshi={kalshi} />
+          <Research
+            kalshiData={kalshiData}
+            stockData={stockData}
+            historyData={researchHistory}
+            benchmarkData={benchmarkData}
+            stock={stock}
+            kalshi={kalshi}
+          />
         </Reveal>
       </Suspense>
 

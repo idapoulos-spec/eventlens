@@ -11,7 +11,8 @@ import { formatWait } from "@/lib/format";
 import { validateKalshiTicker, validateStockTicker } from "@/lib/validation";
 
 // Cap on how long Vercel lets this page's server function run. The worst case is about
-// 6 seconds: every Kalshi and Twelve Data request starts at once, each with a 6-second timeout.
+// 12 seconds: every Kalshi and Twelve Data request starts at once, each with a 6-second
+// timeout, except Research's benchmark, which waits for the stock's requests.
 export const maxDuration = 30;
 
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);

@@ -12,12 +12,12 @@ const HALF_HOUR_MS = 30 * 60 * 1000;
 const VOL_WINDOW_DAYS = 30;
 // 900 half-hour bars is about 70 sessions (13 a day), enough for the 90-day research window.
 // A time series costs one API credit whatever its length.
-const HALF_HOURLY_BARS = 900;
+export const HALF_HOURLY_BARS = 900;
 // Hourly bars for the 7-day comparison chart: about 10 sessions, as before.
 const HOURLY_BARS = 70;
-const DAILY_BARS = 90;
+export const DAILY_BARS = 90;
 
-type Interval = "30min" | "1day";
+export type Interval = "30min" | "1day";
 
 export class TwelveDataError extends Error {
   constructor(
@@ -123,12 +123,13 @@ function normalizeSeries(raw: RawTimeSeries, interval: Interval): Series {
   return { bars, exchangeTimeZone };
 }
 
-function getTimeSeries(symbol: string, interval: Interval, outputsize: number, apiKey: string) {
+/** One symbol's bars, oldest first, intraday bars stamped at their close. One API credit whatever the length. */
+export function getTimeSeries(symbol: string, interval: Interval, outputsize: number, apiKey: string, cache = cachedFor(60)) {
   return twelveGet<RawTimeSeries>(
     "/time_series",
     { symbol, interval, outputsize: String(outputsize), timezone: "UTC" },
     apiKey,
-    cachedFor(60),
+    cache,
   ).then((raw) => normalizeSeries(raw, interval));
 }
 
@@ -136,7 +137,7 @@ function getTimeSeries(symbol: string, interval: Interval, outputsize: number, a
  * Map a failure to fixed, user-facing wording. Twelve Data's own error text is
  * logged on the server only, with the key redacted, and never shown to users.
  */
-function describeError(err: unknown, symbol: string, apiKey: string): Result<never> {
+export function describeError(err: unknown, symbol: string, apiKey: string): Result<never> {
   const status = err instanceof TwelveDataError ? err.code : "network";
   const detail = err instanceof Error ? err.message : String(err);
   console.error(`[twelve-data] ${symbol}: ${status} ${detail.replaceAll(apiKey, "[redacted]")}`);

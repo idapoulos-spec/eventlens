@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { computeChanges } from "./changes";
-import { eventStudy } from "./event-study";
+import { eventStudy, eventWindowRows } from "./event-study";
 import type { ResearchRow } from "./research";
 
 /** Consecutive rows (one grid slot apart) with the given stock closes and probabilities. */
@@ -79,5 +79,34 @@ describe("eventStudy", () => {
 
   it("has no baseline when the data is shorter than one window", () => {
     expect(study(rows([100, 101, 102], [0.5, 0.5, 0.5]), 5).baseline).toEqual({ mean: null, n: 0 });
+  });
+
+  it("studies another log-change series when given one, skipping windows it can't measure", () => {
+    const closes = Array.from({ length: 20 }, (_, i) => (i < 10 ? 100 : 110));
+    const probs = Array.from({ length: 20 }, (_, i) => (i < 10 ? 0.4 : 0.45));
+    const r = rows(closes, probs);
+    // Half the stock's move, say net of a benchmark.
+    const half = eventStudy(r, computeChanges(r).changes, { thresholdPp: 5, before: 3, after: 3 }, (from, to) =>
+      Math.log(r[to].stockClose / r[from].stockClose) / 2,
+    );
+    expect(half.rises.mean!.at(-1)).toBeCloseTo((Math.log(1.1) * 100) / 2, 10);
+    expect(half.skippedMissing).toBe(0);
+
+    const missing = eventStudy(r, computeChanges(r).changes, { thresholdPp: 5, before: 3, after: 3 }, (from, to) =>
+      from === 9 || to === 9 ? null : Math.log(r[to].stockClose / r[from].stockClose),
+    );
+    expect(missing).toMatchObject({ detected: 1, skippedMissing: 1, rises: { n: 0 } });
+    // Every baseline window that includes row 9 is left out too.
+    expect(missing.baseline.n).toBe(14 - 7);
+  });
+});
+
+describe("eventWindowRows", () => {
+  it("covers before…after bars around every jump, including skipped ones", () => {
+    // Jumps during bars 1 (too early for the study), 7, and 9 (within 3 bars of 7).
+    const probs = [0.3, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.5, 0.5, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6];
+    const r = rows(Array(15).fill(100), probs);
+    const inside = eventWindowRows(r, computeChanges(r).changes, { thresholdPp: 5, before: 2, after: 1 });
+    expect([...inside].sort((a, b) => a - b)).toEqual([0, 1, 2, 5, 6, 7, 8, 9, 10]);
   });
 });

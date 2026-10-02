@@ -86,6 +86,17 @@ export function sessionCloseTimes(bars: StockBar[]): Map<number, number> {
 }
 
 /**
+ * Daily closes stamped at the moment each session ended, from daily bars and the same
+ * stock's 30-minute bars (see sessionCloseTimes); sessions the 30-minute bars don't cover
+ * fall back to 4:00 PM New York. Stocks and benchmarks are stamped the same way, so their
+ * daily closes line up on exactly the same timestamps.
+ */
+export function sessionClosePoints(daily: StockBar[], halfHourly: StockBar[]): { t: number; value: number }[] {
+  const closes = sessionCloseTimes(halfHourly);
+  return daily.map((b) => ({ t: closes.get(b.t) ?? tradingDayClose(b.t), value: b.close }));
+}
+
+/**
  * Combine close-stamped 30-minute bars into the hourly bars Twelve Data itself returns:
  * hours counted from each session's first bar (09:30–10:30, …, 14:30–15:30), with the
  * final half hour (15:30–16:00) as its own bar. Each hourly bar is stamped like
