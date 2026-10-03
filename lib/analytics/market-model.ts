@@ -1,8 +1,10 @@
 import { computeChanges, type ChangePoint } from "./changes";
 import { correlationStats, type CorrelationStats } from "./correlation";
+import { lagCorrelationTests } from "./correlation-test";
 import { eventStudy, eventWindowRows, type EventStudy, type EventStudyOptions, type LogChange } from "./event-study";
+import type { TestResult } from "./inference";
 import { confidenceInterval95, neweyWestLags, ols } from "./regression";
-import type { ResearchRow } from "./research";
+import type { ResearchRow, Resolution } from "./research";
 import { MIN_KALSHI_MOVES, MIN_PAIRS, sampleFlag, type SampleFlag } from "./sample";
 
 /**
@@ -132,6 +134,8 @@ export interface KalshiRegression {
   flag: SampleFlag;
   /** Fewer than MIN_KALSHI_MOVES non-zero Kalshi changes: too few to judge significance. */
   fewKalshiMoves: boolean;
+  /** The Kalshi coefficient as a test result: a cross-check of the primary test, not corrected. */
+  test: TestResult;
 }
 
 /**
@@ -152,23 +156,55 @@ export function kalshiRegression(changes: ChangePoint[], benchReturnByT: Readonl
   );
   if (!fit) return null;
   const kalshiMoves = used.filter((c) => c.probChangePp !== 0).length;
+  const fewKalshiMoves = kalshiMoves < MIN_KALSHI_MOVES;
+  const ci = confidenceInterval95(fit, 2);
+  const p = fewKalshiMoves ? null : fit.p[2];
   return {
     coef: fit.coef[2],
     se: fit.se[2],
-    ci: confidenceInterval95(fit, 2),
+    ci,
     p: fit.p[2],
     marketCoef: fit.coef[1],
     n,
     lags: fit.lags,
     kalshiMoves,
     flag: sampleFlag(n),
-    fewKalshiMoves: kalshiMoves < MIN_KALSHI_MOVES,
+    fewKalshiMoves,
+    test: {
+      estimate: fit.coef[2],
+      ci,
+      p,
+      holm: null,
+      bh: null,
+      role: "exploratory",
+      family: null,
+      method: "newey_west",
+      interval: "newey_west",
+      resampling: null,
+      n,
+      nEffective: null,
+      pUnavailable: fewKalshiMoves ? "few_kalshi_moves" : p === null ? "unstable" : null,
+      ciUnavailable: ci === null ? "unstable" : null,
+    },
   };
 }
 
-/** Correlation of Kalshi changes with the benchmark's returns: how much of what Kalshi tracks the market shares. */
-export function kalshiBenchmarkCorrelation(changes: ChangePoint[], benchReturnByT: ReadonlyMap<number, number>): CorrelationStats {
-  return correlationStats(changes.flatMap((c) => (benchReturnByT.has(c.t) ? [{ x: c.probChangePp, y: benchReturnByT.get(c.t)! }] : [])));
+/**
+ * Correlation of Kalshi changes with the benchmark's returns in the same interval: how much
+ * of what Kalshi tracks the market shares. Tested like the lead-lag correlations; a
+ * cross-check, not corrected.
+ */
+export function kalshiBenchmarkCorrelation(
+  changes: ChangePoint[],
+  benchReturnByT: ReadonlyMap<number, number>,
+  resolution: Resolution,
+): CorrelationStats & { test: TestResult } {
+  const withBench = changes.flatMap((c) => {
+    const rm = benchReturnByT.get(c.t);
+    return rm === undefined ? [] : [{ ...c, logReturn: rm }];
+  });
+  const [{ test }] = lagCorrelationTests(withBench, [0], resolution);
+  return { ...correlationStats(withBench.map((c) => ({ x: c.probChangePp, y: c.logReturn }))), test };
 }
 
 export interface MarketAdjustmentInput {
@@ -181,6 +217,7 @@ export interface MarketAdjustmentInput {
   /** Benchmark closes by observation time. */
   closesByT: ReadonlyMap<number, number>;
   event: EventStudyOptions;
+  resolution: Resolution;
 }
 
 export interface MarketAdjustment {
@@ -194,28 +231,44 @@ export interface MarketAdjustment {
   excess: ChangePoint[];
   /** Usable window intervals left out because the benchmark has no price at one end. */
   missingBenchmark: number;
+  /**
+   * The primary test: same-interval correlation of Kalshi changes with abnormal returns, in
+   * the selected window. Null without a market model.
+   */
+  primary: TestResult | null;
   kalshi: KalshiRegression | null;
-  kalshiVsBenchmark: CorrelationStats;
+  kalshiVsBenchmark: CorrelationStats & { test: TestResult };
   /** Event studies on abnormal returns (beta from outside the jump windows) and on simple excess returns. */
   studies: { abnormal: EventStudy | null; excess: EventStudy };
 }
 
+/**
+ * The primary test: same-interval (lag 0) correlation of Kalshi changes with market-adjusted
+ * returns. It uses the same draws as lag 0 of the market-adjusted lead-lag chart, so the two
+ * always agree.
+ */
+export function primaryTest(abnormal: ChangePoint[], resolution: Resolution): TestResult {
+  return lagCorrelationTests(abnormal, [0], resolution, { primaryLags: [0] })[0].test;
+}
+
 /** Every market-adjusted result for one window, resolution, and jump size. */
-export function marketAdjustment({ full, rows, changes, closesByT, event }: MarketAdjustmentInput): MarketAdjustment {
+export function marketAdjustment({ full, rows, changes, closesByT, event, resolution }: MarketAdjustmentInput): MarketAdjustment {
   const benchReturns = benchmarkReturnsByT(full, closesByT);
   const model = fitMarketModel(full, closesByT);
   // Fitted only outside the jump windows, so the jumps being studied don't shape beta.
   const windows = eventWindowRows(full, computeChanges(full).changes, event);
   const eventModel = fitMarketModel(full, closesByT, (i) => windows.has(i));
   const excess = adjustedChanges(changes, benchReturns, SIMPLE_EXCESS);
+  const abnormal = model && adjustedChanges(changes, benchReturns, model);
   return {
     model,
     eventModel,
-    abnormal: model && adjustedChanges(changes, benchReturns, model),
+    abnormal,
     excess,
     missingBenchmark: changes.length - excess.length,
+    primary: abnormal && primaryTest(abnormal, resolution),
     kalshi: kalshiRegression(changes, benchReturns),
-    kalshiVsBenchmark: kalshiBenchmarkCorrelation(changes, benchReturns),
+    kalshiVsBenchmark: kalshiBenchmarkCorrelation(changes, benchReturns, resolution),
     studies: {
       abnormal: eventModel && eventStudy(rows, changes, event, adjustedLogChange(rows, closesByT, eventModel)),
       excess: eventStudy(rows, changes, event, adjustedLogChange(rows, closesByT, SIMPLE_EXCESS)),

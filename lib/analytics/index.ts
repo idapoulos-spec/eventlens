@@ -15,3 +15,8 @@ export * from "./csv";
 export * from "./t-distribution";
 export * from "./regression";
 export * from "./market-model";
+export * from "./inference";
+export * from "./multiple-testing";
+export * from "./random";
+export * from "./correlation-test";
+export * from "./event-tests";

@@ -77,7 +77,7 @@ export function Table({ head, rows }: { head: string[]; rows: string[][] }) {
         <thead className="text-ink-muted">
           <tr>
             {head.map((h) => (
-              <th key={h} scope="col" className="py-1 pr-4 font-medium">
+              <th key={h} scope="col" className="whitespace-nowrap py-1 pr-4 font-medium">
                 {h}
               </th>
             ))}
@@ -87,7 +87,7 @@ export function Table({ head, rows }: { head: string[]; rows: string[][] }) {
           {rows.map((r) => (
             <tr key={r[0]} className="border-t border-border">
               {r.map((c, i) => (
-                <td key={i} className="py-1 pr-4">
+                <td key={i} className="whitespace-nowrap py-1 pr-4">
                   {c}
                 </td>
               ))}

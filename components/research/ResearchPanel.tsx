@@ -5,19 +5,26 @@ import {
   computeChanges,
   crossCorrelation,
   eventStudy,
+  eventStudyTests,
   marketAdjustment,
+  MIN_TEST_EVENTS,
+  passes,
   researchCsv,
   rollingCorrelation,
   rowsSince,
+  SMALL_EVENT_COUNT,
   type ChangePoint,
   type ChangeSeries,
   type CorrelationStats,
   type EventStudy,
+  type EventStudyTests,
+  type GroupTests,
   type LagCorrelation,
   type MarketModel,
   type Resolution,
   type ResearchRow,
   type RollingPoint,
+  type TestResult,
 } from "@/lib/analytics";
 import { formatShortDate, formatSigned } from "@/lib/format";
 import type { BenchmarkSeries } from "@/lib/market-data/types";
@@ -28,6 +35,19 @@ import { RollingCorrelationChart } from "../charts/RollingCorrelationChart";
 import { Card, Notice } from "../ui";
 import { MarketAdjustmentCard, modelSample } from "./MarketAdjustmentCard";
 import { Caption, Flag, fmtR, plural, Segmented, ValuesTable } from "./parts";
+import {
+  familyText,
+  formatCi,
+  formatMinP,
+  formatP,
+  methodText,
+  ResultLine,
+  RoleBadge,
+  TEST_COLUMNS,
+  testCells,
+  unavailableText,
+  verdict,
+} from "./stats";
 import { useBenchmark } from "./useBenchmark";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -117,6 +137,7 @@ interface View {
   rolling: RollingPoint[];
   /** Null in market-adjusted mode when beta can't be estimated outside the jump windows. */
   study: EventStudy | null;
+  events: EventStudyTests | null;
 }
 
 /** How the market-adjusted view was adjusted, for its captions. */
@@ -129,9 +150,20 @@ interface Adjustment {
   days: number;
 }
 
-function view(changes: ChangePoint[], study: EventStudy | null, settings: Settings): View {
-  const lags = crossCorrelation(changes, settings.maxLag);
-  return { changes, lags, sameInterval: lags.find((l) => l.lag === 0)!, rolling: rollingCorrelation(changes, settings.rollingWindow), study };
+/**
+ * Every result one set of changes gives. In market-adjusted mode lag 0 is the primary test,
+ * so it's left out of the lead-lag family the other lags are corrected in.
+ */
+function view(changes: ChangePoint[], study: EventStudy | null, settings: Settings, resolution: Resolution, adjusted: boolean): View {
+  const lags = crossCorrelation(changes, settings.maxLag, resolution, { primaryLag: adjusted ? 0 : undefined });
+  return {
+    changes,
+    lags,
+    sameInterval: lags.find((l) => l.lag === 0)!,
+    rolling: rollingCorrelation(changes, settings.rollingWindow),
+    study,
+    events: study && eventStudyTests(study),
+  };
 }
 
 export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, yesLabel, initialBenchmark }: Props) {
@@ -155,7 +187,7 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
     const rows = rowsSince(full, asOf - days * DAY_MS);
     const series = computeChanges(rows);
     const event = { thresholdPp: threshold, before: settings.eventBars, after: settings.eventBars };
-    return { full, rows, series, event, raw: view(series.changes, eventStudy(rows, series.changes, event), settings) };
+    return { full, rows, series, event, raw: view(series.changes, eventStudy(rows, series.changes, event), settings, resolution, false) };
   }, [hourly, daily, asOf, days, resolution, settings, threshold]);
 
   const benchSeries = isSelf ? null : benchmark.series;
@@ -166,12 +198,17 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
   const market = useMemo(
     () =>
       closesByT &&
-      marketAdjustment({ full: analysis.full, rows: analysis.rows, changes: analysis.series.changes, closesByT, event: analysis.event }),
-    [analysis, closesByT],
+      marketAdjustment({ full: analysis.full, rows: analysis.rows, changes: analysis.series.changes, closesByT, event: analysis.event, resolution }),
+    [analysis, closesByT, resolution],
   );
+  const canAdjust = Boolean(market?.model && market.abnormal);
+  // Only computed while shown: the resampling isn't free.
   const adjusted = useMemo(
-    () => (market?.model && market.abnormal ? view(market.abnormal, market.studies.abnormal, settings) : null),
-    [market, settings],
+    () =>
+      chosenReturns === "adjusted" && market?.model && market.abnormal
+        ? view(market.abnormal, market.studies.abnormal, settings, resolution, true)
+        : null,
+    [chosenReturns, market, settings, resolution],
   );
 
   const returns: Returns = adjusted ? chosenReturns : "raw";
@@ -235,7 +272,7 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
             value={returns}
             options={[
               { value: "raw" as const, label: "Raw" },
-              { value: "adjusted" as const, label: "Market-adjusted", disabled: !adjusted, title: unavailable },
+              { value: "adjusted" as const, label: "Market-adjusted", disabled: !canAdjust, title: unavailable },
             ]}
             onChange={setReturns}
           />
@@ -272,6 +309,14 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
           rawR={analysis.raw.sameInterval.r}
         />
 
+        <PrimaryTest
+          primary={market?.primary ?? null}
+          unavailable={unavailable}
+          benchmark={benchmark.active.symbol}
+          stockSymbol={stockSymbol}
+          settings={settings}
+        />
+
         <p className="mt-3 text-xs text-ink-secondary">
           <span className="font-medium text-ink">How to read the sign.</span> Positive means {stockSymbol} tended to rise
           when the chance of YES rose; negative means it tended to fall. Here, YES = “{yesLabel}”. If YES is bad news for{" "}
@@ -304,6 +349,7 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
           <div className="grid gap-4 sm:gap-5 lg:grid-cols-2">
             <LeadLagCard
               lags={shown.lags}
+              adjustedBy={returns === "adjusted" ? benchmark.active.symbol : null}
               settings={settings}
               stockSymbol={stockSymbol}
               yesLabel={yesLabel}
@@ -320,6 +366,7 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
           </div>
           <EventStudyCard
             study={shown.study}
+            tests={shown.events}
             settings={settings}
             stockSymbol={stockSymbol}
             threshold={threshold}
@@ -422,6 +469,64 @@ function Summary({
   );
 }
 
+// ---- Primary test ----
+
+/**
+ * The one test the page is set up to answer: same-period correlation of Kalshi changes with
+ * market-adjusted returns, judged on its own p-value. Shown whichever returns are selected.
+ */
+function PrimaryTest({
+  primary,
+  unavailable,
+  benchmark,
+  stockSymbol,
+  settings,
+}: {
+  primary: TestResult | null;
+  /** Why market adjustment isn't available, when it isn't. */
+  unavailable: string;
+  benchmark: string;
+  stockSymbol: string;
+  settings: Settings;
+}) {
+  const missing = primary === null ? null : unavailableText(primary);
+  return (
+    <div className="mt-4 rounded-lg border border-border p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <RoleBadge role="primary" />
+        <span className="text-sm font-medium text-ink">
+          {settings.same} correlation of Kalshi changes with {stockSymbol}’s market-adjusted returns
+          {primary && ` (vs. ${benchmark})`}
+        </span>
+      </div>
+      {primary === null ? (
+        <p className="mt-2 text-sm text-ink-secondary">
+          No primary test: {unavailable.charAt(0).toLowerCase() + unavailable.slice(1)}, so there are no market-adjusted returns
+          to test. Every result below is exploratory.
+        </p>
+      ) : (
+        <>
+          <p className="mt-2 text-sm text-ink-secondary">
+            <ResultLine test={primary} label="r" format={fmtR} />
+            {primary.p !== null && (
+              <>
+                : <span className="font-medium text-ink">{verdict(primary, "raw")}</span>
+              </>
+            )}
+            .
+          </p>
+          <p className="mt-1 text-xs text-ink-muted">
+            {missing ?? methodText(primary)} This is the question the page is set up to answer, chosen before looking at the data,
+            so it’s judged on its own p-value. Everything else on the page is exploratory: corrected for the other tests in its
+            chart, and best treated as leads to check, not findings. Switching window, resolution, or benchmark until something
+            looks significant isn’t corrected for.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ---- Chart cards ----
 
 function when(lag: number, settings: Settings, subject: string): string {
@@ -433,6 +538,7 @@ function when(lag: number, settings: Settings, subject: string): string {
 
 function LeadLagCard({
   lags,
+  adjustedBy,
   settings,
   stockSymbol,
   yesLabel,
@@ -440,6 +546,8 @@ function LeadLagCard({
   resolution,
 }: {
   lags: LagCorrelation[];
+  /** The benchmark when lag 0 is the primary test (market-adjusted returns), else null. */
+  adjustedBy: string | null;
   settings: Settings;
   stockSymbol: string;
   yesLabel: string;
@@ -447,29 +555,40 @@ function LeadLagCard({
   resolution: Resolution;
 }) {
   const returnNoun = adjustment ? "market-adjusted return" : "return";
-  const measured = lags.filter((l) => l.r !== null && l.band !== null);
-  const largest = (ls: LagCorrelation[]) =>
-    ls.reduce<LagCorrelation | null>((a, b) => (a === null || Math.abs(b.r!) > Math.abs(a.r!) ? b : a), null);
-  // Each lag has its own number of pairs, so each is judged against its own range.
-  const outside = measured.filter((l) => Math.abs(l.r!) > l.band!);
-  const strongest = largest(outside);
-  const chance = Math.round((1 - 0.95 ** lags.length) * 100);
+  const measured = lags.filter((l) => l.r !== null);
+  const family = lags.filter((l) => l.test.role === "exploratory");
+  const tested = family.filter((l) => l.test.p !== null);
+  const fmt = (l: LagCorrelation) => formatLag(l.lag, settings.unit);
+  const passing = tested.filter((l) => passes(l.test, "bh")).sort((a, b) => a.test.p! - b.test.p!);
+  const smallest = tested.reduce<LagCorrelation | null>((a, b) => (a === null || b.test.holm! < a.test.holm! ? b : a), null);
+  const withMethod = lags.find((l) => l.test.p !== null) ?? lags.find((l) => l.test.pUnavailable === "too_few_blocks");
 
   let lead: ReactNode;
   if (measured.length === 0) {
     lead = "Not enough matching intervals at any lag to measure a correlation.";
-  } else if (strongest === null) {
-    const top = largest(measured)!;
-    lead = `No lag stands out: every bar is inside its dashed range, as expected with no relationship (largest: ${fmtR(top.r)} at ${formatLag(top.lag, settings.unit)}).`;
+  } else if (tested.length === 0) {
+    lead = withMethod ? unavailableText(withMethod.test) : "No lag has a p-value.";
+  } else if (passing.length > 0) {
+    const [top, ...others] = passing;
+    lead = (
+      <>
+        After correcting for the {tested.length} lags tested, {passing.length === 1 ? "one passes" : `${passing.length} pass`}: at{" "}
+        {fmt(top)}, Kalshi changes tended to move {top.r! > 0 ? "in the same direction as" : "opposite to"}{" "}
+        {when(top.lag, settings, `${stockSymbol}’s ${returnNoun}`)} (r = {fmtR(top.r)}, 95% CI {formatCi(top.test.ci, fmtR)}, Holm
+        p = {formatP(top.test.holm)}, BH p = {formatP(top.test.bh)}).
+        {others.length > 0 && ` Also ${others.map(fmt).join(", ")}.`} Exploratory: a lead to check, not a finding.
+      </>
+    );
   } else {
-    const others = outside.filter((l) => l !== strongest).map((l) => formatLag(l.lag, settings.unit));
-    lead = `Outside its dashed range at ${formatLag(strongest.lag, settings.unit)}${
-      others.length > 0 ? ` (also ${others.join(", ")})` : ""
-    }: Kalshi changes tended to move ${strongest.r! > 0 ? "in the same direction as" : "opposite to"} ${when(
-      strongest.lag,
-      settings,
-      `${stockSymbol}’s ${returnNoun}`,
-    )} (r = ${fmtR(strongest.r)}, n = ${strongest.n}).`;
+    const uncorrected = tested.filter((l) => passes(l.test, "raw"));
+    lead = (
+      <>
+        No lag passes correction for the {tested.length} tested (smallest Holm-adjusted p: {formatP(smallest!.test.holm)} at{" "}
+        {fmt(smallest!)}).
+        {uncorrected.length > 0 &&
+          ` Uncorrected, ${uncorrected.map((l) => `${fmt(l)} has p = ${formatP(l.test.p)}`).join(" and ")}: about what chance produces across ${tested.length} tests.`}
+      </>
+    );
   }
 
   return (
@@ -483,20 +602,24 @@ function LeadLagCard({
         lead={lead}
         caveats={
           <>
-            Right of 0: Kalshi moved first. Left of 0: {stockSymbol} moved first. Dashed marks: each lag’s rough 95% range if
-            there were no relationship (±1.96/√n for its number of pairs, assuming independent intervals).{" "}
+            Right of 0: Kalshi moved first. Left of 0: {stockSymbol} moved first. Whiskers are 95% intervals; one that reaches
+            ±1 means Kalshi’s moves at that lag fall in too few {resolution === "hourly" ? "sessions" : "runs of days"} to pin the
+            correlation down.{" "}
             <strong className="font-medium text-ink-secondary">
-              With {lags.length} lags tested, there’s about a {chance}% chance at least one crosses its range by chance
-              alone.
+              Exploratory: corrected as one family, {familyText("lead_lag", family.length)}
+              {adjustedBy && " (lag 0 is the primary test, judged on its own)"}.
             </strong>{" "}
-            The sign depends on what YES means (“{yesLabel}”).
+            Holm keeps the chance of any false positive among them at 5%; Benjamini–Hochberg (BH) keeps the expected share of
+            false positives among those that pass at 5%. Neighboring lags share most of their data, which makes Holm cautious.{" "}
+            {withMethod && withMethod.test.p !== null && methodText(withMethod.test)} Kalshi’s changes are left as observed, zeros
+            and all. The sign depends on what YES means (“{yesLabel}”).
             {adjustment && ` ${adjustmentNote(adjustment, stockSymbol, resolution)}`}
           </>
         }
       />
       <ValuesTable
-        head={["Lag", "r", "Pairs", "Range with no relationship"]}
-        rows={lags.map((l) => [formatLag(l.lag, settings.unit), fmtR(l.r), String(l.n), l.band === null ? "—" : `±${l.band.toFixed(2)}`])}
+        head={["Lag", ...TEST_COLUMNS.map((c) => (c === "Estimate" ? "r" : c === "n" ? "Pairs" : c))]}
+        rows={lags.map((l) => [fmt(l) + (l.test.role === "primary" ? " (primary)" : ""), ...testCells(l.test, fmtR)])}
       />
     </Card>
   );
@@ -516,7 +639,6 @@ function RollingCard({
   adjustment: Adjustment | null;
 }) {
   const w = settings.rollingWindow;
-  const band = 1.96 / Math.sqrt(w);
   const rs = points.map((p) => p.r).filter((r): r is number => r !== null);
   const enough = changes >= w + ROLLING_EXTRA && rs.length > 0;
   const latest = points.at(-1)?.r ?? null;
@@ -528,7 +650,7 @@ function RollingCard({
       }`}
     >
       {enough ? (
-        <RollingCorrelationChart points={points} band={band} daily={resolution === "daily"} />
+        <RollingCorrelationChart points={points} daily={resolution === "daily"} />
       ) : (
         <Notice
           tone="info"
@@ -541,13 +663,15 @@ function RollingCard({
       <Caption
         lead={
           enough
-            ? `Shows whether the relationship held steady or came and went: it ranged from ${fmtR(Math.min(...rs))} to ${fmtR(Math.max(...rs))} (latest ${fmtR(latest)}).`
-            : "Shows whether the relationship held steady or came and went over time."
+            ? `How the correlation moved over time: from ${fmtR(Math.min(...rs))} to ${fmtR(Math.max(...rs))} (latest ${fmtR(latest)}).`
+            : "Shows how the correlation moved over time."
         }
         caveats={
           <>
-            Each point uses only {w} intervals, so values inside the dashed lines (±{band.toFixed(2)}) are within what chance
-            alone produces. Neighboring points share most of their data.
+            <strong className="font-medium text-ink-secondary">Descriptive only: no significance is claimed.</strong> Each point
+            uses just {w} intervals and shares {w - 1} of them with the next, so the line moves smoothly by construction and its
+            swings aren’t independent evidence; with so few intervals, swings of ±0.5 are common by chance alone. For tests, see the
+            primary test and the lead-lag chart.
             {points.some((p) => p.r === null) && " Gaps: one series didn't move in that window."} The sign depends on what YES
             means (see above).
             {adjustment && ` Every window uses the same ${betaFrom(adjustment.model, resolution, adjustment.days)}.`}
@@ -558,8 +682,20 @@ function RollingCard({
   );
 }
 
+/** Warnings for a group with few events: none, too few for any test, or rough intervals. */
+function eventFlag(name: string, group: GroupTests | undefined, n: number): string | null {
+  if (n === 0) return null;
+  if (n < MIN_TEST_EVENTS) return `Only ${plural(n, [name, `${name}s`])}: too few for intervals or p-values to mean much`;
+  if (n >= SMALL_EVENT_COUNT) return null;
+  const minP = group?.path.resampling?.minP ?? null;
+  return `Only ${n} ${name}s: intervals are rough${
+    minP !== null ? `, and the smallest possible p is ${formatMinP(minP)}${minP >= 0.05 ? ", so none can reach 5%" : ""}` : ""
+  }`;
+}
+
 function EventStudyCard({
   study,
+  tests,
   settings,
   stockSymbol,
   threshold,
@@ -568,6 +704,7 @@ function EventStudyCard({
   resolution,
 }: {
   study: EventStudy | null;
+  tests: EventStudyTests | null;
   settings: Settings;
   stockSymbol: string;
   threshold: number;
@@ -584,7 +721,7 @@ function EventStudyCard({
       {children}
     </Card>
   );
-  if (study === null) {
+  if (study === null || tests === null) {
     return card(
       <Notice
         tone="info"
@@ -601,12 +738,30 @@ function EventStudyCard({
     study.falls.n > 0 && `after falls, ${at(study.falls.mean)}`,
   ].filter(Boolean);
   const skipped = study.skippedOverlap + study.skippedEdge + study.skippedMissing;
-  const few = study.rises.flag !== "ok" || study.falls.flag !== "ok";
+  const flags = [eventFlag("rise", tests.rises, study.rises.n), eventFlag("fall", tests.falls, study.falls.n)].filter(
+    (f): f is string => f !== null,
+  );
+  const pathText = (name: string, t: TestResult) =>
+    t.p === null ? null : `after ${name}, p = ${formatP(t.p)} (Holm ${formatP(t.holm)}, BH ${formatP(t.bh)})`;
+  const paths = [pathText("rises", tests.rises.path), pathText("falls", tests.falls.path)].filter(Boolean);
+  const barCount = [...tests.rises.bars, ...tests.falls.bars].filter((t) => t !== null && t.p !== null).length;
+  const method = [tests.rises.path, tests.falls.path].find((t) => t.p !== null);
+  const pct = (v: number) => formatSigned(v, 2, "%");
+  const cell = (t: TestResult | null) =>
+    t === null ? ["—", "—", "—"] : [t.estimate === null ? "—" : pct(t.estimate), formatCi(t.ci, pct), t.p === null ? "—" : `${formatP(t.p)} (${formatP(t.bh)})`];
 
   return card(
     <>
+      {flags.length > 0 && (
+        <div className="mb-3 flex flex-wrap gap-2">
+          {flags.map((f) => (
+            <Flag key={f}>{f}</Flag>
+          ))}
+        </div>
+      )}
       <EventStudyChart
         study={study}
+        tests={tests}
         unit={settings.unit}
         stockSymbol={adjustment ? `${stockSymbol} market-adjusted` : stockSymbol}
         thresholdPp={threshold}
@@ -616,13 +771,22 @@ function EventStudyCard({
           <>
             Compare each line with the dashed baseline (the stock’s normal drift over any window this long), not with zero.
             {parts.length > 0 && ` By ${end}, ${parts.join("; ")}, vs. ${at(study.baseline.mean)} for the baseline.`}
+            {paths.length > 0 && ` Whole path against the baseline: ${paths.join("; ")}.`}
           </>
         }
         caveats={
           <>
-            Based on {plural(study.rises.n, ["rise", "rises"])} and {plural(study.falls.n, ["fall", "falls"])} in the chance of
-            YES (“{yesLabel}”){few ? ": too few to generalize, and one large move can dominate an average" : ""}. Paths start at
-            the close before the jump (bar −1); the shaded bar is the {settings.noun[0]} the jump happened in. {settings.barNote}
+            <strong className="font-medium text-ink-secondary">
+              Exploratory. Bars are corrected as one family, {familyText("event_horizons", barCount)}; the two whole-path tests as
+              another.
+            </strong>{" "}
+            Shaded: 95% intervals for the average path. Filled dots: bars whose BH-adjusted p is below 5%. Each bar’s test asks
+            whether the paths after jumps differ from the baseline; the whole-path test asks whether they differ anywhere in the
+            window (the largest deviation, judged against how large it gets by chance).{" "}
+            {method && methodText(method)} A jump’s own volatility counts against it, so a stock that’s merely jumpier around news
+            doesn’t pass. Based on {plural(study.rises.n, ["rise", "rises"])} and {plural(study.falls.n, ["fall", "falls"])} in the
+            chance of YES (“{yesLabel}”). Paths start at the close before the jump (bar −1); the shaded bar is the{" "}
+            {settings.noun[0]} the jump happened in. {settings.barNote}
             {skipped > 0 &&
               ` ${plural(skipped, ["jump was", "jumps were"])} skipped (within ${settings.eventBars} bars of an earlier jump, or too close to the edge of the data${
                 study.skippedMissing > 0 && adjustment ? `, or missing a ${adjustment.benchmark} price` : ""
@@ -633,11 +797,11 @@ function EventStudyCard({
         }
       />
       <ValuesTable
-        head={["Bar", "After rises", "After falls", "Baseline"]}
+        head={["Bar", "Rises vs. baseline", "Rises 95% CI", "Rises p (BH)", "Falls vs. baseline", "Falls 95% CI", "Falls p (BH)", "Baseline"]}
         rows={study.offsets.map((k, i) => [
           formatLag(k, settings.unit),
-          formatSigned(study.rises.mean?.[i] ?? null, 2, "%"),
-          formatSigned(study.falls.mean?.[i] ?? null, 2, "%"),
+          ...cell(tests.rises.bars[i]),
+          ...cell(tests.falls.bars[i]),
           formatSigned(study.baseline.mean?.[i] ?? null, 2, "%"),
         ])}
       />

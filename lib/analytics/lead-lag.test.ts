@@ -19,7 +19,7 @@ describe("crossCorrelation", () => {
     const kalshi = Array.from({ length: 200 }, () => next());
     // The stock return in slot s repeats the Kalshi change from slot s − 2.
     const changes = kalshi.map((x, s) => change(s, x, s >= 2 ? kalshi[s - 2] / 100 : 0));
-    const lags = crossCorrelation(changes, 3);
+    const lags = crossCorrelation(changes, 3, "daily");
 
     expect(lags.map((l) => l.lag)).toEqual([-3, -2, -1, 0, 1, 2, 3]);
     const best = lags.reduce((a, b) => (Math.abs(b.r ?? 0) > Math.abs(a.r ?? 0) ? b : a));
@@ -33,7 +33,7 @@ describe("crossCorrelation", () => {
     const next = noise(11);
     const stock = Array.from({ length: 200 }, () => next());
     const changes = stock.map((y, s) => change(s, s >= 1 ? stock[s - 1] * 100 : 0, y));
-    const best = crossCorrelation(changes, 3).reduce((a, b) => (Math.abs(b.r ?? 0) > Math.abs(a.r ?? 0) ? b : a));
+    const best = crossCorrelation(changes, 3, "daily").reduce((a, b) => (Math.abs(b.r ?? 0) > Math.abs(a.r ?? 0) ? b : a));
     expect(best.lag).toBe(-1);
   });
 
@@ -41,12 +41,12 @@ describe("crossCorrelation", () => {
     // Two sessions of six hourly changes each, 18 hours apart.
     const next = noise(3);
     const changes = [10, 11, 12, 13, 14, 15, 34, 35, 36, 37, 38, 39].map((s) => change(s, next(), next()));
-    const lags = crossCorrelation(changes, 3);
+    const lags = crossCorrelation(changes, 3, "daily");
     expect(lags.map((l) => l.n)).toEqual([6, 8, 10, 12, 10, 8, 6]);
   });
 
   it("returns empty stats with no changes", () => {
-    expect(crossCorrelation([], 1).map((l) => [l.lag, l.n, l.r])).toEqual([
+    expect(crossCorrelation([], 1, "daily").map((l) => [l.lag, l.n, l.r])).toEqual([
       [-1, 0, null],
       [0, 0, null],
       [1, 0, null],

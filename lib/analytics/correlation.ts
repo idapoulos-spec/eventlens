@@ -34,11 +34,6 @@ export interface CorrelationStats {
   /** Pearson r, or null when there are too few pairs or a series doesn't vary. */
   r: number | null;
   n: number;
-  /**
-   * Half-width of the rough 95% range for r if there were no relationship: 1.96/√n.
-   * Assumes independent observations.
-   */
-  band: number | null;
   /** How many pairs have a non-zero Kalshi change. */
   kalshiMoves: number;
   flag: SampleFlag;
@@ -56,7 +51,6 @@ export function correlationStats(pairs: Pair[]): CorrelationStats {
   return {
     r,
     n,
-    band: r === null ? null : 1.96 / Math.sqrt(n),
     kalshiMoves,
     flag,
     fewKalshiMoves: kalshiMoves < MIN_KALSHI_MOVES,
