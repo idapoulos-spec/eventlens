@@ -20,8 +20,8 @@ export function sampleFlag(n: number, min = MIN_PAIRS, small = SMALL_SAMPLE): Sa
 /**
  * Below this many sessions (hourly) or runs of days (daily), the wild bootstrap is too
  * conservative and has too little power to mean much: no p-value or interval is shown.
- * In simulations with 4–6 sessions it rejected 0.5–2.5% of the time at the 5% level, and
- * found a moderate relationship only 10–26% of the time (README → Statistical tests).
+ * Chosen in development runs, which aren't in the test suite; the power simulations in
+ * correlation-test.test.ts show detection is already weak with 10 sessions.
  */
 export const MIN_BOOTSTRAP_BLOCKS = 8;
 /** Below this many events, an event-study group gets no intervals or p-values. */

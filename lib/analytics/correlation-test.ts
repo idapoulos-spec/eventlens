@@ -26,9 +26,9 @@ import { MIN_PAIRS, MIN_BOOTSTRAP_BLOCKS } from "./sample";
  * The 95% interval is every slope the same test wouldn't reject (MacKinnon 2023), shown on
  * the correlation scale, so the interval excludes zero exactly when p < 0.05.
  *
- * A block shuffle of Kalshi's changes was tried first; in simulations it rejected 6–11% of
- * the time at the 5% level when both series were volatile on the same news days. The wild
- * bootstrap stayed at or below 5% (README → Statistical tests → Validation).
+ * A block shuffle of Kalshi's changes was tried first and dropped: it rejected too often when
+ * both series were volatile on the same news days (development runs, not in the test suite).
+ * correlation-test.test.ts checks the wild bootstrap's false-positive rate, coverage, and power.
  */
 
 export const WILD_DRAWS = 999;

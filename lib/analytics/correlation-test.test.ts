@@ -111,6 +111,22 @@ describe("lagCorrelationTests", () => {
   });
 });
 
+describe("simulated data", () => {
+  it("has Kalshi changes that are zero in about 80% of hours and move in 0.5 pp steps", () => {
+    let zeros = 0;
+    let total = 0;
+    for (let s = 0; s < 100; s++) {
+      for (const c of simulateHourly({ sessions: 21, seed: 2000 + s })) {
+        total++;
+        if (c.probChangePp === 0) zeros++;
+        expect(Number.isInteger(c.probChangePp * 2)).toBe(true);
+      }
+    }
+    expect(zeros / total).toBeGreaterThan(0.75);
+    expect(zeros / total).toBeLessThan(0.85);
+  });
+});
+
 describe("simulations: false positives on independent zero-heavy series", () => {
   // Kalshi zero in ~80% of hours, 0.5 pp steps, moves that continue; stock volatility
   // varying by day and hour. Seeds are fixed, so these results are the same on every run.
@@ -177,6 +193,52 @@ describe("simulations: detecting a built-in relationship", () => {
     }
     expect(covered / reps).toBeGreaterThan(0.92);
     expect(covered / reps).toBeLessThan(0.985);
+  }, SIMULATION_TIMEOUT);
+});
+
+describe("simulations: power for a weaker relationship", () => {
+  // A same-hour slope of 0.3% per pp with shared volatility: a typical correlation near 0.4,
+  // much of it from a few volatile hours, so the bootstrap needs more data to see it.
+  function power(sessions: number, reps: number) {
+    let found = 0;
+    let tested = 0;
+    const rs: number[] = [];
+    for (let s = 0; s < reps; s++) {
+      const changes = simulateHourly({ sessions, seed: 8000 + s, beta: 0.3, sharedVolatility: true });
+      const [{ r, test }] = lagCorrelationTests(changes, [0], "hourly", { draws: DRAWS });
+      if (r !== null) rs.push(r);
+      if (test.p === null) continue;
+      tested++;
+      if (test.p < 0.05) found++;
+    }
+    rs.sort((a, b) => a - b);
+    const mid = rs.length / 2;
+    const medianR = rs.length % 2 ? rs[Math.floor(mid)] : (rs[mid - 1] + rs[mid]) / 2;
+    return { rate: found / tested, tested, medianR };
+  }
+
+  it("finds it in under half of samples with 10 sessions", () => {
+    const { rate, tested, medianR } = power(10, 200);
+    expect(tested).toBe(200);
+    // Small samples spread r more widely, so its median sits a little higher.
+    expect(medianR).toBeGreaterThan(0.3);
+    expect(medianR).toBeLessThan(0.55);
+    expect(rate).toBeLessThan(0.5);
+  }, SIMULATION_TIMEOUT);
+
+  it("finds it in about half of 30-day samples (21 sessions)", () => {
+    const { rate, medianR } = power(21, 200);
+    expect(medianR).toBeGreaterThan(0.3);
+    expect(medianR).toBeLessThan(0.5);
+    expect(rate).toBeGreaterThan(0.25);
+    expect(rate).toBeLessThan(0.75);
+  }, SIMULATION_TIMEOUT);
+
+  it("finds it in most 90-day samples (62 sessions)", () => {
+    const { rate, medianR } = power(62, 200);
+    expect(medianR).toBeGreaterThan(0.3);
+    expect(medianR).toBeLessThan(0.5);
+    expect(rate).toBeGreaterThan(0.55);
   }, SIMULATION_TIMEOUT);
 });
 

@@ -14,11 +14,12 @@ import { MIN_TEST_EVENTS } from "./sample";
  * p-value is exact; the smallest possible is 2/2ⁿ, so 5 events can never get below 0.0625.
  *
  * Intervals are a bootstrap-t over events: events resampled with replacement, the t
- * statistic's percentiles turned into an interval. In simulations with 5–10 events a plain
- * percentile interval covered 90–93%; this one 93–98% (README → Statistical tests → Validation).
+ * statistic's percentiles turned into an interval. event-tests.test.ts checks its coverage.
  *
- * A placebo test (comparing with randomly placed windows) was tried first; when the stock was
- * more volatile around jumps it rejected the whole path 7% of the time at the 5% level.
+ * A placebo test (comparing with randomly placed windows) and plain percentile intervals were
+ * tried first and dropped: the placebo test rejected too often when the stock was more volatile
+ * around jumps, and percentile intervals covered too little. Those were development runs, not in
+ * the test suite.
  */
 
 export const SIGN_FLIP_DRAWS = 4999;

@@ -348,9 +348,9 @@ function KalshiRegressionNote({
         {fit.marketCoef.toFixed(2)}. {methodText(test)} Newey–West with {plural(fit.lags, ["lag", "lags"])} (no lag reaches
         across {resolution === "hourly" ? "a night or weekend" : "a missing session"}); HC3 corrects for {noun[1]} without a
         Kalshi move, which let a few large moves carry the estimate. Unlike the primary test’s bootstrap, this p-value relies on
-        a large-sample approximation: in simulations of 30 days where the stock was more volatile in the hours Kalshi moved, it
-        came out below 0.05 about 9% of the time with no relationship, where the bootstrap stayed at or below 5%. This describes
-        how the two moved together, not cause and effect.
+        a large-sample approximation. In simulated data sets of 21 hourly sessions (about 30 days) with no relationship, where
+        the stock was more volatile in the hours Kalshi moved, it came out below 0.05 in 8.8% of 400, against 4.8% for the
+        primary test’s bootstrap on the same data sets. This describes how the two moved together, not cause and effect.
       </>
     );
   }
