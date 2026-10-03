@@ -136,3 +136,18 @@ export function simulateRows({
   }
   return rows;
 }
+
+/**
+ * Adds a market to simulated changes: a benchmark log return in each interval (normal, 0.15%
+ * a bar) that the stock moves `beta` times with. Kalshi stays unrelated to both.
+ */
+export function withBenchmark(changes: ChangePoint[], seed: number, beta = 1.1): { changes: ChangePoint[]; benchReturnByT: Map<number, number> } {
+  const rng = mulberry32(seed);
+  const benchReturnByT = new Map<number, number>();
+  const withMarket = changes.map((c) => {
+    const rm = 0.0015 * normal(rng);
+    benchReturnByT.set(c.t, rm);
+    return { ...c, logReturn: c.logReturn + beta * rm };
+  });
+  return { changes: withMarket, benchReturnByT };
+}

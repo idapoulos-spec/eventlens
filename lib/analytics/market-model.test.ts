@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { computeChanges } from "./changes";
+import { lagCorrelationTests } from "./correlation-test";
 import {
   adjustedChanges,
   adjustedLogChange,
@@ -10,7 +11,9 @@ import {
   marketAdjustment,
   SIMPLE_EXCESS,
 } from "./market-model";
+import { ols } from "./regression";
 import type { ResearchRow } from "./research";
+import { simulateHourly, withBenchmark } from "./test-helpers";
 
 const HOUR = 3_600_000;
 
@@ -173,4 +176,55 @@ describe("marketAdjustment", () => {
     const path = (i: number) => [-1, 0, 1].map((k) => (Math.log(S[i + k] / S[i - 1]) - Math.log(B[i + k] / B[i - 1])) * 100);
     study.rises.mean!.forEach((v, k) => expect(v).toBeCloseTo((path(9)[k] + path(14)[k]) / 2, 12));
   });
+});
+
+// Simulations run hundreds of analyses; allow for slow CI machines.
+const SIMULATION_TIMEOUT = 120_000;
+
+describe("simulations: the Newey–West cross-check against the primary test's bootstrap", () => {
+  // The same data sets for both: a stock that moves 1.1× with its benchmark, and Kalshi changes
+  // (zero in most hours) unrelated to either. Seeds are fixed.
+  function falsePositives(sessions: number, sharedVolatility: boolean, reps: number) {
+    let nw = 0;
+    let nwTested = 0;
+    let boot = 0;
+    let bootTested = 0;
+    for (let s = 0; s < reps; s++) {
+      const { changes, benchReturnByT } = withBenchmark(simulateHourly({ sessions, seed: 9000 + s, sharedVolatility }), 500 + s);
+      const fit = kalshiRegression(changes, benchReturnByT);
+      if (fit && fit.test.p !== null) {
+        nwTested++;
+        if (fit.test.p < 0.05) nw++;
+      }
+      // The primary test: lag-0 correlation with abnormal returns, beta fitted on the same intervals.
+      const market = ols(
+        changes.map((c) => [1, benchReturnByT.get(c.t)!]),
+        changes.map((c) => c.logReturn),
+      )!;
+      const abnormal = adjustedChanges(changes, benchReturnByT, { alpha: market.coef[0], beta: market.coef[1] });
+      const [{ test }] = lagCorrelationTests(abnormal, [0], "hourly", { primaryLags: [0], draws: 199 });
+      if (test.p !== null) {
+        bootTested++;
+        if (test.p < 0.05) boot++;
+      }
+    }
+    return { nw: nw / nwTested, nwTested, boot: boot / bootTested, bootTested };
+  }
+
+  it("over-rejects with 21 sessions when the stock is more volatile in the hours Kalshi moves; the bootstrap doesn't", () => {
+    const { nw, nwTested, boot, bootTested } = falsePositives(21, true, 400);
+    expect([nwTested, bootTested]).toEqual([400, 400]);
+    expect(nw).toBeGreaterThan(0.065);
+    expect(boot).toBeLessThan(0.075);
+    expect(boot).toBeLessThan(nw);
+  }, SIMULATION_TIMEOUT);
+
+  it("comes closer to 5% with independent volatility, or with 62 sessions", () => {
+    const independent = falsePositives(21, false, 400);
+    expect(independent.nw).toBeLessThan(0.08);
+    expect(independent.boot).toBeLessThan(0.075);
+    const longer = falsePositives(62, true, 300);
+    expect(longer.nw).toBeLessThan(0.08);
+    expect(longer.boot).toBeLessThan(0.075);
+  }, SIMULATION_TIMEOUT);
 });

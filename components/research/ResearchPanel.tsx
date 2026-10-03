@@ -670,7 +670,7 @@ function RollingCard({
           <>
             <strong className="font-medium text-ink-secondary">Descriptive only: no significance is claimed.</strong> Each point
             uses just {w} intervals and shares {w - 1} of them with the next, so the line moves smoothly by construction and its
-            swings aren’t independent evidence; with so few intervals, swings of ±0.5 are common by chance alone. For tests, see the
+            swings aren’t independent evidence; with so few intervals, large swings happen by chance alone. For tests, see the
             primary test and the lead-lag chart.
             {points.some((p) => p.r === null) && " Gaps: one series didn't move in that window."} The sign depends on what YES
             means (see above).
