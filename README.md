@@ -177,7 +177,7 @@ A Kalshi move and a stock move in the same hour can both be the whole market mov
   - Stock moves are larger in the hours news moves Kalshi, so ordinary standard errors (which assume constant variance) are too small.
   - Kalshi often reprices over several hours, and the Newey–West sum covers that autocorrelation. Lags pair intervals exactly that many grid slots apart, so no lag reaches across a night or a missing session.
   - Kalshi doesn't move in most hours, so the coefficient rests on the few intervals where it did. OLS fits those high-leverage points closely, which makes their residuals understate the noise; dividing each residual by (1 − leverage), as HC3 does, corrects for that.
-  - It's a cross-check of the primary test (which uses β from the full 90 days), shown with an uncorrected p-value, which isn't shown when Kalshi moved in fewer than 10 intervals. Its t approximation is less reliable than the primary test's bootstrap: in simulations of 21 hourly sessions in which the stock was more volatile in the hours Kalshi moved, it fell below 0.05 in about 9% of data sets with no relationship (see [Statistical tests](#statistical-tests)).
+  - It's a cross-check of the primary test (which uses β from the full 90 days), shown with an uncorrected p-value, which isn't shown when Kalshi moved in fewer than 10 intervals. Its t approximation is less reliable than the primary test's bootstrap when the stock is more volatile in the hours Kalshi moves. That was seen in development simulations, which aren't part of the test suite (see [Statistical tests](#statistical-tests)).
 
 Caveats shown on the page:
 
@@ -206,7 +206,7 @@ The data is hard on textbook statistics: Kalshi's hourly change is zero most of 
 - Kalshi's changes stay exactly as observed, zeros and steps included. The stock's returns are rebuilt under "no relationship" as their mean plus each residual times one random weight per block, from Webb's six-point distribution. Blocks are New York trading sessions (hourly) or runs of *b* consecutive trading days (daily; *b* = max(2, ⌊4(n/100)^{2/9}⌋): 2 for 30 days, 3 for 90). That keeps Kalshi's autocorrelation, the stock's volatility in every hour (including the hours Kalshi moved), and any dependence within a session, and removes only a link in direction.
 - The statistic is the slope's t with the same Newey–West + HC3 standard errors as the regression above. The p-value is the share of 999 draws at least as extreme as the data; the page shows the number of sessions (or runs) and the smallest possible p (0.001).
 - The interval is every slope the same bootstrap wouldn't reject at 5%, so it excludes zero exactly when p < 0.05. Each draw's t is a closed-form function of the slope being tested, so the interval costs no extra draws: about 25 ms for 90 days of hourly data and 7 lags. It's shown as a correlation (slope × *s_x*/*s_y*), clamped to ±1. An interval that reaches ±1 means Kalshi's moves at that lag fall in too few sessions to pin it down.
-- **With fewer than 8 sessions (or runs of days), no p-value or interval is shown**, and the page says how many there were: the 7-day window has about 5 sessions. In simulations with 4–6 sessions the bootstrap came out below 0.05 in only 0.5–2.5% of data sets with no relationship, and detected a moderate one in only 10–26%.
+- **With fewer than 8 sessions (or runs of days), no p-value or interval is shown**, and the page says how many there were: the 7-day window has about 5 sessions. The cutoff comes from development simulations, which aren't part of the test suite: with 4–6 sessions the bootstrap was overly cautious and rarely detected a relationship.
 - Effective n is Bartlett's *n* / (1 + 2 Σ ρₓ(j) ρᵧ(j)) over the Newey–West lags, autocorrelations pairing slots exactly *j* apart. It's for reading the sample size; the tests don't use it.
 
 **Event study: sign flips and bootstrap-t** (`lib/analytics/event-tests.ts`).
@@ -227,19 +227,36 @@ The data is hard on textbook statistics: Kalshi's hourly change is zero most of 
 
 **Reproducible.** Resampling uses mulberry32 seeded from a fixed seed (`RESAMPLING_SEED`) and a label per method, so the same data and settings give the same numbers on every load and every device, and a lag's result doesn't depend on which other lags are tested. Monte Carlo error remains: with 999 draws, a p-value near 0.05 is uncertain by about ±0.007, so another seed could move a borderline result across 0.05.
 
-**Validation.** Simulated data: Kalshi changes that are zero in about 80% of hours, move in 0.5 pp steps, and tend to continue; stock returns with heavy tails and volatility that varies by day, by hour (U-shaped), and on news days. In the "shared volatility" variant, news days and big Kalshi moves come with a more volatile stock but no link in direction, the case that fools simple tests. Share of data sets (400 each) with p < 0.05 when there is no relationship:
+**Validation.** `lib/analytics/correlation-test.test.ts` and `lib/analytics/event-tests.test.ts` run simulations with fixed seeds, so every figure below comes straight from those tests and is the same on every run. The simulated Kalshi changes are zero in about 80% of hours, move in 0.5 pp steps, and tend to continue; the stock's returns have heavy tails and volatility that varies by day, by hour of day (U-shaped), and on news days. In the "shared volatility" variant, news days and big Kalshi moves come with a more volatile stock but no link in direction, the case that fools simple tests.
 
-| Method | Independent | Shared volatility |
-| --- | --- | --- |
-| ±1.96/√n band (before) | 5–7% | 31–50% hourly, 20–24% daily |
-| Shuffling Kalshi between sessions (tried, not used) | 3–6% | 6.5–11% hourly (8–21 sessions) |
-| **Wild cluster bootstrap (used)** | **1.8–4.8%** | **3.3–5.5%** |
-| Newey–West t (cross-check) | 5.3–5.5% | 5.8–9.6% |
+Each rate is the share of simulated data sets, with the count in brackets. **± is one Monte Carlo standard error**, √(p(1 − p)/n), and the range is a 95% Wilson interval. With a few hundred data sets, a rate within about 2.5 points of 5% can't be told apart from 5%. The tests use 199 bootstrap draws per data set to stay fast (the page uses 999).
 
-- Wild bootstrap intervals covered the true slope in 94.5–97.7% of data sets. Across the 7 hourly lags (21 sessions, shared volatility), at least one lag had an uncorrected p < 0.05 in 27.5% of data sets with no relationship; after Holm or BH, 2.8%.
-- Power is modest. With shared volatility, a relationship with a typical r of 0.4 was detected in 26% of data sets with 10 sessions, 50% with 21 (about 30 days hourly), and 75% with 62 (about 90 days).
-- Event study (300 data sets per setting, with and without shared volatility): the sign-flip test came out below 0.05 in 0–2.7% of data sets at bar +3 and 1.2–4.2% for the whole path. A placebo test against randomly placed windows (tried, not used) reached 7.2% for the whole path. Bootstrap-t intervals covered 93–98%; plain percentile intervals 90–93%.
-- `correlation-test.test.ts` and `event-tests.test.ts` rerun smaller versions of these simulations with fixed seeds and fail if false positives leave 2–7.5% or a built-in relationship stops being detected. An independent Python reimplementation (numpy and statsmodels, refitting every bootstrap draw instead of using the closed form) reproduced the p-values, intervals, Holm and BH adjustments, effective n, and random-number stream exactly.
+False positives: the share of data sets with p < 0.05 at lag 0 when there is no relationship.
+
+| Setting | Data sets | p < 0.05 | ± SE | 95% range | Test fails if |
+| --- | --- | --- | --- | --- | --- |
+| Hourly, 21 sessions (about 30 days), independent | 400 | 3.5% (14) | 0.9 | 2.1–5.8% | below 2% or above 7.5% |
+| Hourly, 21 sessions, shared volatility | 400 | 3.2% (13) | 0.9 | 1.9–5.5% | below 2% or above 7.5% |
+| Daily, 62 days (about 90 days), shared volatility | 300 | **6.0% (18)** | 1.4 | 3.8–9.3% | above 7.5% |
+| Daily, 20 days (about 30 days), shared volatility | 300 | 3.3% (10) | 1.0 | 1.8–6.0% | above 7.5% |
+
+**The daily 62-day setting slightly over-rejects: 6.0% of data sets came out below 0.05, not 5%.** That's within Monte Carlo error (0.7 standard errors above 5%, and the 95% range includes 5%), so 300 data sets can't show whether the true rate is above 5%. But it isn't conservative either, and the test only fails above 7.5%. The other three settings came out below 5%.
+
+- **Multiple testing:** across the 7 hourly lags (21 sessions, shared volatility, 200 data sets), at least one lag had an uncorrected p < 0.05 in 27.0% (54) ± 3.1 (95% range 21.3–33.5%) of data sets with no relationship. After Holm, 3.0% (6) ± 1.2 (1.4–6.4%). The test fails if Holm goes above 7.5% or the uncorrected rate below 12%. BH isn't simulated.
+- **Intervals:** the 95% interval covered the true slope in 95.0% (190 of 200) ± 1.5 (91.0–97.3%) of data sets (62 sessions, shared volatility, slope 0.3% per pp). The test fails outside 92–98.5%.
+- **Detection:** both checks use strong built-in relationships. A same-hour slope of 0.6% per pp (21 sessions) was detected in 99 of 100 data sets (99.0% ± 1.0), and the same slope two hours later (62 sessions) passed Holm at lag +2 in 100 of 100. Each test fails below 80%. The suite doesn't measure power for weaker relationships, which is likely low at these sample sizes.
+
+Event study (62 sessions, shared volatility, jumps of at least 1.5 pp; 300 data sets, of which 263 had at least 5 rises to test):
+
+| Result | No relationship | Drift of 0.4% per bar for 3 bars after rises | Test fails if (no relationship) |
+| --- | --- | --- | --- |
+| Bar +3, p < 0.05 | 2.7% (7) ± 1.0, range 1.3–5.4% | 40.7% (107) ± 3.0 | above 6% |
+| Whole path, p < 0.05 | 5.3% (14) ± 1.4, range 3.2–8.7% | 26.2% (69) ± 2.7 | above 7.5% |
+| 95% interval at bar +3 covers the true value | 94.3% (248) ± 1.4, range 90.8–96.5% | 95.4% (251) ± 1.3 | below 92% |
+
+**The whole-path test is also slightly above 5% (5.3%)**, 0.2 standard errors away, so it's well within Monte Carlo error.
+
+Not in the test suite: comparisons with the methods tried and dropped (the old ±1.96/√n band, shuffling Kalshi between sessions, a placebo-window event test, and plain percentile event intervals), and the false-positive rate of the Newey–West cross-check. Those ran during development: the tests over-rejected, mostly when volatility was shared, and the percentile intervals under-covered. They aren't reproducible from the repository, so no figures are given here. An independent Python reimplementation (numpy and statsmodels, refitting every bootstrap draw instead of using the closed form) reproduced the p-values, intervals, Holm and BH adjustments, effective n, and random-number stream exactly.
 
 **Limitations.**
 
