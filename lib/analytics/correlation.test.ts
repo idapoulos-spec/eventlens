@@ -33,13 +33,12 @@ describe("sampleFlag", () => {
 describe("correlationStats", () => {
   it("reports no correlation below 10 pairs", () => {
     const stats = correlationStats(pairs(range(9), range(9)));
-    expect(stats).toMatchObject({ r: null, n: 9, band: null, flag: "insufficient", noVariation: false });
+    expect(stats).toMatchObject({ r: null, n: 9, flag: "insufficient", noVariation: false });
   });
 
-  it("reports r with a 1.96/√n band, flagged as small below 30 pairs", () => {
+  it("reports r, flagged as small below 30 pairs", () => {
     const stats = correlationStats(pairs(range(12), range(12)));
     expect(stats).toMatchObject({ r: 1, n: 12, flag: "small" });
-    expect(stats.band).toBeCloseTo(1.96 / Math.sqrt(12), 12);
     expect(correlationStats(pairs(range(30), range(30))).flag).toBe("ok");
   });
 

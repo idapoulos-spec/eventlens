@@ -116,6 +116,9 @@ describe("kalshiRegression", () => {
     expect(fit.marketCoef).toBeCloseTo(1.516677209438722, 12);
     expect(fit.se!).toBeCloseTo(0.06054505933854022, 12);
     expect(fit.p!).toBeCloseTo(0.8098858731277612, 10);
+    // As a test result, its p-value is withheld: Kalshi moved in only 4 intervals.
+    expect(fit.test).toMatchObject({ estimate: fit.coef, p: null, pUnavailable: "few_kalshi_moves", method: "newey_west", family: null });
+    expect(fit.test.ci).toEqual(fit.ci);
   });
 
   it("is null when Kalshi never moved", () => {
@@ -125,12 +128,16 @@ describe("kalshiRegression", () => {
 
 describe("kalshiBenchmarkCorrelation", () => {
   it("pairs each Kalshi change with the benchmark's return over the same interval", () => {
-    expect(kalshiBenchmarkCorrelation(changes, benchReturns)).toMatchObject({ n: 10, kalshiMoves: 4 });
+    const result = kalshiBenchmarkCorrelation(changes, benchReturns, "hourly");
+    expect(result).toMatchObject({ n: 10, kalshiMoves: 4 });
+    // Two sessions are too few for the wild bootstrap, so the test reports no p-value.
+    expect(result.test).toMatchObject({ n: 10, p: null, pUnavailable: "too_few_blocks" });
+    expect(result.test.estimate).toBeCloseTo(result.r!, 12);
   });
 });
 
 describe("marketAdjustment", () => {
-  const result = marketAdjustment({ full: rows, rows, changes, closesByT, event: { thresholdPp: 3, before: 1, after: 1 } });
+  const result = marketAdjustment({ full: rows, rows, changes, closesByT, event: { thresholdPp: 3, before: 1, after: 1 }, resolution: "hourly" });
 
   it("fits the model on all rows and adjusts the window's changes", () => {
     expect(result.model!.n).toBe(12);
@@ -140,11 +147,15 @@ describe("marketAdjustment", () => {
     expect(result.kalshi!.n).toBe(10);
   });
 
+  it("runs the primary test on the abnormal returns, at lag 0", () => {
+    expect(result.primary).toMatchObject({ role: "primary", family: null, n: 10, method: "wild_bootstrap" });
+  });
+
   it("fits the event-study model outside every jump window, and skips it with too few intervals left", () => {
     // Jumps of ≥ 3 pp end at rows 6, 9, 11, and 14, so only intervals ending at rows 1–4 remain.
     expect(result.eventModel).toBeNull();
     expect(result.studies.abnormal).toBeNull();
-    const narrow = marketAdjustment({ full: rows, rows, changes, closesByT, event: { thresholdPp: 5, before: 0, after: 0 } });
+    const narrow = marketAdjustment({ full: rows, rows, changes, closesByT, event: { thresholdPp: 5, before: 0, after: 0 }, resolution: "hourly" });
     // Jumps of ≥ 5 pp end at rows 9 and 14, and the windows are just those bars.
     expect(narrow.eventModel!.n).toBe(12 - 2);
     expect(narrow.eventModel!.beta).not.toBeCloseTo(narrow.model!.beta, 3);

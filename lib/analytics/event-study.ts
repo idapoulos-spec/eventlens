@@ -20,6 +20,8 @@ export interface EventGroup {
   n: number;
   /** When each counted jump ended, and its size in pp. */
   events: { t: number; probChangePp: number }[];
+  /** Each counted jump's path, in percent, in the same order as `events`. */
+  paths: number[][];
   flag: SampleFlag;
 }
 
@@ -57,7 +59,7 @@ function meanPath(paths: number[][]): number[] | null {
 }
 
 function group(paths: number[][], events: EventGroup["events"]): EventGroup {
-  return { mean: meanPath(paths), n: paths.length, events, flag: sampleFlag(paths.length, 1, SMALL_EVENT_COUNT) };
+  return { mean: meanPath(paths), n: paths.length, events, paths, flag: sampleFlag(paths.length, 1, SMALL_EVENT_COUNT) };
 }
 
 /** Changes of at least `thresholdPp` in either direction, oldest first. */

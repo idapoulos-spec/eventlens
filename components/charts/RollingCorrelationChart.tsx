@@ -8,10 +8,10 @@ import { AXIS_TICK, CHART_COLORS, ChartTooltip } from "./ChartTooltip";
 import { formatAxisTick, formatTradingDate, timeTicks } from "./time";
 
 /**
- * Correlation over a moving window of intervals, on a fixed −1…1 scale. Dashed lines
- * mark ±`band`, the rough 95% range for one window if there were no relationship.
+ * Correlation over a moving window of intervals, on a fixed −1…1 scale. Descriptive only:
+ * neighboring windows share most of their intervals, so no significance range is drawn.
  */
-export function RollingCorrelationChart({ points, band, daily }: { points: RollingPoint[]; band: number; daily: boolean }) {
+export function RollingCorrelationChart({ points, daily }: { points: RollingPoint[]; daily: boolean }) {
   const ticks = useMemo(() => timeTicks(points), [points]);
   const when = (t: number) => (daily ? formatTradingDate(t) : formatDateTime(t));
   return (
@@ -42,8 +42,6 @@ export function RollingCorrelationChart({ points, band, daily }: { points: Rolli
             tickFormatter={(v: number) => formatSigned(v, 1)}
           />
           <ReferenceLine y={0} stroke={CHART_COLORS.axis} />
-          <ReferenceLine y={band} stroke={CHART_COLORS.muted} strokeDasharray="4 4" />
-          <ReferenceLine y={-band} stroke={CHART_COLORS.muted} strokeDasharray="4 4" />
           <Tooltip
             cursor={{ stroke: CHART_COLORS.muted, strokeWidth: 1 }}
             content={({ active, payload }) => {

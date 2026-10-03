@@ -14,7 +14,8 @@ export function Card({
   className?: string;
 }) {
   return (
-    <section className={`rounded-xl border border-border bg-surface p-5 ${className}`}>
+    // min-w-0: a wide table inside (it scrolls) mustn't stretch the grid the card sits in.
+    <section className={`min-w-0 rounded-xl border border-border bg-surface p-5 ${className}`}>
       {(title || action) && (
         <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">

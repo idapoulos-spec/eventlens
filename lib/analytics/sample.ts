@@ -16,3 +16,13 @@ export type SampleFlag = "insufficient" | "small" | "ok";
 export function sampleFlag(n: number, min = MIN_PAIRS, small = SMALL_SAMPLE): SampleFlag {
   return n < min ? "insufficient" : n < small ? "small" : "ok";
 }
+
+/**
+ * Below this many sessions (hourly) or runs of days (daily), the wild bootstrap is too
+ * conservative and has too little power to mean much: no p-value or interval is shown.
+ * In simulations with 4–6 sessions it rejected 0.5–2.5% of the time at the 5% level, and
+ * found a moderate relationship only 10–26% of the time (README → Statistical tests).
+ */
+export const MIN_BOOTSTRAP_BLOCKS = 8;
+/** Below this many events, an event-study group gets no intervals or p-values. */
+export const MIN_TEST_EVENTS = 5;

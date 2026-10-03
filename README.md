@@ -7,7 +7,7 @@ Pick a stock or ETF (search by ticker or name, e.g. `NVDA` or "nvidia") and a Ka
 - **Kalshi market:** title, implied probability, YES bid / ask, last price, 24-hour volume, open interest, 1-hour and 24-hour probability change, and an event-uncertainty score
 - **Stock:** current price, daily change, volume (compared with average volume once the market has closed), and 30-day realized volatility (via [Twelve Data](https://twelvedata.com))
 - **Charts:** Kalshi probability vs. stock return over the last 7 days, aligned on timestamps, plus the probability history and ~3 months of daily closes
-- **Research:** how Kalshi probability changes relate to stock returns over 7, 30, or 90 days (hourly or daily): lead-lag correlation, rolling correlation, and an event study around Kalshi jumps, on raw or market-adjusted returns (net of SPY or another benchmark), with sample sizes, caveats, and a CSV export of the aligned data
+- **Research:** how Kalshi probability changes relate to stock returns over 7, 30, or 90 days (hourly or daily): lead-lag correlation, rolling correlation, and an event study around Kalshi jumps, on raw or market-adjusted returns (net of SPY or another benchmark), with significance tests built for this data (one primary test; p-values and 95% intervals for every lag and event-study bar; Holm and Benjamini–Hochberg corrections), sample sizes, caveats, and a CSV export of the aligned data
 
 > Experimental market-research tool. Metrics are informational and are not investment recommendations.
 
@@ -151,10 +151,10 @@ Left out, and counted on the page:
 | Metric | Definition |
 | --- | --- |
 | Changes | For each interval between consecutive observations, one grid slot apart (one trading hour, or consecutive sessions): the Kalshi probability change in percentage points, and the stock's log return `ln(P₁/P₀)`. |
-| Lead-lag | Pearson correlation of the Kalshi change in slot *s* with the stock return in slot *s + k*, for *k* from −3 to +3 hours (hourly) or −5 to +5 trading days (daily). **Positive *k*: Kalshi moved first. Negative *k*: the stock moved first.** Lags never pair across a gap (e.g. overnight). Each bar has dashed marks at ±1.96/√n for its own number of pairs: the rough 95% range if there were no relationship, assuming independent observations. With 7 or 11 lags, one crossing its range by chance alone isn't unusual (about 30% or 43% odds), and the chart says so. |
-| Rolling correlation | Same-interval correlation over the last 18 hourly intervals (about 3 sessions) or 20 daily intervals (about a month). Shown only with at least 10 more intervals than one window. |
-| Event study | A jump is a Kalshi change of at least the chosen size (1, 2, 3, 5, or 10 pp; default 2 pp hourly, 3 pp daily) in one interval. For each jump, the stock's cumulative log return from the close before the jump, over 6 bars (hourly) or 5 sessions (daily) each side, measured in trading bars, so a window can span a night or weekend. Rises and falls are averaged separately. A jump within that many bars of an earlier one, or too close to the edge of the data, is skipped and counted. The **baseline** is the same path averaged over every window of the same length in the period, jump or not: the stock's normal drift, to compare the jump paths with. |
-| Sample size | Every result shows its *n*. Fewer than 10 pairs: no correlation is reported. Fewer than 30: flagged as a small sample. Fewer than 10 non-zero Kalshi changes: flagged, because a few moves decide the result. Fewer than 10 jumps: flagged as too few to generalize. |
+| Lead-lag | Pearson correlation of the Kalshi change in slot *s* with the stock return in slot *s + k*, for *k* from −3 to +3 hours (hourly) or −5 to +5 trading days (daily). **Positive *k*: Kalshi moved first. Negative *k*: the stock moved first.** Lags never pair across a gap (e.g. overnight). Each bar has a 95% interval and a p-value, corrected across the lags (see [Statistical tests](#statistical-tests)). |
+| Rolling correlation | Same-interval correlation over the last 18 hourly intervals (about 3 sessions) or 20 daily intervals (about a month). Shown only with at least 10 more intervals than one window. **Descriptive only:** neighboring points share all but one interval, so no significance range is drawn and no claim is made. |
+| Event study | A jump is a Kalshi change of at least the chosen size (1, 2, 3, 5, or 10 pp; default 2 pp hourly, 3 pp daily) in one interval. For each jump, the stock's cumulative log return from the close before the jump, over 6 bars (hourly) or 5 sessions (daily) each side, measured in trading bars, so a window can span a night or weekend. Rises and falls are averaged separately. A jump within that many bars of an earlier one, or too close to the edge of the data, is skipped and counted. The **baseline** is the same path averaged over every window of the same length in the period, jump or not: the stock's normal drift, to compare the jump paths with. Each bar has a 95% interval and a test against the baseline, and each direction a test of the whole path (see [Statistical tests](#statistical-tests)). |
+| Sample size | Every result shows its *n*. Fewer than 10 pairs: no correlation is reported. Fewer than 30: flagged as a small sample. Fewer than 10 non-zero Kalshi changes: flagged, because a few moves decide the result. Fewer than 8 sessions (hourly) or runs of days (daily): correlations get no p-value or interval. Fewer than 5 jumps in a direction: no intervals or p-values for it; 5–9: flagged as rough, with the smallest p-value possible. |
 
 **Reading the sign.** Every correlation and event-study direction depends on what YES means for the chosen market. Positive means the stock tended to rise when the chance of YES rose; if YES is bad news for the stock, negative values are what you'd expect. The page quotes the market's YES label next to each chart.
 
@@ -177,14 +177,79 @@ A Kalshi move and a stock move in the same hour can both be the whole market mov
   - Stock moves are larger in the hours news moves Kalshi, so ordinary standard errors (which assume constant variance) are too small.
   - Kalshi often reprices over several hours, and the Newey–West sum covers that autocorrelation. Lags pair intervals exactly that many grid slots apart, so no lag reaches across a night or a missing session.
   - Kalshi doesn't move in most hours, so the coefficient rests on the few intervals where it did. OLS fits those high-leverage points closely, which makes their residuals understate the noise; dividing each residual by (1 − leverage), as HC3 does, corrects for that.
-  - The p-value isn't shown when Kalshi moved in fewer than 10 intervals. Clustering by day was not used (about 5 clusters in 7 days), nor a bootstrap (lumpy with few moves, and its random results would change from one view to the next).
+  - It's a cross-check of the primary test (which uses β from the full 90 days), shown with an uncorrected p-value, which isn't shown when Kalshi moved in fewer than 10 intervals. Its t approximation is less reliable than the primary test's bootstrap: in simulations of 21 hourly sessions in which the stock was more volatile in the hours Kalshi moved, it fell below 0.05 in about 9% of data sets with no relationship (see [Statistical tests](#statistical-tests)).
 
 Caveats shown on the page:
 
-- If the event moves the whole market (an index level, the Fed, a recession), adjusting removes the part of the move the stock shares with the market, which may be the very effect being studied. The page flags when Kalshi changes correlate with the benchmark's returns beyond the no-relationship range.
+- If the event moves the whole market (an index level, the Fed, a recession), adjusting removes the part of the move the stock shares with the market, which may be the very effect being studied. The page flags when Kalshi changes correlate with the benchmark's returns (wild bootstrap p < 0.05, uncorrected).
 - A benchmark that holds the stock (NVDA is in SPY and QQQ, and a large weight in tech sector ETFs) absorbs part of the stock's own move. A benchmark that explains almost all of it (R² ≥ 0.95, e.g. VOO for SPY) leaves mostly noise, and the page says so. When the stock is the benchmark, adjustment is unavailable.
 - Hourly β is intraday (trading hours only) and daily β includes overnight moves, so they differ. For thinly traded stocks the last trade in an hour can be stale, which pulls hourly β toward 0.
 - β is assumed stable over the 90 days. Event-study windows span nights and weekends, and β and α apply per bar there too.
+
+### Statistical tests
+
+The data is hard on textbook statistics: Kalshi's hourly change is zero most of the time and moves in 0.5 pp steps, Kalshi often reprices over several hours, the stock is more volatile in the hours news moves Kalshi, and samples are small. The tests below are built for that, and everything is computed in the browser from data already on the page, with no extra API calls.
+
+**One primary test.** The page is set up to answer one question, fixed before looking at any data: *in the selected window and resolution, do Kalshi changes go with the stock's market-adjusted returns in the same interval?* (lag 0, abnormal returns against the benchmark). It's judged on its own p-value at 5% and shown at the top of the Research section whichever returns are selected. Everything else is labeled exploratory. When market adjustment isn't possible (the stock is the benchmark, or the benchmark didn't load or has too few prices), there's no primary test, and the page says so instead of falling back to raw returns. Switching windows, resolutions, benchmarks, or jump sizes after seeing the results isn't corrected for, and the page says that too.
+
+**One result shape.** Every test returns the same fields (`TestResult` in `lib/analytics/inference.ts`): estimate, 95% interval, p-value, Holm- and Benjamini–Hochberg-adjusted p-values within its family, role (primary or exploratory), method with its resampling details (what was resampled, how many, how many draws, the smallest possible p), n, effective n where it applies, and why a p-value or interval is withheld. The page shows them with the same columns and wording everywhere.
+
+| Analysis | Estimate | p-value | 95% interval |
+| --- | --- | --- | --- |
+| Correlation at each lag, and the primary test | Pearson r | Wild cluster bootstrap | Every slope the same test wouldn't reject, shown on the correlation scale |
+| Event study, each bar | Mean path after jumps minus the baseline (%) | Sign-flip test over events | Bootstrap-t over events |
+| Event study, whole path | — | Sign-flip test of the largest \|t\| over the bars | — |
+| Kalshi with the market held fixed (cross-check) | Regression coefficient | t, Newey–West + HC3 | t, Newey–West + HC3 |
+
+**Correlations: wild cluster bootstrap with the null imposed** (`lib/analytics/correlation-test.ts`).
+
+- Kalshi's changes stay exactly as observed, zeros and steps included. The stock's returns are rebuilt under "no relationship" as their mean plus each residual times one random weight per block, from Webb's six-point distribution. Blocks are New York trading sessions (hourly) or runs of *b* consecutive trading days (daily; *b* = max(2, ⌊4(n/100)^{2/9}⌋): 2 for 30 days, 3 for 90). That keeps Kalshi's autocorrelation, the stock's volatility in every hour (including the hours Kalshi moved), and any dependence within a session, and removes only a link in direction.
+- The statistic is the slope's t with the same Newey–West + HC3 standard errors as the regression above. The p-value is the share of 999 draws at least as extreme as the data; the page shows the number of sessions (or runs) and the smallest possible p (0.001).
+- The interval is every slope the same bootstrap wouldn't reject at 5%, so it excludes zero exactly when p < 0.05. Each draw's t is a closed-form function of the slope being tested, so the interval costs no extra draws: about 25 ms for 90 days of hourly data and 7 lags. It's shown as a correlation (slope × *s_x*/*s_y*), clamped to ±1. An interval that reaches ±1 means Kalshi's moves at that lag fall in too few sessions to pin it down.
+- **With fewer than 8 sessions (or runs of days), no p-value or interval is shown**, and the page says how many there were: the 7-day window has about 5 sessions. In simulations with 4–6 sessions the bootstrap came out below 0.05 in only 0.5–2.5% of data sets with no relationship, and detected a moderate one in only 10–26%.
+- Effective n is Bartlett's *n* / (1 + 2 Σ ρₓ(j) ρᵧ(j)) over the Newey–West lags, autocorrelations pairing slots exactly *j* apart. It's for reading the sample size; the tests don't use it.
+
+**Event study: sign flips and bootstrap-t** (`lib/analytics/event-tests.ts`).
+
+- Each bar's test asks whether the paths after jumps differ from the baseline. Each event's deviation from the baseline is flipped in sign at random (all bars of an event together) and the t statistic recomputed: if jumps had nothing to do with the stock's direction, a deviation would be as likely up as down, however volatile the stock was around the jump. Up to 14 events, every sign pattern is enumerated, so the p-value is exact; beyond that, 4,999 random patterns. The smallest possible p is 2/2ⁿ, so **5 events can never get below 0.0625**, and the page says so.
+- The whole-path test, one per direction, compares the largest |t| over the bars (12 hourly, 10 daily; not the reference bar −1, which is zero by construction) with the same sign flips.
+- Intervals are a bootstrap-t over events (1,999 resamples). With fewer than 5 events in a direction there are no intervals or p-values; with 5–9 they're flagged as rough, since bootstrap-t intervals over so few events can be wide and lopsided.
+
+**Multiple testing.** Each chart is one family, corrected with both Holm (keeps the chance of any false positive in the family at 5%) and Benjamini–Hochberg (keeps the expected share of false positives among the results that pass at 5%). Tables show raw, Holm, and BH p-values and a "Passes" column ("Holm and BH", "BH only", or "—"); the lead-lag chart marks passing lags with a filled (Holm) or hollow (BH only) diamond, and the event-study chart fills the dots of bars that pass BH.
+
+| Family | Tests | Correction |
+| --- | --- | --- |
+| Primary | 1 | None: judged on its own p-value |
+| Lead-lag | Every exploratory lag on the chart: 7 hourly or 11 daily on raw returns; 6 or 10 on market-adjusted returns, where lag 0 is the primary test | Holm and BH |
+| Event-study bars | Every bar but the reference bar, rises and falls together: 24 hourly, 20 daily | Holm and BH |
+| Event-study paths | Rises and falls: 2 | Holm and BH |
+| Cross-checks | Kalshi with the market held fixed; Kalshi vs. the benchmark (the flag in Market adjustment) | None, labeled uncorrected |
+
+**Reproducible.** Resampling uses mulberry32 seeded from a fixed seed (`RESAMPLING_SEED`) and a label per method, so the same data and settings give the same numbers on every load and every device, and a lag's result doesn't depend on which other lags are tested. Monte Carlo error remains: with 999 draws, a p-value near 0.05 is uncertain by about ±0.007, so another seed could move a borderline result across 0.05.
+
+**Validation.** Simulated data: Kalshi changes that are zero in about 80% of hours, move in 0.5 pp steps, and tend to continue; stock returns with heavy tails and volatility that varies by day, by hour (U-shaped), and on news days. In the "shared volatility" variant, news days and big Kalshi moves come with a more volatile stock but no link in direction, the case that fools simple tests. Share of data sets (400 each) with p < 0.05 when there is no relationship:
+
+| Method | Independent | Shared volatility |
+| --- | --- | --- |
+| ±1.96/√n band (before) | 5–7% | 31–50% hourly, 20–24% daily |
+| Shuffling Kalshi between sessions (tried, not used) | 3–6% | 6.5–11% hourly (8–21 sessions) |
+| **Wild cluster bootstrap (used)** | **1.8–4.8%** | **3.3–5.5%** |
+| Newey–West t (cross-check) | 5.3–5.5% | 5.8–9.6% |
+
+- Wild bootstrap intervals covered the true slope in 94.5–97.7% of data sets. Across the 7 hourly lags (21 sessions, shared volatility), at least one lag had an uncorrected p < 0.05 in 27.5% of data sets with no relationship; after Holm or BH, 2.8%.
+- Power is modest. With shared volatility, a relationship with a typical r of 0.4 was detected in 26% of data sets with 10 sessions, 50% with 21 (about 30 days hourly), and 75% with 62 (about 90 days).
+- Event study (300 data sets per setting, with and without shared volatility): the sign-flip test came out below 0.05 in 0–2.7% of data sets at bar +3 and 1.2–4.2% for the whole path. A placebo test against randomly placed windows (tried, not used) reached 7.2% for the whole path. Bootstrap-t intervals covered 93–98%; plain percentile intervals 90–93%.
+- `correlation-test.test.ts` and `event-tests.test.ts` rerun smaller versions of these simulations with fixed seeds and fail if false positives leave 2–7.5% or a built-in relationship stops being detected. An independent Python reimplementation (numpy and statsmodels, refitting every bootstrap draw instead of using the closed form) reproduced the p-values, intervals, Holm and BH adjustments, effective n, and random-number stream exactly.
+
+**Limitations.**
+
+- The wild bootstrap treats sessions (hourly) or runs of 2–3 days (daily) as independent and residual signs as symmetric. Daily autocorrelation longer than a run isn't covered.
+- Market-adjusted tests treat β as known. It's estimated from the full 90 days, which include the window, and its uncertainty isn't carried into the tests.
+- Intervals on the correlation scale use the sample standard deviations, ignoring their own uncertainty.
+- The sign-flip test assumes deviations from the baseline would be symmetric if jumps were unrelated to the stock; skewed returns weaken that. The baseline is treated as fixed.
+- Holm is conservative because neighboring lags and bars share data; BH assumes they're positively dependent, which is plausible but not guaranteed.
+- Corrections apply within each chart's family, not across the page or across the settings tried.
+- Small samples can't show much: 30 days of daily data has about 10 runs of days, and most of its intervals span nearly everything.
 
 ### CSV export
 
@@ -236,7 +301,7 @@ lib/
   auth/               Access gate: sessions, password check, page and API route guards
   kalshi/             Kalshi API client, market search index, normalized types (server-only)
   market-data/        Twelve Data client, symbol lists and search, popular symbols, research benchmarks (server-only)
-  analytics/          Pure metric, alignment, research, and regression functions (and the CSV export)
+  analytics/          Pure metric, alignment, research, regression, and significance-test functions (and the CSV export)
   search/             Search contract: result types, query validation, error responses
   validation.ts       Ticker input validation
   format.ts           Number and date formatting
