@@ -2,11 +2,14 @@ import type { Metadata } from "next";
 import { AnalysisFlow, AnalysisResults } from "@/components/analysis/AnalysisFlow";
 import { CopyLinkButton } from "@/components/analysis/CopyLinkButton";
 import { analysisHref, type Analysis } from "@/components/analysis/navigation";
+import { SignOutButton } from "@/components/auth/SignOutButton";
 import { Dashboard } from "@/components/Dashboard";
 import { Disclaimer } from "@/components/Disclaimer";
+import { LogoMark } from "@/components/LogoMark";
 import { TickerForm, type PageView } from "@/components/TickerForm";
 import { Notice } from "@/components/ui";
 import { ANALYSIS_LIMIT_SUMMARY, checkAnalysisRateLimit } from "@/lib/analysis-rate-limit";
+import { isAccessGateOn, requirePageSession } from "@/lib/auth/server";
 import { formatWait } from "@/lib/format";
 import { validateKalshiTicker, validateStockTicker } from "@/lib/validation";
 
@@ -41,6 +44,7 @@ export async function generateMetadata({ searchParams }: PageProps<"/">): Promis
 }
 
 export default async function Home({ searchParams }: PageProps<"/">) {
+  await requirePageSession();
   const { rawStock, rawKalshi, hasQuery, stock, kalshi } = readQuery(await searchParams);
   // Only valid analyses reach the upstream APIs, so only they count against the limit.
   const rateLimit = stock.ok && kalshi.ok ? await checkAnalysisRateLimit() : { ok: true as const };
@@ -50,14 +54,17 @@ export default async function Home({ searchParams }: PageProps<"/">) {
   return (
     <AnalysisFlow>
       <div className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:py-10">
-        <header className="mb-5 sm:mb-6">
-          <h1 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight">
-            <LogoMark />
-            EventLens
-          </h1>
-          <p className="mt-1 text-sm text-ink-secondary">
-            Compare Kalshi prediction-market probabilities with stock-market data.
-          </p>
+        <header className="mb-5 flex items-start justify-between gap-4 sm:mb-6">
+          <div className="min-w-0">
+            <h1 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight">
+              <LogoMark />
+              EventLens
+            </h1>
+            <p className="mt-1 text-sm text-ink-secondary">
+              Compare Kalshi prediction-market probabilities with stock-market data.
+            </p>
+          </div>
+          {isAccessGateOn() && <SignOutButton />}
         </header>
 
         <div className="mb-5 rounded-xl border border-border bg-surface p-4 sm:mb-6 sm:p-5">
@@ -109,16 +116,6 @@ function ResultsBar({ stock, kalshi }: Analysis) {
       </p>
       <CopyLinkButton href={analysisHref({ stock, kalshi })} />
     </div>
-  );
-}
-
-/** Two overlapping dots in the series colors: the Kalshi and stock lines on every chart. */
-function LogoMark() {
-  return (
-    <svg aria-hidden viewBox="0 0 24 16" className="h-4 w-6 shrink-0">
-      <circle cx="8" cy="8" r="7" fill="var(--series-kalshi)" />
-      <circle cx="16" cy="8" r="7" fill="var(--series-stock)" fillOpacity="0.85" />
-    </svg>
   );
 }
 

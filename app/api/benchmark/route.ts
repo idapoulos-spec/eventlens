@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { rejectUnlessSignedIn } from "@/lib/auth/session";
 import { clientIp } from "@/lib/client-ip";
 import { BENCHMARK_SYMBOL_PARAM, getBenchmarkSeries, type BenchmarkErrorResponse, type BenchmarkSeries } from "@/lib/market-data";
 import { createRateLimiter } from "@/lib/rate-limit";
@@ -28,6 +29,10 @@ function error(status: number, code: string, message: string, headers?: HeadersI
 
 /** GET /api/benchmark?symbol=… → BenchmarkSeries: a benchmark for the Research panel's market adjustment. */
 export async function GET(request: NextRequest) {
+  // Before anything else, so a visitor who isn't signed in learns nothing, not even whether the input is valid.
+  const denied = await rejectUnlessSignedIn(request.cookies);
+  if (denied) return denied;
+
   const symbol = validateStockTicker(request.nextUrl.searchParams.get(BENCHMARK_SYMBOL_PARAM));
   if (!symbol.ok) return error(400, "invalid_symbol", symbol.message);
 

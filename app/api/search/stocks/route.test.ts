@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { signedInCookie } from "@/lib/auth/test-helpers";
 import { searchUsStocks } from "@/lib/market-data";
 import { fail, ok } from "@/lib/result";
 import type { StockSearchResponse, SearchErrorResponse, StockSearchResult } from "@/lib/search/types";
@@ -15,14 +16,33 @@ afterEach(() => {
   searchMock.mockReset();
 });
 
+// Every request below is signed in, except where a test says otherwise.
+let cookie = "";
+beforeAll(async () => {
+  cookie = await signedInCookie();
+});
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
+
 // The limiter lives in module state, so each test uses its own IP.
-function search(query: string | null, ip: string) {
+function search(query: string | null, ip: string, signedIn = true) {
   const url = new URL("http://localhost/api/search/stocks");
   if (query !== null) url.searchParams.set("q", query);
-  return GET(new NextRequest(url, { headers: { "x-real-ip": ip } }));
+  return GET(new NextRequest(url, { headers: { "x-real-ip": ip, ...(signedIn && { cookie }) } }));
 }
 
 describe("GET /api/search/stocks", () => {
+  it("turns away a visitor who isn't signed in with 401, before validating or searching", async () => {
+    for (const query of ["nvda", null]) {
+      const res = await search(query, "10.0.0.9", false);
+      expect(res.status).toBe(401);
+      const body: SearchErrorResponse = await res.json();
+      expect(body.error.code).toBe("unauthorized");
+    }
+    expect(searchMock).not.toHaveBeenCalled();
+  });
+
   it("searches for the normalized query and returns it with the results", async () => {
     searchMock.mockResolvedValue(ok([NVDA]));
     const res = await search("  nvidia   corp ", "10.0.0.1");

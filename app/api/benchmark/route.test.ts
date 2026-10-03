@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { signedInCookie } from "@/lib/auth/test-helpers";
 import { getBenchmarkSeries, type BenchmarkErrorResponse, type BenchmarkSeries } from "@/lib/market-data";
 import { fail, ok } from "@/lib/result";
 import { GET } from "./route";
@@ -14,14 +15,33 @@ afterEach(() => {
   benchmarkMock.mockReset();
 });
 
+// Every request below is signed in, except where a test says otherwise.
+let cookie = "";
+beforeAll(async () => {
+  cookie = await signedInCookie();
+});
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
+
 // The limiter lives in module state, so each test uses its own IP.
-function load(symbol: string | null, ip: string) {
+function load(symbol: string | null, ip: string, signedIn = true) {
   const url = new URL("http://localhost/api/benchmark");
   if (symbol !== null) url.searchParams.set("symbol", symbol);
-  return GET(new NextRequest(url, { headers: { "x-real-ip": ip } }));
+  return GET(new NextRequest(url, { headers: { "x-real-ip": ip, ...(signedIn && { cookie }) } }));
 }
 
 describe("GET /api/benchmark", () => {
+  it("turns away a visitor who isn't signed in with 401, before validating or fetching", async () => {
+    for (const symbol of ["QQQ", "not a ticker"]) {
+      const res = await load(symbol, "10.0.1.9", false);
+      expect(res.status).toBe(401);
+      const body: BenchmarkErrorResponse = await res.json();
+      expect(body.error.code).toBe("unauthorized");
+    }
+    expect(benchmarkMock).not.toHaveBeenCalled();
+  });
+
   it("returns the benchmark for the normalized symbol", async () => {
     benchmarkMock.mockResolvedValue(ok(QQQ));
     const res = await load(" qqq ", "10.0.1.1");
