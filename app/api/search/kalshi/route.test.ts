@@ -1,5 +1,6 @@
 import { after, NextRequest } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { signedInCookie } from "@/lib/auth/test-helpers";
 import { pendingKalshiIndexRefresh, searchKalshiMarkets } from "@/lib/kalshi/search";
 import { fail, ok } from "@/lib/result";
 import type { KalshiSearchResponse, KalshiSearchResult, SearchErrorResponse } from "@/lib/search/types";
@@ -23,11 +24,20 @@ const RESULT: KalshiSearchResult = {
   probability: 0.04,
 };
 
+// Every request below is signed in, except where a test says otherwise.
+let cookie = "";
+beforeAll(async () => {
+  cookie = await signedInCookie();
+});
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
+
 // The limiter lives in module state, so each test uses its own IP.
-function search(query: string | null, ip: string) {
+function search(query: string | null, ip: string, signedIn = true) {
   const url = new URL("http://localhost/api/search/kalshi");
   if (query !== null) url.searchParams.set("q", query);
-  return GET(new NextRequest(url, { headers: { "x-real-ip": ip } }));
+  return GET(new NextRequest(url, { headers: { "x-real-ip": ip, ...(signedIn && { cookie }) } }));
 }
 
 beforeEach(() => {
@@ -36,6 +46,17 @@ beforeEach(() => {
 });
 
 describe("GET /api/search/kalshi", () => {
+  it("turns away a visitor who isn't signed in with 401, before validating or searching", async () => {
+    for (const query of ["fed", null]) {
+      const res = await search(query, "10.0.0.9", false);
+      expect(res.status).toBe(401);
+      const body: SearchErrorResponse = await res.json();
+      expect(body.error.code).toBe("unauthorized");
+    }
+    expect(searchKalshiMarkets).not.toHaveBeenCalled();
+    expect(after).not.toHaveBeenCalled();
+  });
+
   it("searches for the normalized query and returns the results", async () => {
     const res = await search("  fed   hike ", "10.0.0.1");
     expect(res.status).toBe(200);

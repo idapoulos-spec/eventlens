@@ -11,6 +11,8 @@ Pick a stock or ETF (search by ticker or name, e.g. `NVDA` or "nvidia") and a Ka
 
 > Experimental market-research tool. Metrics are informational and are not investment recommendations.
 
+The site is private: visitors sign in with an access password (see [Access](#access)).
+
 ## Tech stack
 
 Next.js (App Router), TypeScript, Tailwind CSS, Recharts, pnpm.
@@ -51,6 +53,15 @@ Research's benchmark (SPY by default) adds 2 more (30-minute and daily bars, no 
 
 Stock search uses 2 requests per server instance per day, however much people type: see [Search](#search).
 
+### Access password (optional locally)
+
+The deployed site asks for an access password (see [Access](#access)). `pnpm dev` skips sign-in while `ACCESS_PASSWORD` is unset, so there's nothing to set up to work locally. To try sign-in locally, add both settings to `.env.local` and restart `pnpm dev`:
+
+```env
+ACCESS_PASSWORD=a long passphrase of at least 12 characters
+AUTH_SECRET=the output of: openssl rand -base64 32
+```
+
 ### Run locally
 
 ```bash
@@ -59,7 +70,7 @@ pnpm dev
 
 Open <http://localhost:3000>.
 
-The dev server only listens on `127.0.0.1`, so other devices on your network cannot reach it (or spend your API credits). To test from a phone on the same network, run `pnpm exec next dev -H 0.0.0.0` instead.
+The dev server only listens on `127.0.0.1`, so other devices on your network cannot reach it (or spend your API credits). To test from a phone on the same network, run `pnpm exec next dev -H 0.0.0.0` instead, after setting `ACCESS_PASSWORD` and `AUTH_SECRET` in `.env.local`: otherwise anyone on the network can use it without signing in.
 
 ### Other scripts
 
@@ -67,7 +78,7 @@ The dev server only listens on `127.0.0.1`, so other devices on your network can
 pnpm lint    # ESLint
 pnpm test    # unit tests (Vitest)
 pnpm build   # production build (includes type checking)
-pnpm start   # serve the production build
+pnpm start   # serve the production build (needs ACCESS_PASSWORD and AUTH_SECRET)
 ```
 
 ## Search
@@ -97,7 +108,7 @@ Some names and keywords also look like tickers ("nvidia", "recession"). Analyzin
 
 ## Recent analyses and sharing
 
-- **Links:** every analysis has its own URL (`/?stock=NVDA&kalshi=KXFEDDECISION-26OCT-H25`). **Copy link** above the results copies it, and a shared link's tab title names the analysis. Back and Forward move between analyses, and the fields follow.
+- **Links:** every analysis has its own URL (`/?stock=NVDA&kalshi=KXFEDDECISION-26OCT-H25`). **Copy link** above the results copies it, and a shared link's tab title names the analysis. Opening a link requires signing in, and then goes straight to the analysis. Back and Forward move between analyses, and the fields follow.
 - **Recent analyses:** the last 6 analyses viewed in this browser, newest first and named after the Kalshi market, are listed under the form, except the one on screen. Each has a remove button. They're kept in `localStorage` and never sent to the server. Analyses with a ticker that doesn't exist, or a stock the Twelve Data plan doesn't cover, aren't kept. The row is one line tall from the first render (chips scroll sideways), so it never moves the results when it loads.
 - **Clear** empties both fields and returns to the start screen.
 - **Twelve Data requests:** examples and recent analyses are ordinary links, so they can be opened in a new tab, but they're never prefetched: nothing loads until one is picked.
@@ -212,26 +223,44 @@ The market model is fitted on all 90 days, so to reproduce β and α, use the 90
 
 ```
 app/                  Next.js routes (page.tsx renders the dashboard server-side)
+  login/              Sign-in page, and the sign-in and sign-out actions
   api/search/         Search API routes: stocks/ and kalshi/ (GET ?q=…)
   api/benchmark/      Research benchmark prices (GET ?symbol=…)
 components/           UI components (cards, form, panels)
+  auth/               Sign-in form and Sign out button
   analysis/           Loading analyses, shareable links, Copy link, recent analyses
   charts/             Recharts client components
   research/           Research panel (window, resolution, raw or market-adjusted returns, benchmark, analyses, CSV download)
   search/             Stock and Kalshi search fields (comboboxes)
 lib/
+  auth/               Access gate: sessions, password check, page and API route guards
   kalshi/             Kalshi API client, market search index, normalized types (server-only)
   market-data/        Twelve Data client, symbol lists and search, popular symbols, research benchmarks (server-only)
   analytics/          Pure metric, alignment, research, and regression functions (and the CSV export)
   search/             Search contract: result types, query validation, error responses
   validation.ts       Ticker input validation
   format.ts           Number and date formatting
+proxy.ts              Sends requests without a session to /login (API routes get a 401)
 ```
 
 Third-party API calls live in `lib/kalshi` and `lib/market-data`, run only on the server (enforced with `server-only`), and return normalized TypeScript types. The UI never calls third-party APIs directly: the search fields call this app's `/api/search/…` routes, and picking a benchmark calls `/api/benchmark`.
 
+## Access
+
+EventLens shows Twelve Data's data, and the free Twelve Data plan doesn't allow displaying it publicly, so every page and API route requires a signed-in session.
+
+- **Signing in.** Anyone who isn't signed in is sent to `/login` and asked for the access password (`ACCESS_PASSWORD`). After signing in they land on the page they asked for, so a shared analysis link still opens that analysis. A sign-in lasts 30 days in that browser; **Sign out** (top right) ends it sooner.
+- **Giving and removing access.** Share the password with the people you want to let in. To remove someone, change `ACCESS_PASSWORD` in Vercel and redeploy: that signs everyone out, and you give the new password to the people who should keep access. Changing `AUTH_SECRET` also signs everyone out, without changing the password. **Sign out** only ends the session in that browser.
+- **What's protected.** `proxy.ts` (Next.js 16's name for middleware) runs on every request except build assets (`/_next/static/…` and `/favicon.ico`). Pages redirect to `/login`, and `/api/…` routes answer `401` with `{"error":{"code":"unauthorized",…}}`. The dashboard page and each API route also check the session themselves, so a gap in the proxy doesn't expose data. The CSV export is built in the browser from data that's already on the page, so it needs no separate check. The proxy covers new pages and routes automatically; give them their own check too, with `requirePageSession()` (pages) or `rejectUnlessSignedIn(request.cookies)` (API routes) from `lib/auth/`.
+- **The session cookie.** `__Host-eventlens-session`: HttpOnly, Secure, SameSite=Lax, Path=/, 30 days. It holds only an expiry and an HMAC-SHA256 signature. The signing key is derived from both `AUTH_SECRET` and `ACCESS_PASSWORD`, so the cookie can't be used to guess the password, and the password check takes the same time however much of a guess is right.
+- **Sign-in attempts.** Each IP can try 5 times a minute and 20 times an hour. Like the other limits, this is per server instance (see [Security](#security)), so it slows guessing rather than capping it. Use a long password (four or more random words, or `openssl rand -base64 18`), and add the Vercel Firewall rule in [Deploying to Vercel](#deploying-to-vercel) for a limit shared by all instances.
+- **Missing settings lock the site.** Outside `pnpm dev`, if `ACCESS_PASSWORD` (12 to 256 characters) or `AUTH_SECRET` (at least 32 characters) is missing or the wrong length, nobody can sign in: every page redirects to `/login`, which says sign-in isn't set up, and the server log names the setting to fix.
+- **Locally.** `pnpm dev` without `ACCESS_PASSWORD` skips sign-in entirely, and the server log says so once. With both settings in `.env.local` it asks for the password like the deployed site; the cookie is then called `eventlens-session` and isn't Secure, because the dev server uses plain http.
+- **Link previews.** Apps that preview a shared link see the sign-in page, so the preview says "Sign in · EventLens" rather than naming the analysis.
+
 ## Security
 
+- Every page and API route requires a signed-in session: see [Access](#access). `ACCESS_PASSWORD` and `AUTH_SECRET` are read only on the server.
 - `TWELVE_DATA_API_KEY` is read only in server-only code and sent to Twelve Data in an `Authorization` header, never in a URL, so it stays out of browser code, cached request URLs, and logs.
 - Ticker inputs are validated on the server before any upstream request. Search queries are validated too (at most 100 characters, no control characters) and never reach an upstream API.
 - Users see fixed error messages. Twelve Data's own error text is logged on the server only, with the key redacted.
@@ -249,8 +278,15 @@ For a hard limit, use a shared store such as Upstash Redis (`@upstash/ratelimit`
 ## Deploying to Vercel
 
 1. Import the GitHub repository in Vercel.
-2. Add `TWELVE_DATA_API_KEY` under **Project → Settings → Environment Variables** (Production, plus Preview if you want preview deployments to show stock data). The key is only read at request time, so the build does not need it. If it is missing, the site still works and shows that stock data isn't set up; the server log explains how to fix it.
+2. Under **Project → Settings → Environment Variables**, add:
+   - `ACCESS_PASSWORD`: the access password, 12 to 256 characters. A long passphrase is best.
+   - `AUTH_SECRET`: at least 32 random characters, e.g. the output of `openssl rand -base64 32`. Don't reuse it anywhere else.
+   - `TWELVE_DATA_API_KEY` (Production, plus Preview if you want preview deployments to show stock data). The key is only read at request time, so the build does not need it. If it is missing, the site still works and shows that stock data isn't set up; the server log explains how to fix it.
+
+   Add `ACCESS_PASSWORD` and `AUTH_SECRET` to both **Production and Preview** and mark them **Sensitive**. Without them a deployment locks: nobody can sign in. Changes to environment variables apply only to new deployments, so redeploy after adding or changing them.
 3. Deploy. Vercel detects Next.js, installs with pnpm 10 from `pnpm-lock.yaml`, and uses Node.js 24 from `engines`.
+4. Under **Settings → Deployment Protection**, keep Vercel Authentication on **Standard Protection**. It puts Vercel's own login in front of preview and generated deployment URLs, but not the production domain, which the access password protects. **All Deployments** would also put it in front of the production domain, so everyone you share with would need a Vercel account (on Hobby, only one person besides you can be given access).
+5. Recommended: under **Firewall → Configure → + New Rule**, add a rule: if *Request Path* equals `/login` and *Method* equals `POST`, then *Rate Limit* with a fixed window of 60 seconds, 10 requests, keyed by IP, responding with 429. Select **Review Changes**, then **Publish**. This limits sign-in attempts across all server instances; Hobby includes one rate-limit rule per project.
 
 The page's server function is capped at 30 seconds (`maxDuration` in `app/page.tsx`), and the search routes at 60, since the first search on a new instance waits for its index. Each instance builds its own search indexes, so every instance that serves a stock search downloads the symbol lists once a day (2 Twelve Data requests). All timestamps are shown in New York time with the zone labeled, regardless of the server's time zone.
 

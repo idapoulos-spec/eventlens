@@ -1,4 +1,5 @@
 import { after, type NextRequest } from "next/server";
+import { rejectUnlessSignedIn } from "@/lib/auth/session";
 import { clientIp } from "@/lib/client-ip";
 import { FAILED_BUILD_BACKOFF_SEC, pendingKalshiIndexRefresh, searchKalshiMarkets } from "@/lib/kalshi/search";
 import { createRateLimiter } from "@/lib/rate-limit";
@@ -21,6 +22,10 @@ const UPSTREAM_STATUS: Record<string, number> = { upstream_rate_limited: 503, up
 
 /** GET /api/search/kalshi?q=… → KalshiSearchResponse: open markets matching the query, best first. */
 export async function GET(request: NextRequest) {
+  // Before anything else, so a visitor who isn't signed in learns nothing, not even whether the input is valid.
+  const denied = await rejectUnlessSignedIn(request.cookies);
+  if (denied) return denied;
+
   const query = validateSearchQuery(request.nextUrl.searchParams.get(SEARCH_QUERY_PARAM));
   if (!query.ok) return searchError(400, "invalid_query", query.message);
 

@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { rejectUnlessSignedIn } from "@/lib/auth/session";
 import { clientIp } from "@/lib/client-ip";
 import { searchUsStocks } from "@/lib/market-data";
 import { createRateLimiter } from "@/lib/rate-limit";
@@ -27,6 +28,10 @@ const ERROR_STATUS: Record<string, number> = {
 
 /** GET /api/search/stocks?q=… → StockSearchResponse: US stocks and ETFs by ticker or name. */
 export async function GET(request: NextRequest) {
+  // Before anything else, so a visitor who isn't signed in learns nothing, not even whether the input is valid.
+  const denied = await rejectUnlessSignedIn(request.cookies);
+  if (denied) return denied;
+
   const query = validateSearchQuery(request.nextUrl.searchParams.get(SEARCH_QUERY_PARAM));
   if (!query.ok) return searchError(400, "invalid_query", query.message);
 
