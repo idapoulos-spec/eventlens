@@ -7,7 +7,7 @@ Pick a stock or ETF (search by ticker or name, e.g. `NVDA` or "nvidia") and a Ka
 - **Kalshi market:** title, implied probability, YES bid / ask, last price, 24-hour volume, open interest, 1-hour and 24-hour probability change, and an event-uncertainty score
 - **Stock:** current price, daily change, volume (compared with average volume once the market has closed), and 30-day realized volatility (via [Twelve Data](https://twelvedata.com))
 - **Charts:** Kalshi probability vs. stock return over the last 7 days, aligned on timestamps, plus the probability history and ~3 months of daily closes
-- **Research:** how Kalshi probability changes relate to stock returns over 7, 30, or 90 days (hourly or daily): lead-lag correlation, rolling correlation, and an event study around Kalshi jumps, on raw or market-adjusted returns (net of SPY or another benchmark), with significance tests built for this data (one primary test; p-values and 95% intervals for every lag and event-study bar; Holm and Benjamini–Hochberg corrections), sample sizes, caveats, and a CSV export of the aligned data
+- **Research:** how Kalshi probability changes relate to stock returns over 7, 30, or 90 days (hourly or daily; 90 days hourly by default): lead-lag correlation, rolling correlation, and an event study around Kalshi jumps, on raw or market-adjusted returns (net of SPY or another benchmark), with significance tests built for this data (one primary test; p-values and 95% intervals for every lag and event-study bar; Holm and Benjamini–Hochberg corrections), sample sizes, caveats, and a CSV export of the aligned data
 
 > Experimental market-research tool. Metrics are informational and are not investment recommendations.
 
@@ -254,7 +254,7 @@ Power for a weaker relationship: a same-hour slope of 0.3% per pp with shared vo
 | 21 (about 30 days) | 0.42 | 48.5% (97) | 3.5 | 41.7–55.4% | 25% or less, or 75% or more |
 | 62 (about 90 days) | 0.40 | 75.0% (150) | 3.1 | 68.6–80.5% | 55% or less |
 
-A correlation around 0.4 is missed about half the time with 30 days of hourly data, so a non-significant result here is weak evidence of no relationship.
+A correlation around 0.4 is missed about half the time with 30 days of hourly data, so a non-significant result here is weak evidence of no relationship. That's why the Research section opens on 90 days of hourly data, where the same relationship was detected in 75.0% of data sets.
 
 Newey–West cross-check against the primary test's bootstrap, on the same data sets (`lib/analytics/market-model.test.ts`). The stock moves 1.1× with its benchmark, and Kalshi is unrelated to either; the bootstrap runs on abnormal returns with β fitted on the same intervals:
 
