@@ -167,7 +167,9 @@ function view(changes: ChangePoint[], study: EventStudy | null, settings: Settin
 }
 
 export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, yesLabel, initialBenchmark }: Props) {
-  const [days, setDays] = useState<WindowDays>(30);
+  // 90 days by default: with 30 days of hourly data the power tests (correlation-test.test.ts)
+  // miss a correlation of about 0.4 roughly half the time.
+  const [days, setDays] = useState<WindowDays>(90);
   const [chosenResolution, setResolution] = useState<Resolution>("hourly");
   const [thresholds, setThresholds] = useState<Record<Resolution, number>>({
     hourly: SETTINGS.hourly.defaultThreshold,
@@ -745,6 +747,7 @@ function EventStudyCard({
     t.p === null ? null : `after ${name}, p = ${formatP(t.p)} (Holm ${formatP(t.holm)}, BH ${formatP(t.bh)})`;
   const paths = [pathText("rises", tests.rises.path), pathText("falls", tests.falls.path)].filter(Boolean);
   const barCount = [...tests.rises.bars, ...tests.falls.bars].filter((t) => t !== null && t.p !== null).length;
+  const tooFewJumps = study.rises.n < MIN_TEST_EVENTS && study.falls.n < MIN_TEST_EVENTS;
   const method = [tests.rises.path, tests.falls.path].find((t) => t.p !== null);
   const pct = (v: number) => formatSigned(v, 2, "%");
   const cell = (t: TestResult | null) =>
@@ -777,8 +780,11 @@ function EventStudyCard({
         caveats={
           <>
             <strong className="font-medium text-ink-secondary">
-              Exploratory. Bars are corrected as one family, {familyText("event_horizons", barCount)}; the two whole-path tests as
-              another.
+              {barCount > 0
+                ? `Exploratory. Bars are corrected as one family, ${familyText("event_horizons", barCount)}; the two whole-path tests as another.`
+                : tooFewJumps
+                  ? `Exploratory. No bars were tested because there were too few jumps: a test needs at least ${MIN_TEST_EVENTS} rises or ${MIN_TEST_EVENTS} falls.`
+                  : "Exploratory. No bars could be tested."}
             </strong>{" "}
             Shaded: 95% intervals for the average path. Filled dots: bars whose BH-adjusted p is below 5%. Each bar’s test asks
             whether the paths after jumps differ from the baseline; the whole-path test asks whether they differ anywhere in the
