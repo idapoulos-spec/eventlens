@@ -151,3 +151,97 @@ export function withBenchmark(changes: ChangePoint[], seed: number, beta = 1.1):
   });
   return { changes: withMarket, benchReturnByT };
 }
+
+export interface MarketSimOptions {
+  /** Trading sessions (hourly) or days (daily) loaded: the market model's sample. */
+  sessions: number;
+  resolution: "hourly" | "daily";
+  /** Kalshi's path, the benchmark, and the stock's volatility pattern. */
+  seed: number;
+  /** The stock's own noise; by default derived from `seed`. A fixed seed with new noise seeds gives fresh samples of one design. */
+  noiseSeed?: number;
+  /** The stock's beta on the benchmark. */
+  beta?: number;
+  /** Benchmark return (%) per 1 pp Kalshi change in the same interval: Kalshi tracks the market. */
+  kalshiInMarket?: number;
+  /** Stock return (%) per 1 pp Kalshi change in the same interval, beyond what the benchmark carries. */
+  effect?: number;
+  /** As in SimOptions: news days, and big Kalshi moves with a more volatile stock. */
+  sharedVolatility?: boolean;
+}
+
+/**
+ * Research rows with a benchmark, for testing market-adjusted results end to end: hourly,
+ * `sessions` sessions of seven top-of-hour closes (10:00–16:00 New York); daily, one close
+ * per trading day. The stock's log return is beta × the benchmark's, plus `effect` × the
+ * Kalshi change, plus heavy-tailed noise whose volatility varies by day and hour as in
+ * simulateHourly and simulateDaily.
+ */
+export function simulateMarketRows({
+  sessions,
+  resolution,
+  seed,
+  noiseSeed = seed + 7_919,
+  beta = 1.1,
+  kalshiInMarket = 0,
+  effect = 0,
+  sharedVolatility = false,
+}: MarketSimOptions): { rows: ResearchRow[]; closesByT: Map<number, number> } {
+  const design = mulberry32(seed);
+  const noise = mulberry32(noiseSeed);
+  const rows: ResearchRow[] = [];
+  const closesByT = new Map<number, number>();
+  let price = 100;
+  let bench = 400;
+  let prob = 0.5;
+  const push = (t: number, step: number) => {
+    rows.push({ t, step, stockClose: price, probability: prob, kalshiSource: "midpoint", kalshiAsOf: t, exclusion: null });
+    closesByT.set(t, bench);
+  };
+  // One interval: the Kalshi move (pp) as realized after clamping, the benchmark's return, and the stock's.
+  const move = (x: number, benchSd: number, stockNoise: number) => {
+    const next = Math.min(0.99, Math.max(0.01, prob + x / 100));
+    const pp = (next - prob) * 100;
+    prob = next;
+    const m = benchSd * normal(design) + (kalshiInMarket * pp) / 100;
+    bench *= Math.exp(m);
+    price *= Math.exp(beta * m + (effect * pp) / 100 + stockNoise);
+  };
+
+  if (resolution === "hourly") {
+    let day = 0;
+    for (let s = 0; s < sessions; s++, day++) {
+      if (day % 7 === 5) day += 2;
+      const news = sharedVolatility && design() < 0.2;
+      const dayVol = Math.exp(0.4 * normal(design)) * (news ? 2.5 : 1);
+      const x = kalshiPath(design, INTRADAY.length, 0.15, news);
+      for (let h = 0; h <= INTRADAY.length; h++) {
+        const t = FIRST_SESSION_10AM + day * 24 * HOUR_MS + h * HOUR_MS;
+        if (h === 0) {
+          // Overnight: across a gap in the grid, so no analysis uses it.
+          move(0, 0.004, 0.006 * dayVol * normal(noise));
+        } else {
+          const spike = sharedVolatility && Math.abs(x[h - 1]) >= 1.5 ? 3 : 1;
+          move(x[h - 1], 0.0015, 0.002 * dayVol * INTRADAY[h - 1] * spike * studentT(noise, 5));
+        }
+        push(t, Math.round(t / HOUR_MS));
+      }
+    }
+  } else {
+    const x = kalshiPath(design, sessions, 0.5, false).map((v) => v * 2);
+    let vol = 1;
+    push(Date.UTC(2026, 0, 2, 21), 0);
+    x.forEach((xd, i) => {
+      vol = Math.exp(0.9 * Math.log(vol) + 0.25 * normal(design));
+      const spike = sharedVolatility && Math.abs(xd) >= 3 ? 2.5 : 1;
+      move(xd, 0.009, 0.012 * vol * spike * studentT(noise, 5));
+      push(Date.UTC(2026, 0, 5, 21) + i * 24 * HOUR_MS, i + 1);
+    });
+  }
+  return { rows, closesByT };
+}
+
+/** The rows of the last `sessions` sessions (hourly) or the last `sessions` daily intervals. */
+export function lastSessions(rows: ResearchRow[], sessions: number, resolution: "hourly" | "daily"): ResearchRow[] {
+  return rows.slice(-(resolution === "hourly" ? sessions * (INTRADAY.length + 1) : sessions + 1));
+}

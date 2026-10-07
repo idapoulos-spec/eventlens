@@ -2,8 +2,10 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import {
+  ALPHA,
   computeChanges,
   crossCorrelation,
+  detectableCorrelation,
   eventStudy,
   eventStudyTests,
   marketAdjustment,
@@ -16,11 +18,13 @@ import {
   type ChangePoint,
   type ChangeSeries,
   type CorrelationStats,
+  type DetectableCorrelation,
   type EventStudy,
   type EventStudyTests,
   type GroupTests,
   type LagCorrelation,
   type MarketModel,
+  type RefitSample,
   type Resolution,
   type ResearchRow,
   type RollingPoint,
@@ -151,11 +155,12 @@ interface Adjustment {
 }
 
 /**
- * Every result one set of changes gives. In market-adjusted mode lag 0 is the primary test,
- * so it's left out of the lead-lag family the other lags are corrected in.
+ * Every result one set of changes gives. In market-adjusted mode (`refit` is the market
+ * model's sample, refitted in every draw) lag 0 is the primary test, so it's left out of the
+ * lead-lag family the other lags are corrected in.
  */
-function view(changes: ChangePoint[], study: EventStudy | null, settings: Settings, resolution: Resolution, adjusted: boolean): View {
-  const lags = crossCorrelation(changes, settings.maxLag, resolution, { primaryLag: adjusted ? 0 : undefined });
+function view(changes: ChangePoint[], study: EventStudy | null, settings: Settings, resolution: Resolution, refit: RefitSample | null): View {
+  const lags = crossCorrelation(changes, settings.maxLag, resolution, refit ? { primaryLag: 0, refit } : {});
   return {
     changes,
     lags,
@@ -175,7 +180,8 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
     hourly: SETTINGS.hourly.defaultThreshold,
     daily: SETTINGS.daily.defaultThreshold,
   });
-  const [chosenReturns, setReturns] = useState<Returns>("raw");
+  // Market-adjusted by default, since the primary test always is; raw when adjustment isn't possible.
+  const [chosenReturns, setReturns] = useState<Returns>("adjusted");
   const benchmark = useBenchmark(initialBenchmark);
   // Seven days hold only about five daily closes, so that window is hourly only.
   const resolution: Resolution = days === 7 ? "hourly" : chosenResolution;
@@ -189,7 +195,7 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
     const rows = rowsSince(full, asOf - days * DAY_MS);
     const series = computeChanges(rows);
     const event = { thresholdPp: threshold, before: settings.eventBars, after: settings.eventBars };
-    return { full, rows, series, event, raw: view(series.changes, eventStudy(rows, series.changes, event), settings, resolution, false) };
+    return { full, rows, series, event, raw: view(series.changes, eventStudy(rows, series.changes, event), settings, resolution, null) };
   }, [hourly, daily, asOf, days, resolution, settings, threshold]);
 
   const benchSeries = isSelf ? null : benchmark.series;
@@ -208,12 +214,21 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
   const adjusted = useMemo(
     () =>
       chosenReturns === "adjusted" && market?.model && market.abnormal
-        ? view(market.abnormal, market.studies.abnormal, settings, resolution, true)
+        ? view(market.abnormal, market.studies.abnormal, settings, resolution, market.model.sample)
         : null,
     [chosenReturns, market, settings, resolution],
   );
 
   const returns: Returns = adjusted ? chosenReturns : "raw";
+  // How large a correlation the primary test could have detected, for a result that isn't significant.
+  const primary = market?.primary ?? null;
+  const detectable = useMemo(
+    () =>
+      primary?.p != null && primary.p >= ALPHA && market?.model && market.abnormal
+        ? detectableCorrelation(market.abnormal, resolution, { refit: market.model.sample })
+        : null,
+    [primary, market, resolution],
+  );
   const shown = returns === "adjusted" ? adjusted! : analysis.raw;
   const adjustment: Adjustment | null =
     returns === "adjusted" && market?.model
@@ -300,6 +315,11 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
             Download CSV
           </button>
         </div>
+        {chosenReturns === "adjusted" && returns === "raw" && (
+          <p role="status" className="mt-2 text-xs text-ink-secondary">
+            Showing raw returns: {lowerFirst(unavailable)}, so market-adjusted returns can’t be computed.
+          </p>
+        )}
 
         <Summary
           changes={changes}
@@ -312,7 +332,9 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
         />
 
         <PrimaryTest
-          primary={market?.primary ?? null}
+          primary={primary}
+          detectable={detectable}
+          fewRuns={resolution === "daily" && days < 90}
           unavailable={unavailable}
           benchmark={benchmark.active.symbol}
           stockSymbol={stockSymbol}
@@ -388,6 +410,9 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
 }
 
 // ---- Summary and flags ----
+
+/** Lowercases a sentence's first letter to continue a sentence, unless it starts a ticker (e.g. "TLT is …"). */
+const lowerFirst = (text: string) => (/^[A-Z][a-z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text);
 
 function sampleFlags(stats: CorrelationStats): string[] {
   const flags: string[] = [];
@@ -479,12 +504,18 @@ function Summary({
  */
 function PrimaryTest({
   primary,
+  detectable,
+  fewRuns,
   unavailable,
   benchmark,
   stockSymbol,
   settings,
 }: {
   primary: TestResult | null;
+  /** For a result that isn't significant: the smallest correlation this sample could detect. */
+  detectable: DetectableCorrelation | null;
+  /** About 10 runs of days (30 days daily), where the detectable size was validated as unreliable. */
+  fewRuns: boolean;
   /** Why market adjustment isn't available, when it isn't. */
   unavailable: string;
   benchmark: string;
@@ -503,7 +534,7 @@ function PrimaryTest({
       </div>
       {primary === null ? (
         <p className="mt-2 text-sm text-ink-secondary">
-          No primary test: {unavailable.charAt(0).toLowerCase() + unavailable.slice(1)}, so there are no market-adjusted returns
+          No primary test: {lowerFirst(unavailable)}, so there are no market-adjusted returns
           to test. Every result below is exploratory.
         </p>
       ) : (
@@ -517,6 +548,7 @@ function PrimaryTest({
             )}
             .
           </p>
+          {detectable && <DetectableLine detectable={detectable} fewRuns={fewRuns} />}
           <p className="mt-1 text-xs text-ink-muted">
             {missing ?? methodText(primary)} This is the question the page is set up to answer, chosen before looking at the data,
             so it’s judged on its own p-value. Everything else on the page is exploratory: corrected for the other tests in its
@@ -526,6 +558,42 @@ function PrimaryTest({
         </>
       )}
     </div>
+  );
+}
+
+/** The smallest correlation the primary test could detect with 80% power in this sample. */
+// From power.test.ts, on validation seeds: with 20 daily intervals (about 10 runs of days), effects of the
+// size reported were detected in 27 of 60 fresh samples, far below the 80% the figure claims.
+const UNRELIABLE_DAILY = "45% (27 of 60, 95% range 33–58%)";
+
+function DetectableLine({ detectable, fewRuns }: { detectable: DetectableCorrelation; fewRuns: boolean }) {
+  const units = plural(detectable.units, detectable.unit === "day_run" ? ["run of days", "runs of days"] : ["session", "sessions"]);
+  const power = `${Math.round(detectable.power * 100)}%`;
+  return (
+    <p className="mt-1 text-sm text-ink-secondary">
+      {detectable.r === null ? (
+        <>
+          With these {units}, only a correlation stronger than about ±{detectable.max.toFixed(1)} would be detected {power} of the
+          time, so this result says little either way.
+        </>
+      ) : (
+        <>
+          With these {units}, a correlation of about <span className="font-semibold text-ink">±{detectable.r.toFixed(2)}</span> or
+          larger would be detected {power} of the time, so this result says little about smaller ones.
+        </>
+      )}
+      <span className="mt-0.5 block text-xs text-ink-muted">
+        A rough guide, simulated from this sample: {detectable.samples.toLocaleString("en-US")} versions with Kalshi’s changes and
+        the stock’s volatility as observed and an effect built in, allowing for how uncertain that volatility is.
+        {fewRuns && detectable.r !== null && (
+          <>
+            {" "}
+            <strong className="font-medium text-ink-secondary">Unreliable with this few runs of days:</strong> in simulations with
+            20 daily intervals, effects of the size shown were detected only {UNRELIABLE_DAILY} of the time, not 80%.
+          </>
+        )}
+      </span>
+    </p>
   );
 }
 

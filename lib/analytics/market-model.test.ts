@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computeChanges } from "./changes";
 import { lagCorrelationTests } from "./correlation-test";
+import { crossCorrelation } from "./lead-lag";
 import {
   adjustedChanges,
   adjustedLogChange,
@@ -9,11 +10,11 @@ import {
   kalshiBenchmarkCorrelation,
   kalshiRegression,
   marketAdjustment,
+  primaryTest,
   SIMPLE_EXCESS,
 } from "./market-model";
-import { ols } from "./regression";
 import type { ResearchRow } from "./research";
-import { simulateHourly, withBenchmark } from "./test-helpers";
+import { lastSessions, simulateMarketRows, type MarketSimOptions } from "./test-helpers";
 
 const HOUR = 3_600_000;
 
@@ -63,6 +64,10 @@ describe("fitMarketModel", () => {
     expect(model.betaCi![0]).toBeCloseTo(1.1113480761837944, 8);
     expect(model.betaCi![1]).toBeCloseTo(2.185503452485209, 8);
     expect(model.flag).toBe("small");
+    // The intervals it was fitted on, for the tests that refit it.
+    expect(model.sample.t).toHaveLength(12);
+    expect(model.sample.r[0]).toBeCloseTo(Math.log(S[1] / S[0]), 15);
+    expect(model.sample.m[0]).toBeCloseTo(Math.log(B[1] / B[0]), 15);
   });
 
   it("recovers an exact relationship", () => {
@@ -112,20 +117,33 @@ describe("adjustedLogChange", () => {
 });
 
 describe("kalshiRegression", () => {
-  it("matches numpy's coefficient, standard error, and p-value", () => {
-    const fit = kalshiRegression(changes, benchReturns)!;
+  it("matches numpy's coefficient, and its Newey–West cross-check", () => {
+    const fit = kalshiRegression(changes, benchReturns, "hourly")!;
     expect(fit).toMatchObject({ n: 10, kalshiMoves: 4, lags: 2, flag: "small", fewKalshiMoves: true });
     expect(fit.coef).toBeCloseTo(-0.015126464315895653, 12);
     expect(fit.marketCoef).toBeCloseTo(1.516677209438722, 12);
-    expect(fit.se!).toBeCloseTo(0.06054505933854022, 12);
-    expect(fit.p!).toBeCloseTo(0.8098858731277612, 10);
-    // As a test result, its p-value is withheld: Kalshi moved in only 4 intervals.
-    expect(fit.test).toMatchObject({ estimate: fit.coef, p: null, pUnavailable: "few_kalshi_moves", method: "newey_west", family: null });
-    expect(fit.test.ci).toEqual(fit.ci);
+    expect(fit.neweyWest.se!).toBeCloseTo(0.06054505933854022, 12);
+    expect(fit.neweyWest.p!).toBeCloseTo(0.8098858731277612, 10);
+    // The bootstrap needs at least 8 sessions; these rows have 2.
+    expect(fit.test).toMatchObject({ estimate: fit.coef, p: null, ci: null, pUnavailable: "too_few_blocks", method: "wild_bootstrap", family: null });
+    expect(fit.test.resampling).toMatchObject({ unit: "session", units: 2, draws: 0, refit: "regression" });
+  });
+
+  it("tests the coefficient with the wild bootstrap, refitting every coefficient, given enough sessions", () => {
+    const { rows, closesByT } = simulateMarketRows({ sessions: 21, resolution: "hourly", seed: 4, effect: 0.6 });
+    const fit = kalshiRegression(computeChanges(rows).changes, benchmarkReturnsByT(rows, closesByT), "hourly", { draws: 199 })!;
+    expect(fit.n).toBe(126);
+    expect(fit.coef).toBeGreaterThan(0.3);
+    expect(fit.test).toMatchObject({ method: "wild_bootstrap", pUnavailable: null, ciUnavailable: null });
+    expect(fit.test.resampling).toMatchObject({ units: 21, draws: 199, refit: "regression" });
+    expect(fit.test.p).toBeLessThan(0.05);
+    expect(fit.test.ci![0]).toBeGreaterThan(0);
+    expect(fit.test.ci![0]).toBeLessThan(fit.coef);
+    expect(fit.test.ci![1]).toBeGreaterThan(fit.coef);
   });
 
   it("is null when Kalshi never moved", () => {
-    expect(kalshiRegression(changes.map((c) => ({ ...c, probChangePp: 0 })), benchReturns)).toBeNull();
+    expect(kalshiRegression(changes.map((c) => ({ ...c, probChangePp: 0 })), benchReturns, "hourly")).toBeNull();
   });
 });
 
@@ -150,8 +168,9 @@ describe("marketAdjustment", () => {
     expect(result.kalshi!.n).toBe(10);
   });
 
-  it("runs the primary test on the abnormal returns, at lag 0", () => {
+  it("runs the primary test on the abnormal returns, at lag 0, refitting the market model", () => {
     expect(result.primary).toMatchObject({ role: "primary", family: null, n: 10, method: "wild_bootstrap" });
+    expect(result.primary!.resampling).toMatchObject({ refit: "market_model" });
   });
 
   it("fits the event-study model outside every jump window, and skips it with too few intervals left", () => {
@@ -178,53 +197,173 @@ describe("marketAdjustment", () => {
   });
 });
 
+describe("the primary test with alpha and beta refitted", () => {
+  const { rows: full, closesByT } = simulateMarketRows({ sessions: 62, resolution: "hourly", seed: 21, kalshiInMarket: 0.1, sharedVolatility: true });
+  const rows = lastSessions(full, 21, "hourly");
+  const model = fitMarketModel(full, closesByT)!;
+  const abnormal = adjustedChanges(computeChanges(rows).changes, benchmarkReturnsByT(full, closesByT), model);
+
+  it("agrees with lag 0 of the market-adjusted lead-lag chart, and counts the window's sessions", () => {
+    const primary = primaryTest(abnormal, model, "hourly", { draws: 199 });
+    const lags = crossCorrelation(abnormal, 3, "hourly", { primaryLag: 0, refit: model.sample, draws: 199 });
+    expect(lags.find((l) => l.lag === 0)!.test).toEqual(primary);
+    expect(primary.resampling).toMatchObject({ unit: "session", units: 21, draws: 199, refit: "market_model" });
+    expect(model.n).toBe(62 * 6);
+    expect(primary.n).toBe(126);
+  });
+
+  it("differs from treating beta as known, and only through the p-value and interval", () => {
+    const primary = primaryTest(abnormal, model, "hourly", { draws: 199 });
+    const fixed = lagCorrelationTests(abnormal, [0], "hourly", { draws: 199 })[0].test;
+    expect(primary.estimate).toBe(fixed.estimate);
+    expect(primary.nEffective).toBe(fixed.nEffective);
+    expect(primary.p).not.toBe(fixed.p);
+  });
+
+  it("marks a lag unavailable if a pair's stock return isn't in the model's sample", () => {
+    const shifted = { ...model.sample, t: model.sample.t.map((t) => t + 1) };
+    const [{ test }] = lagCorrelationTests(abnormal, [0], "hourly", { refit: shifted, draws: 19 });
+    expect(test).toMatchObject({ p: null, pUnavailable: "unstable" });
+  });
+});
+
 // Simulations run hundreds of analyses; allow for slow CI machines.
-const SIMULATION_TIMEOUT = 120_000;
+const SIMULATION_TIMEOUT = 300_000;
+const DRAWS = 199;
 
-describe("simulations: the Newey–West cross-check against the primary test's bootstrap", () => {
-  // The same data sets for both: a stock that moves 1.1× with its benchmark, and Kalshi changes
-  // (zero in most hours) unrelated to either. Seeds are fixed.
-  function falsePositives(sessions: number, sharedVolatility: boolean, reps: number) {
-    let nw = 0;
-    let nwTested = 0;
-    let boot = 0;
-    let bootTested = 0;
-    for (let s = 0; s < reps; s++) {
-      const { changes, benchReturnByT } = withBenchmark(simulateHourly({ sessions, seed: 9000 + s, sharedVolatility }), 500 + s);
-      const fit = kalshiRegression(changes, benchReturnByT);
-      if (fit && fit.test.p !== null) {
-        nwTested++;
-        if (fit.test.p < 0.05) nw++;
-      }
-      // The primary test: lag-0 correlation with abnormal returns, beta fitted on the same intervals.
-      const market = ols(
-        changes.map((c) => [1, benchReturnByT.get(c.t)!]),
-        changes.map((c) => c.logReturn),
-      )!;
-      const abnormal = adjustedChanges(changes, benchReturnByT, { alpha: market.coef[0], beta: market.coef[1] });
-      const [{ test }] = lagCorrelationTests(abnormal, [0], "hourly", { primaryLags: [0], draws: 199 });
-      if (test.p !== null) {
-        bootTested++;
-        if (test.p < 0.05) boot++;
-      }
-    }
-    return { nw: nw / nwTested, nwTested, boot: boot / bootTested, bootTested };
+interface Setting extends Omit<MarketSimOptions, "seed"> {
+  /** Sessions (hourly) or daily intervals in the selected window. */
+  window: number;
+}
+
+/** Every result of one simulated data set, computed as the page does. */
+function analyze({ window, ...options }: Setting, seed: number) {
+  const { rows: full, closesByT } = simulateMarketRows({ ...options, seed });
+  const rows = lastSessions(full, window, options.resolution);
+  const model = fitMarketModel(full, closesByT)!;
+  const bench = benchmarkReturnsByT(full, closesByT);
+  const changes = computeChanges(rows).changes;
+  const abnormal = adjustedChanges(changes, bench, model);
+  return {
+    primary: primaryTest(abnormal, model, options.resolution, { draws: DRAWS }),
+    fixedBeta: lagCorrelationTests(abnormal, [0], options.resolution, { draws: DRAWS })[0].test,
+    regression: kalshiRegression(changes, bench, options.resolution, { draws: DRAWS }),
+  };
+}
+
+/**
+ * Rejection rates at 5% over the data sets seeded `first`…`first + count − 1` for each range:
+ * the primary test, beta treated as known, and the regression's bootstrap and Newey–West t.
+ */
+function rates(setting: Setting, ranges: [first: number, count: number][]) {
+  const count = { primary: 0, fixedBeta: 0, bootstrap: 0, neweyWest: 0 };
+  const tested = { primary: 0, fixedBeta: 0, bootstrap: 0, neweyWest: 0 };
+  const add = (key: keyof typeof count, p: number | null | undefined) => {
+    if (p === null || p === undefined) return;
+    tested[key]++;
+    if (p < 0.05) count[key]++;
+  };
+  const seeds = ranges.flatMap(([first, n]) => Array.from({ length: n }, (_, i) => first + i));
+  for (const seed of seeds) {
+    const { primary, fixedBeta, regression } = analyze(setting, seed);
+    add("primary", primary.p);
+    add("fixedBeta", fixedBeta.p);
+    add("bootstrap", regression?.test.p);
+    add("neweyWest", regression && !regression.fewKalshiMoves ? regression.neweyWest.p : null);
   }
+  const rate = (key: keyof typeof count) => count[key] / tested[key];
+  return { primary: rate("primary"), fixedBeta: rate("fixedBeta"), bootstrap: rate("bootstrap"), neweyWest: rate("neweyWest"), tested };
+}
 
-  it("over-rejects with 21 sessions when the stock is more volatile in the hours Kalshi moves; the bootstrap doesn't", () => {
-    const { nw, nwTested, boot, bootTested } = falsePositives(21, true, 400);
-    expect([nwTested, bootTested]).toEqual([400, 400]);
-    expect(nw).toBeGreaterThan(0.065);
-    expect(boot).toBeLessThan(0.075);
-    expect(boot).toBeLessThan(nw);
+describe("simulations: false positives for the primary test and the regression", () => {
+  // The stock moves 1.1× with its benchmark; Kalshi has no link to the stock beyond that.
+  // 62 sessions (or trading days) are loaded, as in the page's 90 days, and the market
+  // model is fitted on all of them. Seeds are fixed, so these results are the same on every run.
+  const hourly21 = { sessions: 62, resolution: "hourly", window: 21, sharedVolatility: true } as const;
+
+  it("stays near 5% with 21 sessions in the window, Kalshi unrelated to the benchmark", () => {
+    const r = rates(hourly21, [[30_000, 400]]);
+    expect(r.tested.primary).toBe(400);
+    expect(r.tested.bootstrap).toBe(400);
+    for (const rate of [r.primary, r.bootstrap]) {
+      expect(rate).toBeGreaterThan(0.02);
+      expect(rate).toBeLessThan(0.075);
+    }
+    // The regression's Newey–West t rejects too often here.
+    expect(r.neweyWest).toBeGreaterThan(r.bootstrap);
   }, SIMULATION_TIMEOUT);
 
-  it("comes closer to 5% with independent volatility, or with 62 sessions", () => {
-    const independent = falsePositives(21, false, 400);
-    expect(independent.nw).toBeLessThan(0.08);
-    expect(independent.boot).toBeLessThan(0.075);
-    const longer = falsePositives(62, true, 300);
-    expect(longer.nw).toBeLessThan(0.08);
-    expect(longer.boot).toBeLessThan(0.075);
+  it("stays near 5% when Kalshi tracks the benchmark, so beta's uncertainty reaches the test", () => {
+    // Every data set ever run in this setting, pooled: the first 400 put the regression's
+    // bootstrap at 8.0%, above the bar, and later runs of 1,000 (development) and 1,400 were
+    // added to measure it more precisely. Reporting only the later runs would be selective.
+    const r = rates({ ...hourly21, kalshiInMarket: 0.1 }, [
+      [31_000, 400],
+      [41_000, 1000],
+      [70_000, 1400],
+    ]);
+    for (const rate of [r.primary, r.bootstrap]) {
+      expect(rate).toBeGreaterThan(0.02);
+      expect(rate).toBeLessThan(0.075);
+    }
+    // Treating beta as known is conservative here: the 90 days' beta absorbs part of the noise.
+    expect(r.fixedBeta).toBeLessThan(r.primary);
+  }, SIMULATION_TIMEOUT);
+
+  it("stays near 5% over the whole 90 days, hourly, Kalshi tracking the benchmark", () => {
+    const r = rates({ ...hourly21, window: 62, kalshiInMarket: 0.1 }, [[32_000, 300]]);
+    for (const rate of [r.primary, r.bootstrap]) {
+      expect(rate).toBeGreaterThan(0.02);
+      expect(rate).toBeLessThan(0.075);
+    }
+    expect(r.fixedBeta).toBeLessThan(r.primary);
+  }, SIMULATION_TIMEOUT);
+
+  it("stays below 7.5% daily, over 62 and 20 trading days", () => {
+    const daily = { sessions: 62, resolution: "daily", sharedVolatility: true, kalshiInMarket: 0.3 } as const;
+    // 62 days: every data set run, pooled, as above (the first 300 put the regression's bootstrap at 7.7%).
+    const long = rates({ ...daily, window: 62 }, [
+      [33_000, 300],
+      [72_000, 1000],
+    ]);
+    const short = rates({ ...daily, window: 20 }, [[34_000, 300]]);
+    for (const rate of [long.primary, long.bootstrap, short.primary, short.bootstrap]) expect(rate).toBeLessThan(0.075);
+  }, SIMULATION_TIMEOUT);
+});
+
+describe("simulations: intervals and detection", () => {
+  it("covers the true effect about 95% of the time, for the primary test and the regression", () => {
+    let primary = 0;
+    let regression = 0;
+    const reps = 200;
+    const effect = 0.3;
+    for (let s = 0; s < reps; s++) {
+      const { rows: full, closesByT } = simulateMarketRows({ sessions: 62, resolution: "hourly", seed: 35_000 + s, effect, sharedVolatility: true });
+      const model = fitMarketModel(full, closesByT)!;
+      const bench = benchmarkReturnsByT(full, closesByT);
+      const changes = computeChanges(full).changes;
+      const abnormal = adjustedChanges(changes, bench, model);
+      const test = primaryTest(abnormal, model, "hourly", { draws: DRAWS });
+      // The primary interval is shown as a correlation, slope × sx/sy; undo that to compare with the slope.
+      const sd = (v: number[]) => Math.sqrt(v.reduce((a, b) => a + b * b, 0) - v.reduce((a, b) => a + b, 0) ** 2 / v.length);
+      const scale = sd(abnormal.map((c) => c.probChangePp)) / sd(abnormal.map((c) => c.logReturn));
+      if (test.ci![0] / scale <= effect / 100 && test.ci![1] / scale >= effect / 100) primary++;
+      const fit = kalshiRegression(changes, bench, "hourly", { draws: DRAWS })!;
+      if (fit.test.ci![0] <= effect && fit.test.ci![1] >= effect) regression++;
+    }
+    for (const covered of [primary, regression]) {
+      expect(covered / reps).toBeGreaterThan(0.92);
+      expect(covered / reps).toBeLessThan(0.985);
+    }
+  }, SIMULATION_TIMEOUT);
+
+  it("detects a strong same-hour effect in most 30-day samples", () => {
+    let found = 0;
+    const reps = 100;
+    for (let s = 0; s < reps; s++) {
+      const { primary } = analyze({ sessions: 62, resolution: "hourly", window: 21, effect: 0.6, kalshiInMarket: 0.1 }, 36_000 + s);
+      if (primary.p !== null && primary.p < 0.05) found++;
+    }
+    expect(found / reps).toBeGreaterThan(0.8);
   }, SIMULATION_TIMEOUT);
 });

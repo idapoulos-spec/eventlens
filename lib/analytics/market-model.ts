@@ -1,11 +1,13 @@
 import { computeChanges, type ChangePoint } from "./changes";
 import { correlationStats, type CorrelationStats } from "./correlation";
-import { lagCorrelationTests } from "./correlation-test";
+import { blockLayout, lagCorrelationTests, WILD_DRAWS, weightPatterns, type RefitSample } from "./correlation-test";
 import { eventStudy, eventWindowRows, type EventStudy, type EventStudyOptions, type LogChange } from "./event-study";
 import type { TestResult } from "./inference";
+import { seededRng } from "./random";
 import { confidenceInterval95, neweyWestLags, ols } from "./regression";
 import type { ResearchRow, Resolution } from "./research";
-import { MIN_KALSHI_MOVES, MIN_PAIRS, sampleFlag, type SampleFlag } from "./sample";
+import { MIN_BOOTSTRAP_BLOCKS, MIN_KALSHI_MOVES, MIN_PAIRS, sampleFlag, type SampleFlag } from "./sample";
+import { drawWeights, frame, wildTest } from "./wild-bootstrap";
 
 /**
  * Market adjustment: the stock's return minus what a benchmark (e.g. SPY) explains. The
@@ -31,6 +33,8 @@ export interface MarketModel extends ReturnAdjustment {
   /** Intervals the model was fitted on. */
   n: number;
   flag: SampleFlag;
+  /** Those intervals, for tests that refit the model in every draw. */
+  sample: RefitSample;
 }
 
 /** Benchmark close at each row's exact time, or null where the benchmark has no bar then. */
@@ -68,7 +72,7 @@ export function fitMarketModel(
   const bench = benchmarkReturnsByT(rows, closesByT);
   const X: number[][] = [];
   const y: number[] = [];
-  const steps: number[] = [];
+  const sample: RefitSample = { t: [], step: [], r: [], m: [] };
   computeChanges(rows).intervals.forEach((interval, i) => {
     const rm = bench.get(interval.t);
     if (interval.exclusion === "first_row" || interval.exclusion === "non_trading") return;
@@ -76,11 +80,14 @@ export function fitMarketModel(
     // In percent, so the intercept is in % per interval and the numbers stay well scaled.
     X.push([1, rm * 100]);
     y.push(interval.logReturn * 100);
-    steps.push(interval.step);
+    sample.t.push(interval.t);
+    sample.step.push(interval.step);
+    sample.r.push(interval.logReturn);
+    sample.m.push(rm);
   });
   const n = y.length;
   if (n < MIN_PAIRS) return null;
-  const fit = ols(X, y, { steps, lags: neweyWestLags(n) });
+  const fit = ols(X, y, { steps: sample.step, lags: neweyWestLags(n) });
   if (!fit) return null;
   return {
     alpha: fit.coef[0] / 100,
@@ -89,6 +96,7 @@ export function fitMarketModel(
     r2: fit.r2,
     n,
     flag: sampleFlag(n),
+    sample,
   };
 }
 
@@ -121,10 +129,6 @@ export function adjustedLogChange(
 export interface KalshiRegression {
   /** Stock return (%) per 1 pp Kalshi change in the same interval, with the benchmark's return held fixed. */
   coef: number;
-  se: number | null;
-  ci: [number, number] | null;
-  /** Two-sided p-value for coef = 0. */
-  p: number | null;
   /** The benchmark's coefficient in the same regression. */
   marketCoef: number;
   n: number;
@@ -132,59 +136,92 @@ export interface KalshiRegression {
   lags: number;
   kalshiMoves: number;
   flag: SampleFlag;
-  /** Fewer than MIN_KALSHI_MOVES non-zero Kalshi changes: too few to judge significance. */
+  /** Fewer than MIN_KALSHI_MOVES non-zero Kalshi changes: too few to show the Newey–West p-value. */
   fewKalshiMoves: boolean;
-  /** The Kalshi coefficient as a test result: a cross-check of the primary test, not corrected. */
+  /**
+   * The Newey–West t (Student's t, n − 3 df), kept as a cross-check of the bootstrap: a
+   * large-sample approximation that rejects too often when the stock is more volatile in the
+   * hours Kalshi moves (market-model.test.ts). Not to be shown when `fewKalshiMoves`, or without
+   * the bootstrap's p-value.
+   */
+  neweyWest: { se: number | null; ci: [number, number] | null; p: number | null };
+  /** The Kalshi coefficient tested by the wild bootstrap: a cross-check of the primary test, not corrected. */
   test: TestResult;
+}
+
+export interface KalshiRegressionOptions {
+  draws?: number;
 }
 
 /**
  * OLS of the stock's return (%) on the benchmark's return (%) and the Kalshi change (pp),
- * over the usable intervals that have a benchmark return. Standard errors are Newey–West
- * (Bartlett, lags in grid slots) with an HC3-style leverage correction, since Kalshi is
- * zero in most intervals and the coefficient rests on the few where it moved. Null with
- * fewer than MIN_PAIRS intervals, or if Kalshi or the benchmark never moved.
+ * over the usable intervals that have a benchmark return. The Kalshi coefficient is tested
+ * with the same wild bootstrap as the correlations (wild-bootstrap.ts), with the null
+ * imposed and every coefficient, alpha and beta included, refitted in every draw; the
+ * statistic is its t with Newey–West (Bartlett, lags in grid slots) and HC3-style errors,
+ * since Kalshi is zero in most intervals and the coefficient rests on the few where it
+ * moved. Null with fewer than MIN_PAIRS intervals, or if Kalshi or the benchmark never moved.
  */
-export function kalshiRegression(changes: ChangePoint[], benchReturnByT: ReadonlyMap<number, number>): KalshiRegression | null {
-  const used = changes.filter((c) => benchReturnByT.has(c.t));
+export function kalshiRegression(
+  changes: ChangePoint[],
+  benchReturnByT: ReadonlyMap<number, number>,
+  resolution: Resolution,
+  { draws = WILD_DRAWS }: KalshiRegressionOptions = {},
+): KalshiRegression | null {
+  const used = changes.filter((c) => benchReturnByT.has(c.t)).sort((a, b) => a.step - b.step);
   const n = used.length;
   if (n < MIN_PAIRS) return null;
+  const market = used.map((c) => benchReturnByT.get(c.t)! * 100);
+  const x = used.map((c) => c.probChangePp);
+  const r = used.map((c) => c.logReturn * 100);
+  const steps = used.map((c) => c.step);
   const fit = ols(
-    used.map((c) => [1, benchReturnByT.get(c.t)! * 100, c.probChangePp]),
-    used.map((c) => c.logReturn * 100),
-    { steps: used.map((c) => c.step), lags: neweyWestLags(n) },
+    used.map((_, i) => [1, market[i], x[i]]),
+    r,
+    { steps, lags: neweyWestLags(n) },
   );
   if (!fit) return null;
-  const kalshiMoves = used.filter((c) => c.probChangePp !== 0).length;
+  const kalshiMoves = x.filter((v) => v !== 0).length;
   const fewKalshiMoves = kalshiMoves < MIN_KALSHI_MOVES;
-  const ci = confidenceInterval95(fit, 2);
-  const p = fewKalshiMoves ? null : fit.p[2];
+
+  const layout = blockLayout(used, resolution);
+  const enough = layout.blocks >= MIN_BOOTSTRAP_BLOCKS;
+  const f = frame({ r, m: market, block: layout.block }, { index: Int32Array.from(used, (_, i) => i), x, steps, market: true });
+  const unavailable: TestResult["pUnavailable"] = !enough ? "too_few_blocks" : f === null ? "unstable" : null;
+  const result = unavailable === null ? wildTest(f!, drawWeights(layout.blocks, draws, seededRng("wild-bootstrap"))) : null;
+  const patterns = weightPatterns(layout.blocks);
   return {
     coef: fit.coef[2],
-    se: fit.se[2],
-    ci,
-    p: fit.p[2],
     marketCoef: fit.coef[1],
     n,
     lags: fit.lags,
     kalshiMoves,
     flag: sampleFlag(n),
     fewKalshiMoves,
+    neweyWest: { se: fit.se[2], ci: confidenceInterval95(fit, 2), p: fit.p[2] },
     test: {
       estimate: fit.coef[2],
-      ci,
-      p,
+      ci: result?.ci ?? null,
+      p: result?.p ?? null,
       holm: null,
       bh: null,
       role: "exploratory",
       family: null,
-      method: "newey_west",
-      interval: "newey_west",
-      resampling: null,
+      method: "wild_bootstrap",
+      interval: "wild_bootstrap",
+      resampling: {
+        unit: layout.unit,
+        units: layout.blocks,
+        runDays: layout.runDays,
+        draws: result ? draws : 0,
+        arrangements: patterns,
+        minP: Math.max(result ? 1 / (draws + 1) : 0, patterns === null ? 0 : 1 / patterns),
+        refit: "regression",
+      },
       n,
       nEffective: null,
-      pUnavailable: fewKalshiMoves ? "few_kalshi_moves" : p === null ? "unstable" : null,
-      ciUnavailable: ci === null ? "unstable" : null,
+      pUnavailable: unavailable,
+      ciUnavailable: unavailable ?? (result?.ci ? null : "unstable"),
     },
   };
 }
@@ -244,11 +281,11 @@ export interface MarketAdjustment {
 
 /**
  * The primary test: same-interval (lag 0) correlation of Kalshi changes with market-adjusted
- * returns. It uses the same draws as lag 0 of the market-adjusted lead-lag chart, so the two
- * always agree.
+ * returns, with alpha and beta refitted in every draw over the model's sample. It uses the
+ * same draws as lag 0 of the market-adjusted lead-lag chart, so the two always agree.
  */
-export function primaryTest(abnormal: ChangePoint[], resolution: Resolution): TestResult {
-  return lagCorrelationTests(abnormal, [0], resolution, { primaryLags: [0] })[0].test;
+export function primaryTest(abnormal: ChangePoint[], model: MarketModel, resolution: Resolution, { draws }: { draws?: number } = {}): TestResult {
+  return lagCorrelationTests(abnormal, [0], resolution, { primaryLags: [0], refit: model.sample, draws })[0].test;
 }
 
 /** Every market-adjusted result for one window, resolution, and jump size. */
@@ -266,8 +303,8 @@ export function marketAdjustment({ full, rows, changes, closesByT, event, resolu
     abnormal,
     excess,
     missingBenchmark: changes.length - excess.length,
-    primary: abnormal && primaryTest(abnormal, resolution),
-    kalshi: kalshiRegression(changes, benchReturns),
+    primary: model && abnormal && primaryTest(abnormal, model, resolution),
+    kalshi: kalshiRegression(changes, benchReturns, resolution),
     kalshiVsBenchmark: kalshiBenchmarkCorrelation(changes, benchReturns, resolution),
     studies: {
       abnormal: eventModel && eventStudy(rows, changes, event, adjustedLogChange(rows, closesByT, eventModel)),

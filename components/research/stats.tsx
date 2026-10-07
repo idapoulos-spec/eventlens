@@ -46,7 +46,13 @@ export function methodText(test: TestResult): string {
       if (!r || r.draws === 0) return "Wild bootstrap.";
       const per = r.unit === "day_run" ? `run of ${r.runDays} trading days` : "session";
       const count = plural(r.units, r.unit === "day_run" ? ["run", "runs"] : ["session", "sessions"]);
-      return `Wild bootstrap with one random weight per ${per} (${count}, ${r.draws.toLocaleString("en-US")} draws), so the smallest possible p is ${formatMinP(r.minP)}. The interval holds every value the same test wouldn’t reject.`;
+      const refit =
+        r.refit === "market_model"
+          ? " Alpha and beta are refitted on the full 90 days in every draw (each of its sessions weighted too), so the uncertainty in beta is included."
+          : r.refit === "regression"
+            ? " Every coefficient, the benchmark’s included, is refitted in every draw."
+            : "";
+      return `Wild bootstrap with one random weight per ${per} (${count}, ${r.draws.toLocaleString("en-US")} draws), so the smallest possible p is ${formatMinP(r.minP)}. The interval holds every value the same test wouldn’t reject.${refit}`;
     }
     case "sign_flip":
       return r && r.draws > 0
@@ -54,8 +60,6 @@ export function methodText(test: TestResult): string {
             r.draws === 2 ** r.units ? `all ${r.draws.toLocaleString("en-US")} sign patterns, exact` : `${r.draws.toLocaleString("en-US")} random sign patterns`
           }), so the smallest possible p is ${formatMinP(r.minP)}; bootstrap-t interval over events.`
         : "Sign-flip test over events.";
-    case "newey_west":
-      return "t test with Newey–West and HC3-corrected standard errors.";
   }
 }
 
@@ -73,8 +77,6 @@ export function unavailableText(test: TestResult): string | null {
       return "Fewer than 10 matching intervals.";
     case "no_variation":
       return "One series didn’t vary, so there’s nothing to test.";
-    case "few_kalshi_moves":
-      return "Kalshi moved in fewer than 10 intervals, too few to judge.";
     case "unstable":
       return "A single interval decides the estimate, so its uncertainty can’t be estimated.";
   }

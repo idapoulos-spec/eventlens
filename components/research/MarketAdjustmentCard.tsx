@@ -21,6 +21,12 @@ import { Caption, Flag, fmtR, plural, Table } from "./parts";
 import { formatCi, formatP, methodText, RoleBadge, unavailableText } from "./stats";
 import type { Benchmark, BenchmarkChoice } from "./useBenchmark";
 
+// From market-model.test.ts ("simulations: false positives for the primary test and the regression").
+const NEWEY_WEST_NOTE =
+  "in 400 simulated data sets of 21 hourly sessions (about 30 days) with no relationship, where the stock was more volatile in the hours Kalshi moved, it came out below 0.05 in 8.0% of them, against 4.5% for this bootstrap.";
+
+const verdictText = (p: number) => (p < 0.05 ? "distinguishable" : "not distinguishable");
+
 /** At or above this R², the benchmark explains nearly all of the stock's moves. */
 const NEAR_DUPLICATE_R2 = 0.95;
 
@@ -327,17 +333,13 @@ function KalshiRegressionNote({
     lead = "Not enough intervals with Kalshi movement to fit the regression (at least 10 intervals with some Kalshi movement are needed).";
   } else {
     const pct = (v: number) => formatSigned(v, 3, "%");
-    const { test } = fit;
+    const { test, neweyWest } = fit;
     lead = (
       <>
         With {bench}’s return held fixed, each 1 pp rise in the chance of YES went with a{" "}
         <span className="font-semibold text-ink">{pct(fit.coef)}</span> {stockSymbol} return in the same {noun[0]}
         {test.ci && ` (95% CI ${formatCi(test.ci, pct)})`}.{" "}
-        {test.p !== null
-          ? `p = ${formatP(test.p)}: ${test.p < 0.05 ? "distinguishable" : "not distinguishable"} from zero at the 5% level.`
-          : test.pUnavailable === "few_kalshi_moves"
-            ? `Kalshi moved in only ${plural(fit.kalshiMoves, noun)}, too few to judge whether this differs from zero.`
-            : unavailableText(test)}
+        {test.p !== null ? `p = ${formatP(test.p)}: ${verdictText(test.p)} from zero at the 5% level.` : unavailableText(test)}
       </>
     );
     caveats = (
@@ -345,12 +347,16 @@ function KalshiRegressionNote({
         A cross-check of the primary test (which uses beta from the full 90 days), not a separate finding, so it isn’t
         corrected. Regression of {stockSymbol}’s return on {bench}’s return and the Kalshi change over this window’s{" "}
         {plural(fit.n, ["interval", "intervals"])} (Kalshi moved in {fit.kalshiMoves}); {bench}’s coefficient here is{" "}
-        {fit.marketCoef.toFixed(2)}. {methodText(test)} Newey–West with {plural(fit.lags, ["lag", "lags"])} (no lag reaches
-        across {resolution === "hourly" ? "a night or weekend" : "a missing session"}); HC3 corrects for {noun[1]} without a
-        Kalshi move, which let a few large moves carry the estimate. Unlike the primary test’s bootstrap, this p-value relies on
-        a large-sample approximation. In simulated data sets of 21 hourly sessions (about 30 days) with no relationship, where
-        the stock was more volatile in the hours Kalshi moved, it came out below 0.05 in 8.8% of 400, against 4.8% for the
-        primary test’s bootstrap on the same data sets. This describes how the two moved together, not cause and effect.
+        {fit.marketCoef.toFixed(2)}. {methodText(test)} The statistic is the coefficient’s t with Newey–West errors (
+        {plural(fit.lags, ["lag", "lags"])}; no lag reaches across {resolution === "hourly" ? "a night or weekend" : "a missing session"})
+        and HC3’s correction for {noun[1]} without a Kalshi move, which let a few large moves carry the estimate.{" "}
+        {test.p !== null && neweyWest.p !== null && !fit.fewKalshiMoves && (
+          <>
+            For comparison, the same t read from a t distribution gives p = {formatP(neweyWest.p)}, a large-sample approximation
+            that can reject too often: {NEWEY_WEST_NOTE}{" "}
+          </>
+        )}
+        This describes how the two moved together, not cause and effect.
       </>
     );
   }

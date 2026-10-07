@@ -101,6 +101,7 @@ function groupTests(group: EventGroup, baseline: number[] | null, offsets: numbe
     draws: n >= MIN_TEST_EVENTS ? draws : 0,
     arrangements: patterns,
     minP: Math.max(exact ? 0 : 1 / (draws + 1), patterns === null ? 0 : 1 / patterns),
+    refit: null,
   };
   const estimateAt = (k: number) => (group.mean && baseline ? group.mean[k] - baseline[k] : null);
 
