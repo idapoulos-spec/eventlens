@@ -109,7 +109,9 @@ describe("raw-returns correlation tests", () => {
     const hourly = lagCorrelationTests(simulateHourly({ sessions: 21, seed: 11, beta: 0.3, sharedVolatility: true }), [-1, 0, 2], "hourly", { draws: 199 });
     const daily = lagCorrelationTests(simulateDaily({ sessions: 62, seed: 12, beta: 0.2, sharedVolatility: true }), [0, 1], "daily");
     [...hourly, ...daily].forEach((l, i) => {
-      expect(l).toMatchObject({ lag: before[i].lag, n: before[i].n, r: before[i].r });
+      // r to 12 places: the last bits of floating-point results can differ between machines.
+      expect(l).toMatchObject({ lag: before[i].lag, n: before[i].n });
+      expect(l.r).toBeCloseTo(before[i].r, 12);
       expect(l.test.p).toBe(before[i].p);
       expect(l.test.ci![0]).toBeCloseTo(before[i].ci[0], 9);
       expect(l.test.ci![1]).toBeCloseTo(before[i].ci[1], 9);
