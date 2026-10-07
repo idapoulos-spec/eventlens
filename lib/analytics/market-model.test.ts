@@ -251,8 +251,11 @@ function analyze({ window, ...options }: Setting, seed: number) {
   };
 }
 
-/** Rejection rates at 5% over `reps` data sets: the primary test, beta treated as known, the regression's bootstrap and its Newey–West t. */
-function rates(setting: Setting, reps: number, firstSeed: number) {
+/**
+ * Rejection rates at 5% over the data sets seeded `first`…`first + count − 1` for each range:
+ * the primary test, beta treated as known, and the regression's bootstrap and Newey–West t.
+ */
+function rates(setting: Setting, ranges: [first: number, count: number][]) {
   const count = { primary: 0, fixedBeta: 0, bootstrap: 0, neweyWest: 0 };
   const tested = { primary: 0, fixedBeta: 0, bootstrap: 0, neweyWest: 0 };
   const add = (key: keyof typeof count, p: number | null | undefined) => {
@@ -260,8 +263,9 @@ function rates(setting: Setting, reps: number, firstSeed: number) {
     tested[key]++;
     if (p < 0.05) count[key]++;
   };
-  for (let s = 0; s < reps; s++) {
-    const { primary, fixedBeta, regression } = analyze(setting, firstSeed + s);
+  const seeds = ranges.flatMap(([first, n]) => Array.from({ length: n }, (_, i) => first + i));
+  for (const seed of seeds) {
+    const { primary, fixedBeta, regression } = analyze(setting, seed);
     add("primary", primary.p);
     add("fixedBeta", fixedBeta.p);
     add("bootstrap", regression?.test.p);
@@ -278,7 +282,7 @@ describe("simulations: false positives for the primary test and the regression",
   const hourly21 = { sessions: 62, resolution: "hourly", window: 21, sharedVolatility: true } as const;
 
   it("stays near 5% with 21 sessions in the window, Kalshi unrelated to the benchmark", () => {
-    const r = rates(hourly21, 400, 30_000);
+    const r = rates(hourly21, [[30_000, 400]]);
     expect(r.tested.primary).toBe(400);
     expect(r.tested.bootstrap).toBe(400);
     for (const rate of [r.primary, r.bootstrap]) {
@@ -290,8 +294,14 @@ describe("simulations: false positives for the primary test and the regression",
   }, SIMULATION_TIMEOUT);
 
   it("stays near 5% when Kalshi tracks the benchmark, so beta's uncertainty reaches the test", () => {
-    // 1,400 data sets: the regression's rate here is close to the bar, so it gets a tighter estimate.
-    const r = rates({ ...hourly21, kalshiInMarket: 0.1 }, 1400, 70_000);
+    // Every data set ever run in this setting, pooled: the first 400 put the regression's
+    // bootstrap at 8.0%, above the bar, and later runs of 1,000 (development) and 1,400 were
+    // added to measure it more precisely. Reporting only the later runs would be selective.
+    const r = rates({ ...hourly21, kalshiInMarket: 0.1 }, [
+      [31_000, 400],
+      [41_000, 1000],
+      [70_000, 1400],
+    ]);
     for (const rate of [r.primary, r.bootstrap]) {
       expect(rate).toBeGreaterThan(0.02);
       expect(rate).toBeLessThan(0.075);
@@ -301,7 +311,7 @@ describe("simulations: false positives for the primary test and the regression",
   }, SIMULATION_TIMEOUT);
 
   it("stays near 5% over the whole 90 days, hourly, Kalshi tracking the benchmark", () => {
-    const r = rates({ ...hourly21, window: 62, kalshiInMarket: 0.1 }, 300, 32_000);
+    const r = rates({ ...hourly21, window: 62, kalshiInMarket: 0.1 }, [[32_000, 300]]);
     for (const rate of [r.primary, r.bootstrap]) {
       expect(rate).toBeGreaterThan(0.02);
       expect(rate).toBeLessThan(0.075);
@@ -311,9 +321,12 @@ describe("simulations: false positives for the primary test and the regression",
 
   it("stays below 7.5% daily, over 62 and 20 trading days", () => {
     const daily = { sessions: 62, resolution: "daily", sharedVolatility: true, kalshiInMarket: 0.3 } as const;
-    // 1,000 data sets over 62 days, where the rates are close to the bar.
-    const long = rates({ ...daily, window: 62 }, 1000, 72_000);
-    const short = rates({ ...daily, window: 20 }, 300, 34_000);
+    // 62 days: every data set run, pooled, as above (the first 300 put the regression's bootstrap at 7.7%).
+    const long = rates({ ...daily, window: 62 }, [
+      [33_000, 300],
+      [72_000, 1000],
+    ]);
+    const short = rates({ ...daily, window: 20 }, [[34_000, 300]]);
     for (const rate of [long.primary, long.bootstrap, short.primary, short.bootstrap]) expect(rate).toBeLessThan(0.075);
   }, SIMULATION_TIMEOUT);
 });
