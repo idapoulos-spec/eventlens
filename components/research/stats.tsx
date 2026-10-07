@@ -2,7 +2,7 @@
 // table columns, whichever analysis produced it.
 
 import type { ReactNode } from "react";
-import { ALPHA, MIN_BOOTSTRAP_BLOCKS, MIN_TEST_EVENTS, passes, type TestFamily, type TestResult } from "@/lib/analytics";
+import { ALPHA, MIN_BOOTSTRAP_BLOCKS, MIN_TEST_EVENTS, passes, type EventStudyTests, type TestResult } from "@/lib/analytics";
 import { plural } from "./parts";
 
 /** e.g. "0.034", "< 0.001", or "—". */
@@ -80,16 +80,33 @@ export function unavailableText(test: TestResult): string | null {
   }
 }
 
-/** Which tests a family holds, for captions: "the 6 exploratory lags on this chart". */
-export function familyText(family: TestFamily, size: number): string {
-  switch (family) {
-    case "lead_lag":
-      return `the ${size} exploratory lags on this chart`;
-    case "event_horizons":
-      return `all ${size} tested bars, rises and falls together`;
-    case "event_paths":
-      return "the two whole-path tests (rises and falls)";
+/**
+ * How the event study's tests are corrected, naming only the directions that were tested (a
+ * test that couldn't run doesn't count toward its family), e.g. "The 24 tested bars (12 after
+ * rises, 12 after falls) are corrected together as one family, and the two whole-path tests as another."
+ */
+export function eventFamilyText(tests: EventStudyTests): string {
+  const groups = [
+    { name: "rises", group: tests.rises },
+    { name: "falls", group: tests.falls },
+  ].map((g) => ({ ...g, bars: g.group.bars.filter((t) => t !== null && t.p !== null).length }));
+  const tooFew = (g: (typeof groups)[number]) => g.group.path.pUnavailable === "too_few_events";
+  const tested = groups.filter((g) => g.bars > 0);
+  const untested = groups.filter((g) => g.bars === 0);
+
+  if (tested.length === 2) {
+    const [rises, falls] = tested;
+    return `The ${rises.bars + falls.bars} tested bars (${rises.bars} after rises, ${falls.bars} after falls) are corrected together as one family, and the two whole-path tests as another.`;
   }
+  if (tested.length === 1) {
+    const [only] = tested;
+    const [other] = untested;
+    const why = tooFew(other) ? ` (there were fewer than ${MIN_TEST_EVENTS} ${other.name})` : "";
+    return `Only ${only.name} were tested${why}. Their ${only.bars} bars are corrected as one family; with no whole-path test for ${other.name}, the one for ${only.name} needs no correction.`;
+  }
+  return groups.every(tooFew)
+    ? `No bars were tested because there were too few jumps: a test needs at least ${MIN_TEST_EVENTS} rises or ${MIN_TEST_EVENTS} falls.`
+    : "No bars could be tested.";
 }
 
 export function RoleBadge({ role }: { role: TestResult["role"] }) {
