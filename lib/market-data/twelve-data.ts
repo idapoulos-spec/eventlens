@@ -74,7 +74,7 @@ export async function twelveGet<T>(
 }
 
 /** Twelve Data datetime ("YYYY-MM-DD" or "YYYY-MM-DD HH:mm:ss", read as UTC) in milliseconds. */
-function parseDatetime(datetime: string): number {
+export function parseDatetime(datetime: string): number {
   return Date.parse(datetime.length > 10 ? `${datetime.replace(" ", "T")}Z` : `${datetime}T00:00:00Z`);
 }
 
@@ -100,7 +100,7 @@ function normalizeQuote(raw: RawQuote): StockQuote {
   };
 }
 
-interface Series {
+export interface Series {
   bars: StockBar[];
   exchangeTimeZone: string | undefined;
 }
@@ -109,7 +109,7 @@ interface Series {
  * Twelve Data returns bar open times, newest first. Stamp intraday bars at their
  * close time (see barCloseTime) and return them oldest first.
  */
-function normalizeSeries(raw: RawTimeSeries, interval: Interval): Series {
+export function normalizeSeries(raw: RawTimeSeries, interval: Interval): Series {
   const exchangeTimeZone = raw.meta?.exchange_timezone;
   const bars = raw.values
     .map((v) => {

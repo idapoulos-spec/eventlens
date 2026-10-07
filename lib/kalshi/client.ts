@@ -2,7 +2,7 @@ import "server-only";
 
 import { HOUR_MS, impliedProbability, mergeSeries, probabilityChange, uncertaintyScore } from "@/lib/analytics";
 import { cachedFor, LIVE } from "@/lib/fetch-cache";
-import { isTimeout, timeoutSignal } from "@/lib/request-timeout";
+import { isTimeout, REQUEST_TIMEOUT_MS } from "@/lib/request-timeout";
 import { fail, ok, type Result } from "@/lib/result";
 import { marketPhase } from "./status";
 import type {
@@ -36,11 +36,11 @@ export class KalshiHttpError extends Error {
   }
 }
 
-export async function kalshiGet<T>(path: string, cache: RequestInit): Promise<T> {
+export async function kalshiGet<T>(path: string, cache: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const res = await fetch(`${KALSHI_BASE_URL}${path}`, {
     ...cache,
     headers: { Accept: "application/json" },
-    signal: timeoutSignal(),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) throw new KalshiHttpError(res.status);
   return res.json() as Promise<T>;
