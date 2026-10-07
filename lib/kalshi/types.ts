@@ -71,6 +71,9 @@ export interface RawMarket {
   volume_24h_fp?: string | null;
   open_interest_fp?: string | null;
   close_time?: string | null;
+  open_time?: string | null;
+  /** Only on markets from /historical. */
+  settlement_ts?: string | null;
 }
 
 export interface RawEvent {
@@ -95,16 +98,53 @@ export interface RawTrade {
 }
 
 interface RawOhlc {
+  open_dollars?: string | null;
+  high_dollars?: string | null;
+  low_dollars?: string | null;
   close_dollars?: string | null;
+  /** Only on `price`: the average trade price in the period. */
+  mean_dollars?: string | null;
   /** Close of the last period with a trade; the only price field when no trade happened in this period. */
   previous_dollars?: string | null;
 }
 
+/** A candlestick from /markets/candlesticks. `price` is empty, or has only `previous_dollars`, without a trade in the period. */
 export interface RawCandlestick {
   end_period_ts: number;
   yes_bid?: RawOhlc;
   yes_ask?: RawOhlc;
   price?: RawOhlc;
+  /** Contracts, fixed-point with 2 decimals, e.g. "10.00". */
+  volume_fp?: string | null;
+  open_interest_fp?: string | null;
+}
+
+/** Prices in a candlestick from /historical: the same fields as RawOhlc, without the `_dollars` suffix. */
+interface RawHistoricalOhlc {
+  open?: string | null;
+  high?: string | null;
+  low?: string | null;
+  close?: string | null;
+  mean?: string | null;
+  previous?: string | null;
+}
+
+/** A candlestick from /historical/markets/{ticker}/candlesticks. Prices are null without a trade in the period. */
+export interface RawHistoricalCandlestick {
+  end_period_ts: number;
+  yes_bid?: RawHistoricalOhlc;
+  yes_ask?: RawHistoricalOhlc;
+  price?: RawHistoricalOhlc;
+  volume?: string | null;
+  open_interest?: string | null;
+}
+
+/** GET /historical/cutoff: markets settled before `market_settled_ts`, and their candles, are only on /historical. */
+export interface RawHistoricalCutoff {
+  market_settled_ts: string;
+  trades_created_ts?: string;
+  orders_updated_ts?: string;
+  market_positions_last_updated_ts?: string;
 }
 
 export interface RawMarketCandlesticks {
