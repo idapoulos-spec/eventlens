@@ -334,6 +334,7 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
         <PrimaryTest
           primary={primary}
           detectable={detectable}
+          fewRuns={resolution === "daily" && days < 90}
           unavailable={unavailable}
           benchmark={benchmark.active.symbol}
           stockSymbol={stockSymbol}
@@ -504,6 +505,7 @@ function Summary({
 function PrimaryTest({
   primary,
   detectable,
+  fewRuns,
   unavailable,
   benchmark,
   stockSymbol,
@@ -512,6 +514,8 @@ function PrimaryTest({
   primary: TestResult | null;
   /** For a result that isn't significant: the smallest correlation this sample could detect. */
   detectable: DetectableCorrelation | null;
+  /** About 10 runs of days (30 days daily), where the detectable size was validated as unreliable. */
+  fewRuns: boolean;
   /** Why market adjustment isn't available, when it isn't. */
   unavailable: string;
   benchmark: string;
@@ -544,7 +548,7 @@ function PrimaryTest({
             )}
             .
           </p>
-          {detectable && <DetectableLine detectable={detectable} />}
+          {detectable && <DetectableLine detectable={detectable} fewRuns={fewRuns} />}
           <p className="mt-1 text-xs text-ink-muted">
             {missing ?? methodText(primary)} This is the question the page is set up to answer, chosen before looking at the data,
             so it’s judged on its own p-value. Everything else on the page is exploratory: corrected for the other tests in its
@@ -558,7 +562,11 @@ function PrimaryTest({
 }
 
 /** The smallest correlation the primary test could detect with 80% power in this sample. */
-function DetectableLine({ detectable }: { detectable: DetectableCorrelation }) {
+// From power.test.ts, on validation seeds: with 20 daily intervals (about 10 runs of days), effects of the
+// size reported were detected in 27 of 60 fresh samples, far below the 80% the figure claims.
+const UNRELIABLE_DAILY = "45% (27 of 60, 95% range 33–58%)";
+
+function DetectableLine({ detectable, fewRuns }: { detectable: DetectableCorrelation; fewRuns: boolean }) {
   const units = plural(detectable.units, detectable.unit === "day_run" ? ["run of days", "runs of days"] : ["session", "sessions"]);
   const power = `${Math.round(detectable.power * 100)}%`;
   return (
@@ -577,6 +585,13 @@ function DetectableLine({ detectable }: { detectable: DetectableCorrelation }) {
       <span className="mt-0.5 block text-xs text-ink-muted">
         A rough guide, simulated from this sample: {detectable.samples.toLocaleString("en-US")} versions with Kalshi’s changes and
         the stock’s volatility as observed and an effect built in, allowing for how uncertain that volatility is.
+        {fewRuns && detectable.r !== null && (
+          <>
+            {" "}
+            <strong className="font-medium text-ink-secondary">Unreliable with this few runs of days:</strong> in simulations with
+            20 daily intervals, effects of the size shown were detected only {UNRELIABLE_DAILY} of the time, not 80%.
+          </>
+        )}
       </span>
     </p>
   );

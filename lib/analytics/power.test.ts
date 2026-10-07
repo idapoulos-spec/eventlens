@@ -81,6 +81,13 @@ describe("simulations: the detectable correlation is detected about 80% of the t
   // samples of the same design, with new noise and that effect built in, each get the full
   // primary test with its own 999-draw bootstrap. Kalshi tracks the benchmark and shares the
   // stock's volatility. Seeds are fixed, so these results are the same on every run.
+  //
+  // Validation seeds, never used while developing the method: designs 80,000–80,019,
+  // 81,000–81,019, 82,000–82,019, and 83,000–83,019, each design's fresh samples seeded
+  // 1,000,000 + 100 × design + j. The method (averaging over the volatility's uncertainty,
+  // the 0.8 cap) was chosen on designs 52,000–55,019 and their samples; those results aren't
+  // the validation. This was run once, with the 72–88% band and what to do outside it decided
+  // beforehand. Improving the method needs another fresh set of seeds, not these.
   const hourly = design;
   const daily = { sessions: 62, resolution: "daily", sharedVolatility: true, kalshiInMarket: 0.3 } as const;
 
@@ -111,25 +118,28 @@ describe("simulations: the detectable correlation is detected about 80% of the t
   }
 
   it("hourly, with 21 sessions (about 30 days)", () => {
-    const { rate } = detectionRate(hourly, 21, 52_000);
+    const { rate } = detectionRate(hourly, 21, 80_000);
     expect(rate).toBeGreaterThan(0.72);
     expect(rate).toBeLessThan(0.88);
   }, SIMULATION_TIMEOUT);
 
   it("hourly, with 62 sessions (about 90 days)", () => {
-    const { rate, tested } = detectionRate(hourly, 62, 53_000);
+    const { rate, tested } = detectionRate(hourly, 62, 81_000);
     expect(tested).toBe(400);
     expect(rate).toBeGreaterThan(0.72);
     expect(rate).toBeLessThan(0.88);
   }, SIMULATION_TIMEOUT);
 
   it("daily, with 62 trading days", () => {
-    const { rate } = detectionRate(daily, 62, 54_000);
+    const { rate } = detectionRate(daily, 62, 82_000);
     expect(rate).toBeGreaterThan(0.72);
     expect(rate).toBeLessThan(0.88);
   }, SIMULATION_TIMEOUT);
 
-  it("gives no number for most 20-day daily samples, which can only detect very strong correlations", () => {
-    expect(detectionRate(daily, 20, 55_000).aboveMax).toBeGreaterThanOrEqual(15);
+  it("gives no number for most 20-day daily samples, and the few numbers it gives are unreliable", () => {
+    const { aboveMax, rate } = detectionRate(daily, 20, 83_000);
+    expect(aboveMax).toBeGreaterThanOrEqual(15);
+    // Outside the 72–88% band: 27 of 60, as the page and README say (UNRELIABLE_DAILY in ResearchPanel.tsx).
+    expect(rate).toBeLessThan(0.72);
   }, SIMULATION_TIMEOUT);
 });

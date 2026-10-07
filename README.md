@@ -216,7 +216,7 @@ The data is hard on textbook statistics: Kalshi's hourly change is zero most of 
 
 - 999 simulated versions of the sample keep Kalshi's changes, the benchmark's returns, the sessions, and the stock's residual volatility (the market model's residuals, each session with a fresh Webb weight), with an effect built in along Kalshi's changes. Each is tested the way the page tests the real sample: α and β refitted, the same statistic, and a bootstrap critical value. Rerunning a 999-draw bootstrap inside each would cost a million draws, so critical values use the **warp-speed method** (Giacomini, Politis & White 2013): one inner bootstrap draw per simulated sample, from its own restricted residuals.
 - **One sample's volatility is itself uncertain**: with heavy-tailed returns, the volatility in the few hours Kalshi moved is estimated from a handful of intervals. Taking it as known was optimistic: in development runs (not in the test suite), effects of the size it reported were detected only about 71–77% of the time in fresh samples. So the power is averaged over that uncertainty: the statistic's score variance is resampled by session (200 resamples), and since the test is scale-free, noise *k* times larger is the same as an effect *k* times smaller. Few sessions or a few dominant hours then widen the spread and raise the detectable size.
-- The figure is the smallest |r| reaching 80% in both directions, on the scale *r* = θ·*s_x* / √(θ²*s_x*² + *s_y*²). It's a rough guide, and the page says so. **Above ±0.8 it isn't given as a number**: there the power curve flattens and the simulation stops being reliable, so the page says only correlations stronger than about ±0.8 could be detected. With 30 days of daily data that's the usual case.
+- The figure is the smallest |r| reaching 80% in both directions, on the scale *r* = θ·*s_x* / √(θ²*s_x*² + *s_y*²). It's a rough guide, and the page says so. **Above ±0.8 it isn't given as a number**: there the power curve flattens and the simulation stops being reliable, so the page says only correlations stronger than about ±0.8 could be detected. With 30 days of daily data that's the usual case, and **when a 30-day daily window does get a number, the page says it's unreliable**, with the measured rate below.
 - It's computed only when the primary result isn't significant, from data already on the page.
 
 **Event study: sign flips and bootstrap-t** (`lib/analytics/event-tests.ts`).
@@ -285,14 +285,19 @@ Intervals and detection, hourly, 62 sessions, shared volatility, a same-hour eff
 
 Smallest detectable correlation (`lib/analytics/power.test.ts`): for each of 20 designs (Kalshi's path, the benchmark, the stock's volatility pattern; Kalshi tracks the benchmark, shared volatility), the detectable correlation is computed from one sample as the page does. Then 20 fresh samples of the same design, with new noise and that effect built in, each get the full primary test with its own 999-draw bootstrap. The target is 80%.
 
+**Validation seeds, kept apart from development.** The method (averaging over the volatility's uncertainty, the 0.8 cap) was chosen by comparing alternatives on designs 52,000–55,019, so results on those seeds don't validate it. The table comes from a single run on designs that were never used in development: 80,000–80,019, 81,000–81,019, 82,000–82,019, and 83,000–83,019, with each design's fresh samples seeded 1,000,000 + 100 × design + j. The rule was set before the run: within 72–88%, keep the result. Outside that, keep the method unchanged on these seeds and show the measured rate on the page and here.
+
 | Setting | Designs with a number | Median detectable r | Fresh samples detected | ± SE | 95% range |
 | --- | --- | --- | --- | --- | --- |
-| Hourly, 21 sessions (about 30 days) | 16 of 20 | 0.62 | 76.2% (244 of 320) | 2.4 | 71.3–80.6% |
-| Hourly, 62 sessions (about 90 days) | 20 of 20 | 0.34 | 76.8% (307 of 400) | 2.1 | 72.4–80.6% |
-| Daily, 62 trading days | 17 of 20 | 0.53 | 80.3% (273 of 340) | 2.2 | 75.7–84.2% |
-| Daily, 20 trading days | 2 of 20 | — | — | — | — |
+| Hourly, 21 sessions (about 30 days) | 13 of 20 | 0.61 | 75.0% (195 of 260) | 2.7 | 69.4–79.9% |
+| Hourly, 62 sessions (about 90 days) | 20 of 20 | 0.35 | 83.5% (334 of 400) | 1.9 | 79.5–86.8% |
+| Daily, 62 trading days | 18 of 20 | 0.53 | 77.8% (280 of 360) | 2.2 | 73.2–81.8% |
+| Daily, 20 trading days | 3 of 20 | 0.75 | **45.0% (27 of 60)** | 6.4 | 33.1–57.5% |
 
-**Hourly, the detectable correlation is still a little optimistic: effects of the reported size were detected 76–77% of the time, not 80%**, though the 95% ranges reach 80.6%. Daily over 62 days it's on target. With 20 daily intervals, 18 of 20 designs got no number (the page says only correlations stronger than about ±0.8 could be detected). The tests fail outside 72–88% for the first three settings, or if fewer than 15 of the 20-day designs get no number. The detectable size varies from sample to sample of the same design, so it's a rough guide: the median shown is across designs.
+- **The three settings that usually get a number are within the 72–88% band, but not all on target.** With 21 hourly sessions it's optimistic: 75.0%, with the whole 95% range below 80%. Over 90 hourly days it's slightly conservative (83.5%), and over 62 trading days a little optimistic (77.8%).
+- **With 20 daily intervals the few numbers it gives are unreliable: effects of the reported size were detected only 45.0% of the time (27 of 60), far below 80%.** 17 of 20 designs got no number at all. That's outside the band, so the method was left unchanged, and the page shows this rate whenever a 30-day daily window gets a number. **Improving it needs another set of fresh seeds**, since tuning on the validation seeds would make them development seeds.
+- On the development seeds, the same method gave 76.2%, 76.8%, 80.3%, and 50% (20 of 40); those runs shaped the method and aren't the validation.
+- The tests fail if a numbered setting falls outside 72–88%, if fewer than 15 of the 20-day designs get no number, or if the 20-day numbers reach 72% (the page would then overstate the problem). The detectable size varies from sample to sample of the same design, so it's a rough guide: the median shown is across designs.
 
 Event study (62 sessions, shared volatility, jumps of at least 1.5 pp; 300 data sets, of which 263 had at least 5 rises to test):
 
@@ -310,7 +315,7 @@ Not in the test suite: comparisons with the methods tried and dropped (the old �
 
 - The wild bootstrap treats sessions (hourly) or runs of 2–3 days (daily) as independent and residual signs as symmetric. Daily autocorrelation longer than a run isn't covered.
 - β's uncertainty is carried into the primary test, the market-adjusted lead-lag chart, and the regression, but **the event study still treats its β as known** (fitted outside the jump windows). The rolling correlation is descriptive and has no test.
-- The smallest detectable correlation is a rough guide: it comes from one sample's volatility, averaged over how uncertain that is, and was slightly optimistic hourly in the simulations above.
+- The smallest detectable correlation is a rough guide: it comes from one sample's volatility, averaged over how uncertain that is. In validation it was somewhat optimistic with 21 hourly sessions (75%), and unreliable with 20 daily intervals (45%).
 - Intervals on the correlation scale use the sample standard deviations, ignoring their own uncertainty.
 - The sign-flip test assumes deviations from the baseline would be symmetric if jumps were unrelated to the stock; skewed returns weaken that. The baseline is treated as fixed.
 - Holm is conservative because neighboring lags and bars share data; BH assumes they're positively dependent, which is plausible but not guaranteed.
