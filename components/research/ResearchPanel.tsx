@@ -36,7 +36,7 @@ import { Card, Notice } from "../ui";
 import { MarketAdjustmentCard, modelSample } from "./MarketAdjustmentCard";
 import { Caption, Flag, fmtR, plural, Segmented, ValuesTable } from "./parts";
 import {
-  familyText,
+  eventFamilyText,
   formatCi,
   formatMinP,
   formatP,
@@ -608,7 +608,7 @@ function LeadLagCard({
             ±1 means Kalshi’s moves at that lag fall in too few {resolution === "hourly" ? "sessions" : "runs of days"} to pin the
             correlation down.{" "}
             <strong className="font-medium text-ink-secondary">
-              Exploratory: corrected as one family, {familyText("lead_lag", family.length)}
+              Exploratory: corrected as one family, the {family.length} exploratory lags on this chart
               {adjustedBy && " (lag 0 is the primary test, judged on its own)"}.
             </strong>{" "}
             Holm keeps the chance of any false positive among them at 5%; Benjamini–Hochberg (BH) keeps the expected share of
@@ -746,8 +746,6 @@ function EventStudyCard({
   const pathText = (name: string, t: TestResult) =>
     t.p === null ? null : `after ${name}, p = ${formatP(t.p)} (Holm ${formatP(t.holm)}, BH ${formatP(t.bh)})`;
   const paths = [pathText("rises", tests.rises.path), pathText("falls", tests.falls.path)].filter(Boolean);
-  const barCount = [...tests.rises.bars, ...tests.falls.bars].filter((t) => t !== null && t.p !== null).length;
-  const tooFewJumps = study.rises.n < MIN_TEST_EVENTS && study.falls.n < MIN_TEST_EVENTS;
   const method = [tests.rises.path, tests.falls.path].find((t) => t.p !== null);
   const pct = (v: number) => formatSigned(v, 2, "%");
   const cell = (t: TestResult | null) =>
@@ -779,13 +777,7 @@ function EventStudyCard({
         }
         caveats={
           <>
-            <strong className="font-medium text-ink-secondary">
-              {barCount > 0
-                ? `Exploratory. Bars are corrected as one family, ${familyText("event_horizons", barCount)}; the two whole-path tests as another.`
-                : tooFewJumps
-                  ? `Exploratory. No bars were tested because there were too few jumps: a test needs at least ${MIN_TEST_EVENTS} rises or ${MIN_TEST_EVENTS} falls.`
-                  : "Exploratory. No bars could be tested."}
-            </strong>{" "}
+            <strong className="font-medium text-ink-secondary">Exploratory. {eventFamilyText(tests)}</strong>{" "}
             Shaded: 95% intervals for the average path. Filled dots: bars whose BH-adjusted p is below 5%. Each bar’s test asks
             whether the paths after jumps differ from the baseline; the whole-path test asks whether they differ anywhere in the
             window (the largest deviation, judged against how large it gets by chance).{" "}

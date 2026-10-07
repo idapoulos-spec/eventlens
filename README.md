@@ -221,8 +221,8 @@ The data is hard on textbook statistics: Kalshi's hourly change is zero most of 
 | --- | --- | --- |
 | Primary | 1 | None: judged on its own p-value |
 | Lead-lag | Every exploratory lag on the chart: 7 hourly or 11 daily on raw returns; 6 or 10 on market-adjusted returns, where lag 0 is the primary test | Holm and BH |
-| Event-study bars | Every bar but the reference bar, rises and falls together: 24 hourly, 20 daily | Holm and BH |
-| Event-study paths | Rises and falls: 2 | Holm and BH |
+| Event-study bars | Every bar but the reference bar, rises and falls together: 24 hourly, 20 daily (12 or 10 when only one direction has at least 5 jumps) | Holm and BH |
+| Event-study paths | Rises and falls: 2 (1, so uncorrected, when only one direction has at least 5 jumps) | Holm and BH |
 | Cross-checks | Kalshi with the market held fixed; Kalshi vs. the benchmark (the flag in Market adjustment) | None, labeled uncorrected |
 
 **Reproducible.** Resampling uses mulberry32 seeded from a fixed seed (`RESAMPLING_SEED`) and a label per method, so the same data and settings give the same numbers on every load and every device, and a lag's result doesn't depend on which other lags are tested. Monte Carlo error remains: with 999 draws, a p-value near 0.05 has a standard error of √(0.05 × 0.95 / 999) ≈ 0.007, so another seed could move a borderline result across 0.05.
