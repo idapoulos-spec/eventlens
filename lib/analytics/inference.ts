@@ -25,22 +25,17 @@ export type TestMethod =
    */
   | "wild_bootstrap"
   /** Each event's deviation from the baseline flipped in sign at random; t statistic. */
-  | "sign_flip"
-  /** Student's t with Newey–West standard errors and the HC3-style leverage correction. */
-  | "newey_west";
+  | "sign_flip";
 
 export type IntervalMethod =
   /** Every value the wild bootstrap test wouldn't reject at 5%. */
   | "wild_bootstrap"
   /** Events resampled with replacement; bootstrap-t interval. */
-  | "event_bootstrap"
-  | "newey_west";
+  | "event_bootstrap";
 
 /** Why a p-value or interval isn't reported. */
 export type Unavailable =
   | "too_few_pairs"
-  /** Kalshi moved in fewer than MIN_KALSHI_MOVES intervals (used where the method needs more). */
-  | "few_kalshi_moves"
   | "no_variation"
   /** Too few sessions or runs of days for the bootstrap to be reliable. */
   | "too_few_blocks"
@@ -61,6 +56,12 @@ export interface Resampling {
   arrangements: number | null;
   /** Smallest p-value the test can give: 1/(draws + 1), or 1/arrangements when that's larger. */
   minP: number;
+  /**
+   * What else is re-estimated in every draw, so its uncertainty is in the p-value and
+   * interval: the market model's alpha and beta (over its own sample), or the regression's
+   * other coefficients. Null when only the test's own fit is.
+   */
+  refit: "market_model" | "regression" | null;
 }
 
 /** The result of one hypothesis test, in the same shape for every test on the page. */

@@ -36,6 +36,7 @@ describe("@/lib/analytics", () => {
       "crossCorrelation",
       "csvField",
       "detectJumps",
+      "detectableCorrelation",
       "effectiveN",
       "eventStudy",
       "eventStudyTests",
