@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { rejectUnlessSignedIn } from "@/lib/auth/session";
 import { clientIp } from "@/lib/client-ip";
+import { BENCHMARK_END_PARAM, parseWindowEnd } from "@/lib/history/window";
 import { BENCHMARK_SYMBOL_PARAM, getBenchmarkSeries, type BenchmarkErrorResponse, type BenchmarkSeries } from "@/lib/market-data";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { validateStockTicker } from "@/lib/validation";
@@ -27,7 +28,11 @@ function error(status: number, code: string, message: string, headers?: HeadersI
   return Response.json(body, { status, headers });
 }
 
-/** GET /api/benchmark?symbol=… → BenchmarkSeries: a benchmark for the Research panel's market adjustment. */
+/**
+ * GET /api/benchmark?symbol=… → BenchmarkSeries: a benchmark for the Research panel's market
+ * adjustment. With &end=… (ms), its bars cover the research window ending then (a closed
+ * market's close) instead of the latest ones.
+ */
 export async function GET(request: NextRequest) {
   // Before anything else, so a visitor who isn't signed in learns nothing, not even whether the input is valid.
   const denied = await rejectUnlessSignedIn(request.cookies);
@@ -35,6 +40,8 @@ export async function GET(request: NextRequest) {
 
   const symbol = validateStockTicker(request.nextUrl.searchParams.get(BENCHMARK_SYMBOL_PARAM));
   if (!symbol.ok) return error(400, "invalid_symbol", symbol.message);
+  const end = parseWindowEnd(request.nextUrl.searchParams.get(BENCHMARK_END_PARAM), Date.now());
+  if (!end.ok) return error(400, end.error.code, end.error.message);
 
   // Only valid symbols can reach Twelve Data, so only they count against the limit.
   const limit = limiter(clientIp(request.headers));
@@ -44,7 +51,7 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const series = await getBenchmarkSeries(symbol.value);
+  const series = await (end.data === null ? getBenchmarkSeries(symbol.value) : getBenchmarkSeries(symbol.value, { end: end.data }));
   if (!series.ok) return error(ERROR_STATUS[series.error.code] ?? 502, series.error.code, series.error.message);
   const body: BenchmarkSeries = series.data;
   return Response.json(body);

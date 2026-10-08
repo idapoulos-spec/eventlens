@@ -120,8 +120,10 @@ const EXCLUSION_LABEL: Record<Resolution, Record<string, string>> = {
 interface Props {
   hourly: ResearchRow[];
   daily: ResearchRow[];
-  /** When the stock data was fetched: windows count back from here. */
+  /** Windows count back from here: when the stock data was fetched, or the market's close (see windowEnd). */
   asOf: number;
+  /** A closed market's close, when Research ends there rather than now; benchmarks are loaded for that window. */
+  windowEnd: number | null;
   stockSymbol: string;
   kalshiTicker: string;
   /** What a YES outcome means for this market, quoted in the sign notes. */
@@ -171,7 +173,7 @@ function view(changes: ChangePoint[], study: EventStudy | null, settings: Settin
   };
 }
 
-export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, yesLabel, initialBenchmark }: Props) {
+export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kalshiTicker, yesLabel, initialBenchmark }: Props) {
   // 90 days by default: with 30 days of hourly data the power tests (correlation-test.test.ts)
   // miss a correlation of about 0.4 roughly half the time.
   const [days, setDays] = useState<WindowDays>(90);
@@ -182,7 +184,7 @@ export function ResearchPanel({ hourly, daily, asOf, stockSymbol, kalshiTicker, 
   });
   // Market-adjusted by default, since the primary test always is; raw when adjustment isn't possible.
   const [chosenReturns, setReturns] = useState<Returns>("adjusted");
-  const benchmark = useBenchmark(initialBenchmark);
+  const benchmark = useBenchmark(initialBenchmark, windowEnd);
   // Seven days hold only about five daily closes, so that window is hourly only.
   const resolution: Resolution = days === 7 ? "hourly" : chosenResolution;
   const settings = SETTINGS[resolution];

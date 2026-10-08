@@ -5,6 +5,7 @@
 // back to one costs no request.
 
 import { useRef, useState } from "react";
+import { BENCHMARK_END_PARAM } from "@/lib/history/window";
 import {
   BENCHMARK_API_PATH,
   BENCHMARK_SYMBOL_PARAM,
@@ -28,10 +29,19 @@ export type BenchmarkStatus =
 const OFFLINE = "Couldn't reach the server. Check your connection and try again.";
 const UNAVAILABLE = "Benchmark prices couldn't be loaded. Please try again shortly.";
 
-/** Loads one benchmark. Resolves to null if `signal` aborts (another benchmark was picked); never rejects. */
-export async function fetchBenchmark(symbol: string, signal?: AbortSignal): Promise<Result<BenchmarkSeries> | null> {
+/**
+ * Loads one benchmark, for the research window ending at `end` if given (a closed market's
+ * close), else the latest bars. Resolves to null if `signal` aborts (another benchmark was
+ * picked); never rejects.
+ */
+export async function fetchBenchmark(
+  symbol: string,
+  { end = null, signal }: { end?: number | null; signal?: AbortSignal } = {},
+): Promise<Result<BenchmarkSeries> | null> {
+  const query = new URLSearchParams({ [BENCHMARK_SYMBOL_PARAM]: symbol });
+  if (end !== null) query.set(BENCHMARK_END_PARAM, String(end));
   try {
-    const res = await fetch(`${BENCHMARK_API_PATH}?${new URLSearchParams({ [BENCHMARK_SYMBOL_PARAM]: symbol })}`, { signal });
+    const res = await fetch(`${BENCHMARK_API_PATH}?${query}`, { signal });
     const body = (await res.json().catch(() => null)) as Partial<BenchmarkSeries & BenchmarkErrorResponse> | null;
     if (signal?.aborted) return null;
     if (res.ok && Array.isArray(body?.hourly) && Array.isArray(body?.daily)) return ok(body as BenchmarkSeries);
@@ -51,8 +61,11 @@ export interface Benchmark {
   choose: (choice: BenchmarkChoice, options?: { skipLoad?: boolean }) => void;
 }
 
-/** @param initial the default benchmark as the server loaded it, or null if it didn't. */
-export function useBenchmark(initial: Result<BenchmarkSeries> | null): Benchmark {
+/**
+ * @param initial the default benchmark as the server loaded it, or null if it didn't.
+ * @param end where Research's window ends, if that's a closed market's close rather than now.
+ */
+export function useBenchmark(initial: Result<BenchmarkSeries> | null, end: number | null = null): Benchmark {
   const [active, setActive] = useState<BenchmarkChoice>(DEFAULT_BENCHMARK);
   const [loaded, setLoaded] = useState<Record<string, BenchmarkSeries>>(() =>
     initial?.ok ? { [initial.data.symbol]: initial.data } : {},
@@ -76,7 +89,7 @@ export function useBenchmark(initial: Result<BenchmarkSeries> | null): Benchmark
     const controller = new AbortController();
     pending.current = { symbol: choice.symbol, controller };
     setStatus({ state: "loading", choice });
-    const result = await fetchBenchmark(choice.symbol, controller.signal);
+    const result = await fetchBenchmark(choice.symbol, { end, signal: controller.signal });
     if (!result) return;
     pending.current = null;
     if (result.ok) {

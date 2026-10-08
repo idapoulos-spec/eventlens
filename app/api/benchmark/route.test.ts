@@ -25,9 +25,10 @@ afterAll(() => {
 });
 
 // The limiter lives in module state, so each test uses its own IP.
-function load(symbol: string | null, ip: string, signedIn = true) {
+function load(symbol: string | null, ip: string, signedIn = true, end?: string) {
   const url = new URL("http://localhost/api/benchmark");
   if (symbol !== null) url.searchParams.set("symbol", symbol);
+  if (end !== undefined) url.searchParams.set("end", end);
   return GET(new NextRequest(url, { headers: { "x-real-ip": ip, ...(signedIn && { cookie }) } }));
 }
 
@@ -56,6 +57,24 @@ describe("GET /api/benchmark", () => {
       expect(res.status).toBe(400);
       const body: BenchmarkErrorResponse = await res.json();
       expect(body.error.code).toBe("invalid_symbol");
+    }
+    expect(benchmarkMock).not.toHaveBeenCalled();
+  });
+
+  it("loads the benchmark for a research window ending in the past", async () => {
+    benchmarkMock.mockResolvedValue(ok(QQQ));
+    const end = Date.UTC(2025, 11, 10, 19);
+    const res = await load("QQQ", "10.0.1.4", true, String(end));
+    expect(res.status).toBe(200);
+    expect(benchmarkMock).toHaveBeenCalledWith("QQQ", { end });
+  });
+
+  it("rejects a window end that isn't a past time with 400, without fetching", async () => {
+    for (const end of ["", "soon", String(Date.now() + 60_000)]) {
+      const res = await load("QQQ", "10.0.1.5", true, end);
+      expect(res.status).toBe(400);
+      const body: BenchmarkErrorResponse = await res.json();
+      expect(body.error.code).toBe("invalid_end");
     }
     expect(benchmarkMock).not.toHaveBeenCalled();
   });
