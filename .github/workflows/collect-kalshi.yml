@@ -1,0 +1,60 @@
+name: Collect Kalshi
+
+# Fills the data store with the watchlist's Kalshi candles (see db/README.md). Schedules run only
+# on the default branch, and the `collector` environment that holds COLLECTOR_DATABASE_URL is
+# limited to main. The repo is public, so this log is too: the collector prints counts and tickers
+# only, never prices, rows, URLs, or error messages.
+
+on:
+  schedule:
+    # Every 6 hours at :23, away from the top of the hour, when GitHub delays or drops the most runs.
+    # A late or dropped run only delays freshness: the next one catches up.
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "incremental: new candles and up to 25 gap windows. backfill: every market's whole history. repair: every gap."
+        type: choice
+        options:
+          - incremental
+          - backfill
+          - repair
+        default: incremental
+
+permissions:
+  contents: read
+
+# Never two runs at once; a run that's waiting starts when the current one ends.
+concurrency:
+  group: collect-kalshi
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: Collect Kalshi candles
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: collector
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Installs the pnpm version in package.json's packageManager field.
+      - uses: pnpm/action-setup@v6
+
+      # Node.js from package.json's engines field.
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: package.json
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Inputs reach the script through environment variables, never pasted into the command.
+      - name: Collect
+        env:
+          COLLECTOR_DATABASE_URL: ${{ secrets.COLLECTOR_DATABASE_URL }}
+          MODE: ${{ inputs.mode || 'incremental' }}
+          TRIGGER: ${{ github.event_name == 'schedule' && 'schedule' || 'manual' }}
+        run: pnpm exec tsx --conditions=react-server scripts/collect-kalshi.ts --mode "$MODE" --trigger "$TRIGGER"
