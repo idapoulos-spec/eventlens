@@ -30,7 +30,7 @@ import {
   type RollingPoint,
   type TestResult,
 } from "@/lib/analytics";
-import { formatShortDate, formatSigned } from "@/lib/format";
+import { formatDateTime, formatShortDate, formatSigned } from "@/lib/format";
 import type { BenchmarkSeries } from "@/lib/market-data/types";
 import type { Result } from "@/lib/result";
 import { EventStudyChart } from "../charts/EventStudyChart";
@@ -268,7 +268,9 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
     <div className="grid gap-4 sm:gap-5">
       <Card
         title="Research"
-        subtitle={`Kalshi probability changes vs. ${stockSymbol} returns, compared only where both have a real observation`}
+        subtitle={`Kalshi probability changes vs. ${stockSymbol} returns, compared only where both have a real observation${
+          windowEnd === null ? "" : `, in windows ending at the market's close (${formatDateTime(windowEnd, { withYear: true })})`
+        }`}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
           <Segmented
