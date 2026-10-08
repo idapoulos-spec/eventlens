@@ -211,6 +211,28 @@ export async function findTargetGaps(sql: Sql, targets: SeriesTarget[]): Promise
   return gaps;
 }
 
+// ---- Runs that never finished ----
+
+/** Longer than any run lasts (the workflow stops at 30 minutes), so a run still `running` this long after it started has died. */
+export const ABANDONED_AFTER_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * Marks Kalshi runs other than `runId` that died before `finishRun` (a dropped connection, a
+ * killed job) as failed, so they don't look in progress forever. Returns their ids. Uses the
+ * database's clock, which set started_at.
+ */
+export async function closeAbandonedRuns(sql: Sql, runId: number): Promise<number[]> {
+  const rows = await sql.query<{ id: number }>(
+    `update collection_runs
+        set status = 'failed', finished_at = now(), error = 'Never finished: the process ended early'
+      where collector = 'kalshi' and status = 'running' and id <> $1
+        and started_at < now() - make_interval(secs => $2)
+      returning id`,
+    [runId, ABANDONED_AFTER_MS / 1000],
+  );
+  return rows.map((r) => r.id).sort((a, b) => a - b);
+}
+
 // ---- What's stored ----
 
 export interface StoreSummary {

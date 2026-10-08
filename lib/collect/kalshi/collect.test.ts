@@ -219,6 +219,27 @@ describe("failures and gap repair", () => {
     expect((await runs())[0]).toMatchObject({ status: "failed", error: "Market discovery failed: unavailable" });
   });
 
+  it("marks runs that died hours ago as failed, leaving recent ones alone", async () => {
+    // started_at comes from the database's clock, as startRun leaves it.
+    const start = (collector: string, hoursAgo: number) =>
+      db.sql.query(
+        "insert into collection_runs (collector, mode, trigger, started_at) values ($1, 'incremental', 'schedule', now() - make_interval(hours => $2))",
+        [collector, hoursAgo],
+      );
+    await start("kalshi", 3);
+    await start("kalshi", 1);
+    await start("stocks", 3);
+    // A run's own `now` can be far from the database's; it never closes itself.
+    await run("incremental", NOW + 30 * DAY_MS);
+    expect(logs).toContain("marked 1 run that never finished as failed: 1");
+    expect((await runs()).map((r) => [r.status, r.error])).toEqual([
+      ["failed", "Never finished: the process ended early"],
+      ["running", null],
+      ["running", null],
+      ["ok", null],
+    ]);
+  });
+
   it("records an unexpected error by name and code only", async () => {
     await db.sql.exec("revoke insert on kalshi_candles from eventlens_collector");
     const summary = await run("backfill");

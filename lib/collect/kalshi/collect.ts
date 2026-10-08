@@ -19,6 +19,7 @@ import { createKalshiApi, type KalshiApiOptions } from "./api";
 import { discoverMarkets, type DiscoveredMarket } from "./discover";
 import { incrementalRange, splitWindows, targetRange } from "./ranges";
 import {
+  closeAbandonedRuns,
   coverageEnds,
   findTargetGaps,
   seriesId,
@@ -124,6 +125,9 @@ export async function collectKalshi({ sql, mode, trigger, now = Date.now(), log 
   };
 
   try {
+    const abandoned = await closeAbandonedRuns(sql, runId);
+    if (abandoned.length) log(`marked ${plural(abandoned.length, "run")} that never finished as failed: ${abandoned.join(", ")}`);
+
     const discovery = await discoverMarkets(api, await readWatchlist(sql));
     if (!discovery.ok) {
       error = `Market discovery failed: ${discovery.error.code}`;
