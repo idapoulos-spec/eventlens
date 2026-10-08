@@ -15,8 +15,12 @@ const MINUTE_MS = 60_000;
 export const SETTLE_MS = 5 * MINUTE_MS;
 /** Incremental runs fetch again from this many periods before the end of what's covered. */
 export const OVERLAP_PERIODS = 2;
-/** Periods per request, under Kalshi's 10,000 (MAX_CANDLES_PER_REQUEST): 400 days of hourly candles. */
-export const MAX_PERIODS_PER_WINDOW = 9_600;
+/**
+ * Periods per request: 200 days of hourly candles. Kalshi's archive answers 400 above 5,000
+ * candles a request, though the live endpoint allows 10,000 (MAX_CANDLES_PER_REQUEST in
+ * lib/kalshi/historical.ts). One limit for both, so a window retried on the archive still fits.
+ */
+export const MAX_PERIODS_PER_WINDOW = 4_800;
 
 export const KALSHI_PERIODS: readonly KalshiPeriod[] = ["60", "1440"];
 

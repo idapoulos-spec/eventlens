@@ -101,6 +101,16 @@ describe("backfill", () => {
     ]);
   });
 
+  it("splits a long archived history into windows the archive accepts", async () => {
+    // 300 days of hourly candles: over the archive's 5,000 a request.
+    const long: FakeMarket = { ...ARCHIVED, openTime: ARCHIVED.closeTime - 300 * DAY_MS };
+    kalshi.markets = [long];
+    const summary = await run("backfill");
+    expect(summary).toMatchObject({ status: "ok", gapSeries: 0, windows: { fetched: 3, failed: 0 } });
+    const hourly = (await spans()).find((s) => s.period_min === 60);
+    expect(hourly?.first).toEqual(new Date(Math.ceil(long.openTime / HOUR_MS) * HOUR_MS));
+  });
+
   it("fetches everything again on a second backfill, changing nothing", async () => {
     await run("backfill");
     const again = await run("backfill");

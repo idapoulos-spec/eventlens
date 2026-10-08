@@ -51,14 +51,15 @@ describe("incrementalRange", () => {
 });
 
 describe("splitWindows", () => {
-  it("keeps every window within Kalshi's 10,000 candles, consecutive and oldest first", () => {
+  it("keeps every window within the archive's 5,000 candles, consecutive and oldest first", () => {
     const range = { from: 0, to: 842 * DAY };
     const windows = splitWindows(range, "60");
-    expect(windows).toHaveLength(3);
+    expect(windows).toHaveLength(5);
     expect(windows[0]).toEqual({ from: 0, to: MAX_PERIODS_PER_WINDOW * HOUR });
     expect(windows.at(-1)?.to).toBe(range.to);
     for (const [i, w] of windows.entries()) {
       expect((w.to - w.from) / periodMs("60")).toBeLessThanOrEqual(MAX_PERIODS_PER_WINDOW);
+      expect(MAX_PERIODS_PER_WINDOW).toBeLessThanOrEqual(5_000);
       if (i > 0) expect(w.from).toBe(windows[i - 1].to);
     }
     expect(splitWindows(range, "1440")).toEqual([range]);

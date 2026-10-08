@@ -1,7 +1,8 @@
 // A fake Kalshi for the collector's tests, behind a stubbed fetch: market lists and markets from
 // the live endpoints and the archive, and candles in each one's shape. Like Kalshi, it lists a
 // market on exactly one side, writes a candle only for periods that have ended, answers the live
-// candle endpoint with no entry for an archived market, and includes a candle ending exactly at end_ts.
+// candle endpoint with no entry for an archived market, includes a candle ending exactly at end_ts,
+// and rejects a request spanning more than 10,000 periods live or 5,000 in the archive.
 
 import { vi } from "vitest";
 import type { RawCandlestick, RawHistoricalCandlestick } from "@/lib/kalshi/types";
@@ -78,6 +79,9 @@ function candles(kalshi: FakeKalshi, m: FakeMarket, url: URL, live: boolean): (R
   });
 }
 
+/** Kalshi answers 400 when a candle request spans more periods than this. */
+const MAX_CANDLES = { live: 10_000, historical: 5_000 };
+
 function respond(kalshi: FakeKalshi, url: URL): Response {
   const path = url.pathname.replace("/trade-api/v2", "");
   const archive = path.startsWith("/historical/");
@@ -87,6 +91,12 @@ function respond(kalshi: FakeKalshi, url: URL): Response {
   const onSide = kalshi.markets.filter((m) => m.source === source);
   const byTicker = (ticker: string) => onSide.find((m) => m.ticker === decodeURIComponent(ticker));
   const notFound = () => Response.json({ error: { code: "not_found" } }, { status: 404 });
+  if (rest.endsWith("/candlesticks")) {
+    const span = Number(q.get("end_ts")) - Number(q.get("start_ts"));
+    if (span / (Number(q.get("period_interval")) * 60) > MAX_CANDLES[source]) {
+      return Response.json({ error: { code: "bad_request" } }, { status: 400 });
+    }
+  }
 
   if (rest === "/markets/candlesticks" && !archive) {
     const m = byTicker(q.get("market_tickers") ?? "");
