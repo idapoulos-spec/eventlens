@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { httpSql, poolSql, type PgPoolLike } from "./sql";
 
@@ -6,14 +7,15 @@ import { httpSql, poolSql, type PgPoolLike } from "./sql";
 
 function fakePool(failOn?: string) {
   const statements: string[] = [];
-  const client = {
+  // An EventEmitter, like the driver's client: emitting 'error' with no listener throws.
+  const client = Object.assign(new EventEmitter(), {
     query: vi.fn(async (text: string) => {
       statements.push(text);
       if (text === failOn) throw new Error("boom");
       return { rows: [{ text }] };
     }),
     release: vi.fn(),
-  };
+  });
   const pool: PgPoolLike & { end: ReturnType<typeof vi.fn> } = {
     query: vi.fn(),
     connect: vi.fn(async () => client),
@@ -48,6 +50,20 @@ describe("poolSql", () => {
     await sql.end();
     await sql.end();
     expect(client.release).toHaveBeenCalledTimes(1);
+    expect(pool.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails the next query when the connection drops, rather than crashing, and closes it", async () => {
+    const { pool, client } = fakePool();
+    const sql = await poolSql(pool);
+    const dropped = new Error("Connection terminated unexpectedly");
+    expect(() => client.emit("error", dropped)).not.toThrow();
+    await expect(sql.query("select 1")).rejects.toBe(dropped);
+    await expect(sql.transaction((tx) => tx.query("insert 1"))).rejects.toBe(dropped);
+    expect(client.query).not.toHaveBeenCalled();
+    await sql.end();
+    // With the error, the pool closes the connection instead of keeping it.
+    expect(client.release).toHaveBeenCalledWith(dropped);
     expect(pool.end).toHaveBeenCalledTimes(1);
   });
 });

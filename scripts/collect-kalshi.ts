@@ -19,9 +19,9 @@ const TRIGGERS: readonly RunTrigger[] = ["local", "schedule", "manual"];
 
 const log = (line: string) => console.log(`[collect-kalshi] ${line}`);
 
-// @neondatabase/serverless reports a dropped connection as an 'error' event that nothing in
-// lib/store/sql.ts listens to, so Node would crash and print the socket. Print the error's name
-// only; the next run marks this one failed (closeAbandonedRuns).
+// lib/store/sql.ts turns a dropped connection into a failed query, but anything else thrown
+// outside a query would crash Node and print the error, which can name the host. Print the
+// error's name only; the next run marks this one failed (closeAbandonedRuns).
 process.on("uncaughtException", (err) => {
   console.error(`[collect-kalshi] failed: ${describeError(err)}`);
   process.exit(1);
