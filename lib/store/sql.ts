@@ -48,7 +48,9 @@ export function httpSql(neonQuery: NeonHttpLike, { timeoutMs }: { timeoutMs: num
 
 interface PgClientLike {
   query(text: string, params?: unknown[]): Promise<{ rows: unknown[] } | { rows: unknown[] }[]>;
-  release(): void;
+  /** With an error, the pool closes the connection instead of keeping it. */
+  release(err?: Error): void;
+  on(event: "error", listener: (err: Error) => void): unknown;
 }
 
 /** What poolSql uses of a `Pool` from @neondatabase/serverless. */
@@ -58,7 +60,7 @@ export interface PgPoolLike {
   end(): Promise<void>;
 }
 
-function clientSql(client: PgClientLike, end: () => Promise<void>): SessionSql {
+function clientSql(client: Pick<PgClientLike, "query">, end: () => Promise<void>): SessionSql {
   const session: SessionSql = {
     async query<T extends object>(text: string, params: unknown[] = []) {
       const result = await client.query(text, params);
@@ -86,15 +88,23 @@ function clientSql(client: PgClientLike, end: () => Promise<void>): SessionSql {
 
 /**
  * A session on one pooled connection, held until `end()`, so transactions and session settings
- * stay on the same connection.
+ * stay on the same connection. A connection that drops fails the next query with its error.
  */
 export async function poolSql(pool: PgPoolLike): Promise<SessionSql> {
   const client = await pool.connect();
+  // A connection that drops is an 'error' event on the client (the pool stops listening once it
+  // hands the client out), and Node exits on an 'error' event nothing listens to. Keep the error
+  // so the caller's next query rejects with it instead.
+  let lost: Error | undefined;
+  client.on("error", (err) => {
+    lost ??= err;
+  });
   let ended = false;
-  return clientSql(client, async () => {
+  const query: PgClientLike["query"] = (text, params) => (lost ? Promise.reject(lost) : client.query(text, params));
+  return clientSql({ query }, async () => {
     if (ended) return;
     ended = true;
-    client.release();
+    client.release(lost);
     await pool.end();
   });
 }

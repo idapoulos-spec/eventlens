@@ -1,7 +1,6 @@
 // Collects the watchlist's Kalshi candles into the data store, as the collector role.
 //
-//   pnpm exec tsx --env-file-if-exists=.env.local --conditions=react-server scripts/collect-kalshi.ts \
-//     [--mode incremental|backfill|repair] [--trigger local|schedule|manual]
+//   pnpm collect:kalshi [--mode incremental|backfill|repair] [--trigger local|schedule|manual]
 //
 // incremental (the default): new candles since the last run, newly listed markets' history, and
 // up to 25 gap windows. backfill: every market's whole history again. repair: every gap. Reads
@@ -19,9 +18,9 @@ const TRIGGERS: readonly RunTrigger[] = ["local", "schedule", "manual"];
 
 const log = (line: string) => console.log(`[collect-kalshi] ${line}`);
 
-// @neondatabase/serverless reports a dropped connection as an 'error' event that nothing in
-// lib/store/sql.ts listens to, so Node would crash and print the socket. Print the error's name
-// only; the next run marks this one failed (closeAbandonedRuns).
+// lib/store/sql.ts turns a dropped connection into a failed query, but anything else thrown
+// outside a query would crash Node and print the error, which can name the host. Print the
+// error's name only; the next run marks this one failed (closeAbandonedRuns).
 process.on("uncaughtException", (err) => {
   console.error(`[collect-kalshi] failed: ${describeError(err)}`);
   process.exit(1);

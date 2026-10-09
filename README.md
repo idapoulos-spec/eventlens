@@ -162,8 +162,8 @@ Left out, and counted on the page:
 
 - **Most Kalshi hourly changes are zero, and moves come in 0.5 pp steps** (1¢ ticks, midpoint). In one check of the Fed October market, 104 of 384 intraday hours over 90 days moved at all. Correlations can rest on a few moves, and event studies often have fewer than 10 jumps.
 - **Typical sample sizes:** 7 days hourly ≈ 30 intervals, 30 days hourly ≈ 120, 90 days hourly ≈ 370, 30 days daily ≈ 20, 90 days daily ≈ 60. The daily view isn't offered for 7 days (about 5 closes).
-- **Market lifetime:** a market younger than the window covers less of it (the page shows the actual date range). Stock data covers the last ~90 days, so a market that settled before then won't overlap.
-- **History depth:** Kalshi returns at most 10,000 candles per request, so 90 days (plus a week before, to know the probability in effect when the window starts) is one request of hourly candles. The Twelve Data free plan returns up to 900 30-minute bars (about 70 sessions) of regular-hours data.
+- **Market lifetime:** a market younger than the window covers less of it (the page shows the actual date range). Without the [data store](#data-store), stock data covers the last ~90 days, so a market that closed before then won't overlap; with it, a closed market's windows end at its close.
+- **History depth:** Kalshi returns at most 10,000 candles per request (5,000 from its archive of settled markets), so 90 days (plus a week before, to know the probability in effect when the window starts) is one request of hourly candles. The Twelve Data free plan returns up to 900 30-minute bars (about 70 sessions) of regular-hours data.
 
 ### Market-adjusted returns
 
@@ -355,13 +355,35 @@ print(len(adjusted), adjusted.prob_change_pp.corr(adjusted.abnormal_log_return))
 
 The market model is fitted on all 90 days, so to reproduce β and α, use the 90-day CSV: regress `stock_log_return` on `benchmark_log_return` over rows whose `interval_exclusion` isn't `first_row` or `non_trading` (Kalshi exclusions still count) and that have both returns.
 
+## Data store
+
+An optional Postgres database (Neon, free plan) keeps Kalshi's history, so Research can study markets that settled before Kalshi's archive cutoff and end a closed market's windows at its close. It's off unless `DATABASE_URL` is set: without it, every request is live, exactly as before. Setup, roles, the watchlist, and the collector's details are in [`db/README.md`](db/README.md).
+
+**The collector.** A GitHub Actions workflow (`.github/workflows/collect-kalshi.yml`) stores the hourly and daily candles of every market on the watchlist (to start, every KXFEDDECISION market) every 6 hours, from Kalshi's live endpoints and its archive. It also runs on demand, in any mode, or locally:
+
+```bash
+pnpm collect:kalshi                   # incremental: new candles, new markets' history, and up to 25 gaps
+pnpm collect:kalshi --mode backfill   # every market's whole history again
+pnpm collect:kalshi --mode repair     # every gap
+pnpm db:migrate                       # create or update the roles and tables
+pnpm db:watchlist list --all          # what the collector fetches (also add, remove, activate, deactivate)
+```
+
+Each window of candles is stored with the time range it covers, in one transaction, so a window that fails leaves a gap that the next run repairs. Stock collection is on hold until Twelve Data confirms its terms allow storing its data.
+
+**What the app reads.** With `DATABASE_URL` set:
+
+- Research's Kalshi history comes from stored candles first, with a live request for anything after them. If the store doesn't cover the window, or a read fails or takes longer than 2.5 seconds, it's fetched live as before. The Sources note says how far stored history reaches.
+- A market that settled before Kalshi's archive cutoff (the live API answers 404 for it) opens from its stored row or from Kalshi's archive.
+- For a closed market, Research's 7, 30, and 90-day windows end at its close instead of now, the stock's bars and the benchmark cover that window, and the Research card says so. An analysis still uses 3 or 5 Twelve Data requests.
+
 ## Project structure
 
 ```
 app/                  Next.js routes (page.tsx renders the dashboard server-side)
   login/              Sign-in page, and the sign-in and sign-out actions
   api/search/         Search API routes: stocks/ and kalshi/ (GET ?q=…)
-  api/benchmark/      Research benchmark prices (GET ?symbol=…)
+  api/benchmark/      Research benchmark prices (GET ?symbol=…, and &end=… for a window ending in the past)
 components/           UI components (cards, form, panels)
   auth/               Sign-in form and Sign out button
   analysis/           Loading analyses, shareable links, Copy link, recent analyses
@@ -372,10 +394,15 @@ lib/
   auth/               Access gate: sessions, password check, page and API route guards
   kalshi/             Kalshi API client, market search index, normalized types (server-only)
   market-data/        Twelve Data client, symbol lists and search, popular symbols, research benchmarks (server-only)
+  history/            Research's data: stored history first, live for the rest; windows that end at a close
+  store/              Data store: connections per role, migrations, runs and coverage, the watchlist
+  collect/kalshi/     Kalshi collector: market discovery, candle windows, coverage, gap repair
   analytics/          Pure metric, alignment, research, regression, and significance-test functions (and the CSV export)
   search/             Search contract: result types, query validation, error responses
   validation.ts       Ticker input validation
   format.ts           Number and date formatting
+db/                   Data store migrations and setup (db/README.md)
+scripts/              collect-kalshi, migrate, and watchlist (pnpm collect:kalshi, db:migrate, db:watchlist)
 proxy.ts              Sends requests without a session to /login (API routes get a 401)
 ```
 
@@ -402,6 +429,7 @@ EventLens shows Twelve Data's data, and the free Twelve Data plan doesn't allow 
 - Users see fixed error messages. Twelve Data's own error text is logged on the server only, with the key redacted.
 - Each client IP can run 5 analyses a minute and 30 an hour (`lib/analysis-rate-limit.ts`), pick 5 benchmarks a minute and 30 an hour (`app/api/benchmark/route.ts`), and run 30 searches a minute and 300 an hour in each search field (`app/api/search/*/route.ts`).
 - Every upstream request times out after 6 seconds (the daily stock-list download after 45), and the Kalshi and stock sections load independently, so one slow API never hides the other's data.
+- The data store's connection strings are read only on the server, from environment variables, and never logged. The app's role can only read; the collector's can add and update data but not delete it. The collector's GitHub Actions logs are public, so it prints counts and tickers only. See [`db/README.md`](db/README.md).
 
 **How much the rate limit protects you.** The limiter keeps its counts in the server's memory. That is enough to stop one person repeatedly hammering the site, but it is not a hard guarantee:
 
@@ -418,14 +446,15 @@ For a hard limit, use a shared store such as Upstash Redis (`@upstash/ratelimit`
    - `ACCESS_PASSWORD`: the access password, 12 to 256 characters. A long passphrase is best.
    - `AUTH_SECRET`: at least 32 random characters, e.g. the output of `openssl rand -base64 32`. Don't reuse it anywhere else.
    - `TWELVE_DATA_API_KEY` (Production, plus Preview if you want preview deployments to show stock data). The key is only read at request time, so the build does not need it. If it is missing, the site still works and shows that stock data isn't set up; the server log explains how to fix it.
+   - `DATABASE_URL` (optional, Production only, marked **Sensitive**): the data store's read-only connection string (see [`db/README.md`](db/README.md)). Without it, everything is fetched live. The build doesn't need it.
 
    Add `ACCESS_PASSWORD` and `AUTH_SECRET` to both **Production and Preview** and mark them **Sensitive**. Without them a deployment locks: nobody can sign in. Changes to environment variables apply only to new deployments, so redeploy after adding or changing them.
 3. Deploy. Vercel detects Next.js, installs with pnpm 10 from `pnpm-lock.yaml`, and uses Node.js 24 from `engines`.
 4. Under **Settings → Deployment Protection**, keep Vercel Authentication on **Standard Protection**. It puts Vercel's own login in front of preview and generated deployment URLs, but not the production domain, which the access password protects. **All Deployments** would also put it in front of the production domain, so everyone you share with would need a Vercel account (on Hobby, only one person besides you can be given access).
 5. Recommended: under **Firewall → Configure → + New Rule**, add a rule: if *Request Path* equals `/login` and *Method* equals `POST`, then *Rate Limit* with a fixed window of 60 seconds, 10 requests, keyed by IP, responding with 429. Select **Review Changes**, then **Publish**. This limits sign-in attempts across all server instances; Hobby includes one rate-limit rule per project.
 
-The page's server function is capped at 30 seconds (`maxDuration` in `app/page.tsx`), and the search routes at 60, since the first search on a new instance waits for its index. Each instance builds its own search indexes, so every instance that serves a stock search downloads the symbol lists once a day (2 Twelve Data requests). All timestamps are shown in New York time with the zone labeled, regardless of the server's time zone.
+The page's server function is capped at 40 seconds (`maxDuration` in `app/page.tsx`: with the data store, a settled market's lookup, the stock's history, and the benchmark can each wait for the one before), and the search routes at 60, since the first search on a new instance waits for its index. Each instance builds its own search indexes, so every instance that serves a stock search downloads the symbol lists once a day (2 Twelve Data requests). All timestamps are shown in New York time with the zone labeled, regardless of the server's time zone.
 
 ## Scope
 
-This is an MVP. It has no trading functionality, user accounts, database, or automatic event-to-stock mapping.
+This is an MVP. It has no trading functionality, user accounts, or automatic event-to-stock mapping.

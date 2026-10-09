@@ -12,7 +12,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "db:migrate": "tsx --env-file-if-exists=.env.local --conditions=react-server scripts/migrate.ts",
-    "db:watchlist": "tsx --env-file-if-exists=.env.local --conditions=react-server scripts/watchlist.ts"
+    "db:watchlist": "tsx --env-file-if-exists=.env.local --conditions=react-server scripts/watchlist.ts",
+    "collect:kalshi": "tsx --env-file-if-exists=.env.local --conditions=react-server scripts/collect-kalshi.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",
