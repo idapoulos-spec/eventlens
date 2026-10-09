@@ -13,10 +13,15 @@ import { isAccessGateOn, requirePageSession } from "@/lib/auth/server";
 import { formatWait } from "@/lib/format";
 import { validateKalshiTicker, validateStockTicker } from "@/lib/validation";
 
-// Cap on how long Vercel lets this page's server function run. The worst case is about
-// 12 seconds: every Kalshi and Twelve Data request starts at once, each with a 6-second
-// timeout, except Research's benchmark, which waits for the stock's requests.
-export const maxDuration = 30;
+// Cap on how long Vercel lets this page's server function run. Worst cases, with every request
+// taking its whole timeout (6 s upstream, 2.5 s for a data store read):
+// - Without the store, about 12 s: every request starts at once, except Research's benchmark,
+//   which waits for the stock's requests.
+// - With it, about 32 s, for a market settled before Kalshi's archive cutoff: the market lookup
+//   (the live 404, the stored row, then the archive: 14.5 s) sets Research's window; the stock's
+//   history waits for it (stored bars, then requests: 8.5 s), and the benchmark for the stock
+//   (the same again: 8.5 s).
+export const maxDuration = 40;
 
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
