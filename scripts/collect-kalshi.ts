@@ -1,7 +1,6 @@
 // Collects the watchlist's Kalshi candles into the data store, as the collector role.
 //
-//   pnpm exec tsx --env-file-if-exists=.env.local --conditions=react-server scripts/collect-kalshi.ts \
-//     [--mode incremental|backfill|repair] [--trigger local|schedule|manual]
+//   pnpm collect:kalshi [--mode incremental|backfill|repair] [--trigger local|schedule|manual]
 //
 // incremental (the default): new candles since the last run, newly listed markets' history, and
 // up to 25 gap windows. backfill: every market's whole history again. repair: every gap. Reads
