@@ -1,8 +1,11 @@
 import { Suspense, type ReactNode } from "react";
 import { alignSeries } from "@/lib/analytics";
 import { formatDateTime } from "@/lib/format";
-import { getKalshiOverview, getKalshiResearchHistory, type KalshiOverview } from "@/lib/kalshi";
-import { DEFAULT_BENCHMARK, getBenchmarkSeries, getStockOverview, type StockOverview } from "@/lib/market-data";
+import { loadAnalysis } from "@/lib/history/analysis";
+import type { ResearchHistory } from "@/lib/history/types";
+import { provenanceNote } from "@/lib/history/window";
+import type { KalshiOverview } from "@/lib/kalshi";
+import type { StockAnalysis } from "@/lib/market-data";
 import type { Result } from "@/lib/result";
 import { RememberAnalysis } from "./analysis/RecentAnalyses";
 import { ComparisonChart } from "./charts/ComparisonChart";
@@ -14,7 +17,7 @@ import { StockPanel } from "./StockPanel";
 import { Card, Notice } from "./ui";
 
 type KalshiResult = Promise<Result<KalshiOverview>>;
-type StockResult = Promise<Result<StockOverview>>;
+type StockResult = Promise<Result<StockAnalysis>>;
 
 /**
  * Starts every data request at once. Each section waits only for the data it
@@ -24,15 +27,7 @@ type StockResult = Promise<Result<StockOverview>>;
  * section then fades in over its placeholder.
  */
 export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) {
-  const kalshiData = getKalshiOverview(kalshi);
-  const stockData = getStockOverview(stock);
-  // Research's 90-day history is a separate request, so it never slows the sections above.
-  const researchHistory = getKalshiResearchHistory(kalshi);
-  // Research's default benchmark waits for the stock's own requests, so the stock gets the
-  // shared Twelve Data quota first. It's skipped if the stock failed or is the benchmark.
-  const benchmarkData = stockData.then((s) =>
-    s.ok && stock !== DEFAULT_BENCHMARK.symbol ? getBenchmarkSeries(DEFAULT_BENCHMARK.symbol) : null,
-  );
+  const { kalshiData, stockData, researchHistory, benchmarkData } = loadAnalysis(stock, kalshi);
 
   return (
     <div className="grid gap-4 sm:gap-5">
@@ -106,7 +101,7 @@ export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) 
       </Suspense>
 
       <Suspense fallback={null}>
-        <SourcesNote kalshiData={kalshiData} stockData={stockData} />
+        <SourcesNote kalshiData={kalshiData} stockData={stockData} historyData={researchHistory} />
       </Suspense>
 
       <Suspense fallback={null}>
@@ -304,13 +299,24 @@ async function RememberRecent({
   return <RememberAnalysis stock={stock} kalshi={kalshi} title={k.ok ? k.data.market.title : null} />;
 }
 
-async function SourcesNote({ kalshiData, stockData }: { kalshiData: KalshiResult; stockData: StockResult }) {
-  const [k, s] = await Promise.all([kalshiData, stockData]);
+async function SourcesNote({
+  kalshiData,
+  stockData,
+  historyData,
+}: {
+  kalshiData: KalshiResult;
+  stockData: StockResult;
+  historyData: Promise<Result<ResearchHistory>>;
+}) {
+  const [k, s, h] = await Promise.all([kalshiData, stockData, historyData]);
   const fetchedAt = k.ok ? k.data.fetchedAt : s.ok ? s.data.fetchedAt : null;
+  // Only when stored candles were used, so without the store the note reads as before.
+  const stored = h.ok ? provenanceNote(h.data.provenance) : null;
   return (
     <p className="text-xs text-ink-muted">
       Sources: Kalshi public market data, Twelve Data.
-      {fetchedAt !== null && ` Fetched ${formatDateTime(fetchedAt)}.`} All times are New York time. Data may be delayed.
+      {fetchedAt !== null && ` Fetched ${formatDateTime(fetchedAt)}.`}
+      {stored !== null && ` ${stored}`} All times are New York time. Data may be delayed.
     </p>
   );
 }

@@ -2,6 +2,10 @@ import "server-only";
 
 import { realizedVolatility, relativeVolume } from "@/lib/analytics";
 import { LIVE } from "@/lib/fetch-cache";
+import { readStoredStockWindow } from "@/lib/history/stocks";
+import { readStore } from "@/lib/history/store";
+import type { ResearchBars, ResearchWindow } from "@/lib/history/types";
+import { LIVE_WINDOW, STOCK_HISTORY_MS } from "@/lib/history/window";
 import { isTimeout, REQUEST_TIMEOUT_MS } from "@/lib/request-timeout";
 import { fail, ok, type Result } from "@/lib/result";
 import { memoryCache } from "./memory-cache";
@@ -10,6 +14,7 @@ import type { RawError, RawQuote, RawTimeSeries, StockBar, StockOverview, StockQ
 
 const TWELVE_DATA_BASE_URL = "https://api.twelvedata.com";
 const HALF_HOUR_MS = 30 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const VOL_WINDOW_DAYS = 30;
 // 900 half-hour bars is about 70 sessions (13 a day), enough for the 90-day research window.
 // A time series costs one API credit whatever its length.
@@ -17,6 +22,8 @@ export const HALF_HOURLY_BARS = 900;
 // Hourly bars for the 7-day comparison chart: about 10 sessions, as before.
 const HOURLY_BARS = 70;
 export const DAILY_BARS = 90;
+/** The most bars one time series request returns; still one credit. */
+export const MAX_BARS = 5000;
 /**
  * Price history is kept in this server instance's memory for this long after it was
  * fetched, so analyzing the same stock again within a minute costs only the quote.
@@ -129,15 +136,39 @@ export function normalizeSeries(raw: RawTimeSeries, interval: Interval): Series 
   return { bars, exchangeTimeZone };
 }
 
+/** Dates bounding a time series request, "YYYY-MM-DD": the latest `outputsize` bars between them. */
+export interface SeriesDates {
+  startDate?: string;
+  endDate?: string;
+}
+
+/** The UTC date of a time, as start_date and end_date take it. */
+export const utcDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * Dates around a research window ending at `end`: from STOCK_HISTORY_MS before it to the day
+ * after, so whichever time zone Twelve Data reads them in, every bar up to `end` is included.
+ */
+export function windowDates(end: number): SeriesDates {
+  return { startDate: utcDate(end - STOCK_HISTORY_MS), endDate: utcDate(end + DAY_MS) };
+}
+
 /**
  * One symbol's bars, oldest first, intraday bars stamped at their close. One API credit
  * whatever the length. Never from Next.js's data cache: callers keep bars in memory along
  * with when they were fetched (see memoryCache), since which bars are final depends on it.
  */
-export function getTimeSeries(symbol: string, interval: Interval, outputsize: number, apiKey: string) {
+export function getTimeSeries(symbol: string, interval: Interval, outputsize: number, apiKey: string, dates: SeriesDates = {}) {
   return twelveGet<RawTimeSeries>(
     "/time_series",
-    { symbol, interval, outputsize: String(outputsize), timezone: "UTC" },
+    {
+      symbol,
+      interval,
+      outputsize: String(outputsize),
+      timezone: "UTC",
+      ...(dates.startDate && { start_date: dates.startDate }),
+      ...(dates.endDate && { end_date: dates.endDate }),
+    },
     apiKey,
     LIVE,
   ).then((raw) => normalizeSeries(raw, interval));
@@ -175,35 +206,76 @@ export function describeError(err: unknown, symbol: string, apiKey: string): Res
 
 interface StockHistory {
   halfHourly: Series;
+  /** The latest daily bars, or, for a window ending in the past, every one since the window's start. */
   daily: Series;
+  /** The daily bars Research reads when they aren't the panel's: a past window's. */
+  researchDaily: StockBar[] | null;
   /** When the bars were requested (ms): bars that hadn't closed by then may still have been forming. */
   fetchedAt: number;
 }
 
 const historyCache = memoryCache<StockHistory>(50);
 
-/** A stock's 30-minute and daily bars: from memory if fetched within STOCK_HISTORY_TTL_MS, otherwise 2 credits. */
-function getStockHistory(symbol: string, apiKey: string): Promise<Result<StockHistory>> {
-  return historyCache(
-    symbol,
-    async () => {
-      const fetchedAt = Date.now();
-      try {
-        const [halfHourly, daily] = await Promise.all([
-          getTimeSeries(symbol, "30min", HALF_HOURLY_BARS, apiKey),
-          getTimeSeries(symbol, "1day", DAILY_BARS, apiKey),
-        ]);
-        return ok({ halfHourly, daily, fetchedAt });
-      } catch (err) {
-        return describeError(err, symbol, apiKey);
-      }
-    },
-    (history) => history.fetchedAt + STOCK_HISTORY_TTL_MS,
-  );
+/**
+ * A stock's 30-minute and daily bars: from memory if fetched within STOCK_HISTORY_TTL_MS,
+ * otherwise 2 credits. For Research ending in the past (`end`, a closed market's close), the
+ * 30-minute bars cover its window instead of the latest sessions, and the daily bars reach back
+ * to its start, so the panel and Research still share 2 credits. Stored bars replace the
+ * requests whose window the store covers completely.
+ */
+function getStockHistory(symbol: string, apiKey: string, end: number | null): Promise<Result<StockHistory>> {
+  const load =
+    end === null
+      ? async () => {
+          const fetchedAt = Date.now();
+          try {
+            const [halfHourly, daily] = await Promise.all([
+              getTimeSeries(symbol, "30min", HALF_HOURLY_BARS, apiKey),
+              getTimeSeries(symbol, "1day", DAILY_BARS, apiKey),
+            ]);
+            return ok({ halfHourly, daily, researchDaily: null, fetchedAt });
+          } catch (err) {
+            return describeError(err, symbol, apiKey);
+          }
+        }
+      : () => getWindowHistory(symbol, apiKey, end);
+  return historyCache(end === null ? symbol : `${symbol}@${end}`, load, (history) => history.fetchedAt + STOCK_HISTORY_TTL_MS);
 }
 
-/** Quote, intraday and daily history, and realized volatility for one stock. */
-export async function getStockOverview(symbol: string): Promise<Result<StockOverview>> {
+async function getWindowHistory(symbol: string, apiKey: string, end: number): Promise<Result<StockHistory>> {
+  const range = { from: end - STOCK_HISTORY_MS, to: end + 1 };
+  const [storedHalfHourly, storedDaily] =
+    (await readStore("stock bars", (sql) =>
+      Promise.all([readStoredStockWindow(sql, symbol, "30min", range), readStoredStockWindow(sql, symbol, "1day", range)]),
+    )) ?? [null, null];
+  const fetchedAt = Date.now();
+  try {
+    const [halfHourly, daily] = await Promise.all([
+      storedHalfHourly ?? getTimeSeries(symbol, "30min", MAX_BARS, apiKey, windowDates(end)),
+      storedDaily
+        ? getTimeSeries(symbol, "1day", DAILY_BARS, apiKey)
+        : getTimeSeries(symbol, "1day", MAX_BARS, apiKey, { startDate: utcDate(range.from) }),
+    ]);
+    return ok({ halfHourly, daily, researchDaily: storedDaily?.bars ?? daily.bars, fetchedAt });
+  } catch (err) {
+    return describeError(err, symbol, apiKey);
+  }
+}
+
+/** The overview, plus the bars Research reads. */
+export interface StockAnalysis extends StockOverview {
+  research: ResearchBars;
+}
+
+/**
+ * Quote, intraday and daily history, and realized volatility for one stock. The quote is
+ * requested at once; the history waits for `researchWindow`, which says whether Research ends
+ * now or at a closed market's close (it resolves at once without the store).
+ */
+export async function getStockOverview(
+  symbol: string,
+  researchWindow: ResearchWindow | Promise<ResearchWindow> = LIVE_WINDOW,
+): Promise<Result<StockAnalysis>> {
   const apiKey = getApiKey();
   if (!apiKey) {
     return fail(
@@ -216,12 +288,12 @@ export async function getStockOverview(symbol: string): Promise<Result<StockOver
     // Half-hour bars serve both the hourly comparison chart (combined into Twelve Data's
     // hourly bars) and research, whose top-of-hour closes line up with Kalshi's hourly
     // candles, so research costs no extra API credit. The quote is always fetched fresh.
-    const [rawQuote, history] = await Promise.all([
+    const [rawQuote, { end, history }] = await Promise.all([
       twelveGet<RawQuote>("/quote", { symbol }, apiKey, LIVE),
-      getStockHistory(symbol, apiKey),
+      Promise.resolve(researchWindow).then(async ({ end }) => ({ end, history: await getStockHistory(symbol, apiKey, end) })),
     ]);
     if (!history.ok) return history;
-    const { halfHourly, daily: allDaily, fetchedAt: historyFetchedAt } = history.data;
+    const { halfHourly, daily: allDaily, researchDaily, fetchedAt: historyFetchedAt } = history.data;
 
     const quote = normalizeQuote(rawQuote);
     // A day's bar is still forming until its session ends, and its close is just the latest
@@ -230,7 +302,7 @@ export async function getStockOverview(symbol: string): Promise<Result<StockOver
     // when the bars were fetched (bars in memory from just before the close).
     const session = rawQuote.datetime ? parseDatetime(rawQuote.datetime) : null;
     const closes = sessionCloseTimes(halfHourly.bars);
-    const daily = allDaily.bars.filter(
+    const daily = allDaily.bars.slice(-DAILY_BARS).filter(
       (b) => !(quote.isMarketOpen && b.t === session) && (closes.get(b.t) ?? tradingDayClose(b.t)) <= historyFetchedAt,
     );
     const volWindow = daily.slice(-(VOL_WINDOW_DAYS + 1)).map((b) => b.close);
@@ -245,6 +317,7 @@ export async function getStockOverview(symbol: string): Promise<Result<StockOver
       relativeVolume: quote.isMarketOpen ? null : relativeVolume(quote.volume, quote.averageVolume),
       historyFetchedAt,
       fetchedAt: Date.now(),
+      research: { end, halfHourly: halfHourly.bars, daily: researchDaily ?? daily },
     });
   } catch (err) {
     return describeError(err, symbol, apiKey);

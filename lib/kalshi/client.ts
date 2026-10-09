@@ -47,7 +47,7 @@ export async function kalshiGet<T>(path: string, cache: RequestInit, timeoutMs =
 }
 
 /** Fixed, user-facing wording for a failed Kalshi request. */
-function describeError(err: unknown, ticker: string): Result<never> {
+export function describeKalshiError(err: unknown, ticker: string): Result<never> {
   if (err instanceof KalshiHttpError && err.status === 404) {
     return fail("not_found", `No Kalshi market found with ticker "${ticker}". Use a market ticker, not an event or series ticker.`);
   }
@@ -66,7 +66,7 @@ function describeError(err: unknown, ticker: string): Result<never> {
  * (shared, on Vercel) fetch cache every time. Candles end on minute boundaries and
  * Kalshi includes a candle ending exactly at end_ts, so no completed candle is lost.
  */
-const windowEndSec = (asOf: number) => Math.floor(asOf / 60_000) * 60;
+export const windowEndSec = (asOf: number) => Math.floor(asOf / 60_000) * 60;
 
 export function toNumber(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined || value === "") return null;
@@ -74,7 +74,7 @@ export function toNumber(value: string | number | null | undefined): number | nu
   return Number.isFinite(n) ? n : null;
 }
 
-function normalizeMarket(raw: RawMarket): KalshiMarket {
+export function normalizeMarket(raw: RawMarket): KalshiMarket {
   return {
     ticker: raw.ticker,
     eventTicker: raw.event_ticker,
@@ -194,8 +194,16 @@ function withMinutes(hourly: KalshiPoint[] | null, minutes: KalshiPoint[] | null
   return minutes === null ? null : mergeSeries(hourly ?? [], minutes);
 }
 
-/** Market snapshot, history, and derived metrics for one Kalshi market. */
-export async function getKalshiOverview(ticker: string): Promise<Result<KalshiOverview>> {
+/** The market from the live endpoint, with a failure described for the page. */
+export function lookUpMarket(ticker: string): Promise<Result<KalshiMarket>> {
+  return getMarket(ticker).then(ok, (err) => describeKalshiError(err, ticker));
+}
+
+/**
+ * Market snapshot, history, and derived metrics for one Kalshi market. `lookup` is a market
+ * lookup already under way (the dashboard shares one with Research), or else this makes its own.
+ */
+export async function getKalshiOverview(ticker: string, lookup?: Promise<Result<KalshiMarket>>): Promise<Result<KalshiOverview>> {
   const fetchedAt = Date.now();
   // None of these depend on each other, so start them all at once: the worst case is one
   // request timeout, not several in a row. History and the last trade are optional and
@@ -203,12 +211,9 @@ export async function getKalshiOverview(ticker: string): Promise<Result<KalshiOv
   const historyRequest = getProbabilityHistory(ticker, fetchedAt);
   const lastTradeRequest = getLastTradeTime(ticker).catch(() => null);
 
-  let market: KalshiMarket;
-  try {
-    market = await getMarket(ticker);
-  } catch (err) {
-    return describeError(err, ticker);
-  }
+  const found = await (lookup ?? lookUpMarket(ticker));
+  if (!found.ok) return found;
+  const market = found.data;
 
   const phase = marketPhase(market.status);
   // Only an open market has live quotes. Once trading stops, the last trade is a
@@ -242,12 +247,16 @@ export async function getKalshiOverview(ticker: string): Promise<Result<KalshiOv
  * days, for research. Kalshi only writes a candle when something changes, so the latest
  * point at or before any moment is the probability in effect then.
  */
-export async function getKalshiResearchHistory(ticker: string): Promise<Result<KalshiPoint[]>> {
+export function getKalshiResearchHistory(ticker: string): Promise<Result<KalshiPoint[]>> {
   const end = windowEndSec(Date.now());
-  const start = end - (RESEARCH_DAYS + RESEARCH_LOOKBACK_DAYS) * DAY_SEC;
+  return getHourlyHistory(ticker, end - (RESEARCH_DAYS + RESEARCH_LOOKBACK_DAYS) * DAY_SEC, end);
+}
+
+/** Hourly points from candles ending in [startSec, endSec], from the live endpoint. */
+export async function getHourlyHistory(ticker: string, startSec: number, endSec: number): Promise<Result<KalshiPoint[]>> {
   try {
-    return ok(await getCandles(ticker, start, end, HOURLY));
+    return ok(await getCandles(ticker, startSec, endSec, HOURLY));
   } catch (err) {
-    return describeError(err, ticker);
+    return describeKalshiError(err, ticker);
   }
 }
