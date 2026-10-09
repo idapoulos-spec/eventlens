@@ -12,12 +12,15 @@ import type { RawHistoricalCandlestick, RawHistoricalCutoff, RawMarket } from ".
 // nothing for them. The cutoff moves forward over time, so a settled market moves from the live
 // endpoints to these. Public and unauthenticated, like the live market-data endpoints.
 //
-// Responses are never cached by Next.js: a year of hourly candles is about 3.7 MB, over its 2 MB
-// limit, and settled data doesn't change, so callers store it instead.
+// Responses are never cached by Next.js: a full response is about 2 MB, its limit for a cached
+// response, and settled data doesn't change, so callers store it instead.
 
-/** Kalshi returns at most this many candles per request: the requested span divided by the period. */
-export const MAX_CANDLES_PER_REQUEST = 10_000;
-/** A full 10,000-candle response is several megabytes, so it gets longer than the usual 6 seconds. */
+/**
+ * The archive answers 400 ("max candlesticks: 5000") when a request spans more periods than this
+ * (the span divided by the period), though the live endpoint allows 10,000.
+ */
+export const MAX_CANDLES_PER_REQUEST = 5_000;
+/** A full 5,000-candle response is about 2 MB, so it gets longer than the usual 6 seconds. */
 export const CANDLES_TIMEOUT_MS = 20_000;
 
 export type CandlePeriod = 1 | 60 | 1440;
