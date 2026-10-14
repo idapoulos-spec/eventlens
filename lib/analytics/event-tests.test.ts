@@ -8,14 +8,14 @@ import { simulateRows } from "./test-helpers";
 // Simulations run hundreds of analyses; allow for slow CI machines.
 const SIMULATION_TIMEOUT = 120_000;
 
-const OPTIONS = { thresholdPp: 1.5, before: 6, after: 6 };
-const study = (rows: ResearchRow[]) => eventStudy(rows, computeChanges(rows).changes, OPTIONS);
+const OPTIONS = { threshold: 1.5, before: 6, after: 6 };
+const study = (rows: ResearchRow[]) => eventStudy(rows, computeChanges(rows, 100).changes, OPTIONS);
 
 /** A stock that drifts up by `effect` % in each of the three bars after a rise of at least the threshold. */
 const afterRises = (effect: number) => (i: number, rows: ResearchRow[]) => {
   for (let b = 1; b <= 3; b++) {
     const j = i - b;
-    if (j >= 1 && rows[j].probability! - rows[j - 1].probability! >= OPTIONS.thresholdPp / 100 - 1e-9) return effect / 100;
+    if (j >= 1 && rows[j].kalshiValue! - rows[j - 1].kalshiValue! >= OPTIONS.threshold / 100 - 1e-9) return effect / 100;
   }
   return 0;
 };

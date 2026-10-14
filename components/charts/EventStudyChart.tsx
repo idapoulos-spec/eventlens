@@ -12,7 +12,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { passes, type EventGroup, type EventStudy, type EventStudyTests, type GroupTests, type TestResult } from "@/lib/analytics";
+import { passes, type EventGroup, type EventStudy, type EventStudyTests, type GroupTests, type KalshiVariable, type TestResult } from "@/lib/analytics";
 import { formatSigned } from "@/lib/format";
 import { formatCi, formatP } from "../research/stats";
 import { AXIS_TICK, CHART_COLORS, ChartTooltip } from "./ChartTooltip";
@@ -65,13 +65,16 @@ export function EventStudyChart({
   tests,
   unit,
   stockSymbol,
-  thresholdPp,
+  threshold,
+  variable,
 }: {
   study: EventStudy;
   tests: EventStudyTests;
   unit: LagUnit;
   stockSymbol: string;
-  thresholdPp: number;
+  threshold: number;
+  /** Names the jumps and their unit: a probability in pp, or an expected value. */
+  variable: KalshiVariable;
 }) {
   const y = scale(study, tests);
   return (
@@ -103,8 +106,8 @@ export function EventStudyChart({
         </span>
       </div>
       <div className="grid gap-5 sm:grid-cols-2">
-        <Panel title={`Probability rose ≥${thresholdPp} pp`} group={study.rises} tests={tests.rises} study={study} unit={unit} y={y} />
-        <Panel title={`Probability fell ≥${thresholdPp} pp`} group={study.falls} tests={tests.falls} study={study} unit={unit} y={y} />
+        <Panel title={`${variable.text.rise} ≥${threshold} ${variable.unit}`} group={study.rises} tests={tests.rises} study={study} unit={unit} y={y} />
+        <Panel title={`${variable.text.fall} ≥${threshold} ${variable.unit}`} group={study.falls} tests={tests.falls} study={study} unit={unit} y={y} />
       </div>
     </div>
   );

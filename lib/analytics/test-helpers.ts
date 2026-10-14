@@ -78,7 +78,7 @@ export function simulateHourly({ sessions, seed, beta = 0, lag = 0, sharedVolati
       const t = FIRST_SESSION_10AM + day * 24 * HOUR_MS + (h + 1) * HOUR_MS;
       const source = h - lag;
       const signal = source >= 0 && source < x.length ? (beta * x[source]) / 100 : 0;
-      changes.push({ t, step: Math.round(t / HOUR_MS), probChangePp: xh, logReturn: noise[h] + signal });
+      changes.push({ t, step: Math.round(t / HOUR_MS), kalshiChange: xh, logReturn: noise[h] + signal });
     });
   }
   return changes;
@@ -95,7 +95,7 @@ export function simulateDaily({ sessions, seed, beta = 0, lag = 0, sharedVolatil
     const source = i - lag;
     const signal = source >= 0 ? (beta * x[source]) / 100 : 0;
     const t = Date.UTC(2026, 0, 5, 21) + i * 24 * HOUR_MS;
-    return { t, step: i, probChangePp: xd, logReturn: 0.012 * vol * spike * studentT(rng, 5) + signal };
+    return { t, step: i, kalshiChange: xd, logReturn: 0.012 * vol * spike * studentT(rng, 5) + signal };
   });
 }
 
@@ -130,7 +130,7 @@ export function simulateRows({
       } else {
         price *= Math.exp(0.006 * dayVol * normal(rng)); // overnight
       }
-      rows.push({ t, step: Math.round(t / HOUR_MS), stockClose: price, probability: prob, kalshiSource: "midpoint", kalshiAsOf: t, exclusion: null });
+      rows.push({ t, step: Math.round(t / HOUR_MS), stockClose: price, kalshiValue: prob, kalshiSource: "midpoint", kalshiAsOf: t, exclusion: null });
       if (drift) rows[rows.length - 1].stockClose = price *= Math.exp(drift(rows.length - 1, rows));
     }
   }
@@ -195,7 +195,7 @@ export function simulateMarketRows({
   let bench = 400;
   let prob = 0.5;
   const push = (t: number, step: number) => {
-    rows.push({ t, step, stockClose: price, probability: prob, kalshiSource: "midpoint", kalshiAsOf: t, exclusion: null });
+    rows.push({ t, step, stockClose: price, kalshiValue: prob, kalshiSource: "midpoint", kalshiAsOf: t, exclusion: null });
     closesByT.set(t, bench);
   };
   // One interval: the Kalshi move (pp) as realized after clamping, the benchmark's return, and the stock's.

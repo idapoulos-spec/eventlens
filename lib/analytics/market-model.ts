@@ -73,7 +73,8 @@ export function fitMarketModel(
   const X: number[][] = [];
   const y: number[] = [];
   const sample: RefitSample = { t: [], step: [], r: [], m: [] };
-  computeChanges(rows).intervals.forEach((interval, i) => {
+  // Only the stock's returns are used, so the Kalshi changes' scale doesn't matter.
+  computeChanges(rows, 1).intervals.forEach((interval, i) => {
     const rm = bench.get(interval.t);
     if (interval.exclusion === "first_row" || interval.exclusion === "non_trading") return;
     if (interval.logReturn === null || rm === undefined || excludeRow(i)) return;
@@ -172,7 +173,7 @@ export function kalshiRegression(
   const n = used.length;
   if (n < MIN_PAIRS) return null;
   const market = used.map((c) => benchReturnByT.get(c.t)! * 100);
-  const x = used.map((c) => c.probChangePp);
+  const x = used.map((c) => c.kalshiChange);
   const r = used.map((c) => c.logReturn * 100);
   const steps = used.map((c) => c.step);
   const fit = ols(
@@ -241,7 +242,7 @@ export function kalshiBenchmarkCorrelation(
     return rm === undefined ? [] : [{ ...c, logReturn: rm }];
   });
   const [{ test }] = lagCorrelationTests(withBench, [0], resolution);
-  return { ...correlationStats(withBench.map((c) => ({ x: c.probChangePp, y: c.logReturn }))), test };
+  return { ...correlationStats(withBench.map((c) => ({ x: c.kalshiChange, y: c.logReturn }))), test };
 }
 
 export interface MarketAdjustmentInput {
@@ -249,8 +250,10 @@ export interface MarketAdjustmentInput {
   full: ResearchRow[];
   /** Rows in the selected window. */
   rows: ResearchRow[];
-  /** Usable changes in the selected window (computeChanges(rows).changes). */
+  /** Usable changes in the selected window (computeChanges(rows, scale).changes). */
   changes: ChangePoint[];
+  /** Turns a change in the rows' Kalshi values into the event threshold's unit (KalshiVariable.scale). */
+  scale: number;
   /** Benchmark closes by observation time. */
   closesByT: ReadonlyMap<number, number>;
   event: EventStudyOptions;
@@ -289,11 +292,11 @@ export function primaryTest(abnormal: ChangePoint[], model: MarketModel, resolut
 }
 
 /** Every market-adjusted result for one window, resolution, and jump size. */
-export function marketAdjustment({ full, rows, changes, closesByT, event, resolution }: MarketAdjustmentInput): MarketAdjustment {
+export function marketAdjustment({ full, rows, changes, scale, closesByT, event, resolution }: MarketAdjustmentInput): MarketAdjustment {
   const benchReturns = benchmarkReturnsByT(full, closesByT);
   const model = fitMarketModel(full, closesByT);
   // Fitted only outside the jump windows, so the jumps being studied don't shape beta.
-  const windows = eventWindowRows(full, computeChanges(full).changes, event);
+  const windows = eventWindowRows(full, computeChanges(full, scale).changes, event);
   const eventModel = fitMarketModel(full, closesByT, (i) => windows.has(i));
   const excess = adjustedChanges(changes, benchReturns, SIMPLE_EXCESS);
   const abnormal = model && adjustedChanges(changes, benchReturns, model);

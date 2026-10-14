@@ -17,7 +17,7 @@ describe("buildResearchRows", () => {
       closeTime: null,
       resolution: "hourly",
     });
-    expect(rows.map((r) => [r.probability, r.kalshiAsOf, r.exclusion])).toEqual([
+    expect(rows.map((r) => [r.kalshiValue, r.kalshiAsOf, r.exclusion])).toEqual([
       [0.4, at(13), null],
       [0.45, at(15), null],
       [0.45, at(15), null],
@@ -26,7 +26,7 @@ describe("buildResearchRows", () => {
 
   it("uses a candle that ends exactly at the stock close", () => {
     const rows = buildResearchRows({ stock: stock([at(14), 100]), kalshi: [mid(at(14), 0.5)], closeTime: null, resolution: "hourly" });
-    expect(rows[0]).toMatchObject({ probability: 0.5, kalshiAsOf: at(14), exclusion: null });
+    expect(rows[0]).toMatchObject({ kalshiValue: 0.5, kalshiAsOf: at(14), exclusion: null });
   });
 
   it("flags rows before the first candle, after the market closed, and from last-trade estimates", () => {
@@ -37,8 +37,8 @@ describe("buildResearchRows", () => {
       resolution: "hourly",
     });
     expect(rows.map((r) => r.exclusion)).toEqual(["before_kalshi", null, "kalshi_last_price", "market_closed"]);
-    expect(rows[0]).toMatchObject({ probability: null, kalshiSource: null, kalshiAsOf: null });
-    expect(rows[3]).toMatchObject({ probability: 0.6, kalshiAsOf: at(16, 30) });
+    expect(rows[0]).toMatchObject({ kalshiValue: null, kalshiSource: null, kalshiAsOf: null });
+    expect(rows[3]).toMatchObject({ kalshiValue: 0.6, kalshiAsOf: at(16, 30) });
   });
 
   it("numbers hourly rows by hour and daily rows by trading day", () => {
@@ -57,7 +57,7 @@ describe("buildResearchRows", () => {
       closeTime: null,
       resolution: "hourly",
     });
-    expect(rows.map((r) => [r.t, r.stockClose, r.probability])).toEqual([
+    expect(rows.map((r) => [r.t, r.stockClose, r.kalshiValue])).toEqual([
       [at(14), 100, 0.4],
       [at(16), 102, 0.5],
     ]);

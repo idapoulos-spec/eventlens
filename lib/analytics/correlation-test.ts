@@ -185,7 +185,7 @@ function setup(changes: ChangePoint[], resolution: Resolution, refit?: RefitSamp
   }
   return {
     sorted,
-    x: Float64Array.from(sorted, (c) => c.probChangePp),
+    x: Float64Array.from(sorted, (c) => c.kalshiChange),
     y: Float64Array.from(sorted, (c) => c.logReturn),
     steps,
     byStep: new Map(steps.map((s, i) => [s, i])),

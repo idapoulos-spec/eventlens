@@ -22,6 +22,7 @@ import {
   type EventStudy,
   type EventStudyTests,
   type GroupTests,
+  type KalshiVariable,
   type LagCorrelation,
   type MarketModel,
   type RefitSample,
@@ -57,7 +58,6 @@ import { useBenchmark } from "./useBenchmark";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WINDOWS = [7, 30, 90] as const;
 type WindowDays = (typeof WINDOWS)[number];
-const THRESHOLDS = [1, 2, 3, 5, 10];
 
 interface Settings {
   unit: LagUnit;
@@ -71,7 +71,6 @@ interface Settings {
   rollingWindow: number;
   rollingSpan: string;
   eventBars: number;
-  defaultThreshold: number;
 }
 
 const SETTINGS: Record<Resolution, Settings> = {
@@ -84,7 +83,6 @@ const SETTINGS: Record<Resolution, Settings> = {
     rollingWindow: 18,
     rollingSpan: "about 3 sessions",
     eventBars: 6,
-    defaultThreshold: 2,
   },
   daily: {
     unit: "d",
@@ -95,26 +93,23 @@ const SETTINGS: Record<Resolution, Settings> = {
     rollingWindow: 20,
     rollingSpan: "about a month",
     eventBars: 5,
-    defaultThreshold: 3,
   },
 };
 
 // A rolling view needs this many intervals beyond one window to show any change over time.
 const ROLLING_EXTRA = 10;
 
+const COMMON_EXCLUSIONS: Record<string, string> = {
+  before_kalshi: "before Kalshi's first price in the loaded history",
+  market_closed: "after the market closed",
+  kalshi_last_price: "priced from a last trade (one-sided book)",
+  expected_missing: "without an expected value at one end (see the event panel for why)",
+  outcome_set_changed: "across a change in which outcomes were open",
+};
+
 const EXCLUSION_LABEL: Record<Resolution, Record<string, string>> = {
-  hourly: {
-    non_trading: "across nights, weekends, or halts",
-    before_kalshi: "before Kalshi's first price in the loaded history",
-    market_closed: "after the market closed",
-    kalshi_last_price: "priced from a last trade (one-sided book)",
-  },
-  daily: {
-    non_trading: "across a missing session",
-    before_kalshi: "before Kalshi's first price in the loaded history",
-    market_closed: "after the market closed",
-    kalshi_last_price: "priced from a last trade (one-sided book)",
-  },
+  hourly: { non_trading: "across nights, weekends, or halts", ...COMMON_EXCLUSIONS },
+  daily: { non_trading: "across a missing session", ...COMMON_EXCLUSIONS },
 };
 
 interface Props {
@@ -126,8 +121,8 @@ interface Props {
   windowEnd: number | null;
   stockSymbol: string;
   kalshiTicker: string;
-  /** What a YES outcome means for this market, quoted in the sign notes. */
-  yesLabel: string;
+  /** What's studied on the Kalshi side, its unit, and its labels: a market's probability or an event's expected value. */
+  variable: KalshiVariable;
   /** The default benchmark as the server loaded it, or null if it wasn't requested (the stock is the benchmark). */
   initialBenchmark: Result<BenchmarkSeries> | null;
 }
@@ -173,15 +168,12 @@ function view(changes: ChangePoint[], study: EventStudy | null, settings: Settin
   };
 }
 
-export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kalshiTicker, yesLabel, initialBenchmark }: Props) {
+export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kalshiTicker, variable, initialBenchmark }: Props) {
   // 90 days by default: with 30 days of hourly data the power tests (correlation-test.test.ts)
   // miss a correlation of about 0.4 roughly half the time.
   const [days, setDays] = useState<WindowDays>(90);
   const [chosenResolution, setResolution] = useState<Resolution>("hourly");
-  const [thresholds, setThresholds] = useState<Record<Resolution, number>>({
-    hourly: SETTINGS.hourly.defaultThreshold,
-    daily: SETTINGS.daily.defaultThreshold,
-  });
+  const [thresholds, setThresholds] = useState<Record<Resolution, number>>(variable.defaultThreshold);
   // Market-adjusted by default, since the primary test always is; raw when adjustment isn't possible.
   const [chosenReturns, setReturns] = useState<Returns>("adjusted");
   const benchmark = useBenchmark(initialBenchmark, windowEnd);
@@ -195,10 +187,10 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
     // Every loaded row (90 days): the market model is fitted on these, whatever the window.
     const full = resolution === "hourly" ? hourly : daily;
     const rows = rowsSince(full, asOf - days * DAY_MS);
-    const series = computeChanges(rows);
-    const event = { thresholdPp: threshold, before: settings.eventBars, after: settings.eventBars };
+    const series = computeChanges(rows, variable.scale);
+    const event = { threshold, before: settings.eventBars, after: settings.eventBars };
     return { full, rows, series, event, raw: view(series.changes, eventStudy(rows, series.changes, event), settings, resolution, null) };
-  }, [hourly, daily, asOf, days, resolution, settings, threshold]);
+  }, [hourly, daily, asOf, days, resolution, settings, threshold, variable.scale]);
 
   const benchSeries = isSelf ? null : benchmark.series;
   const closesByT = useMemo(
@@ -208,8 +200,16 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
   const market = useMemo(
     () =>
       closesByT &&
-      marketAdjustment({ full: analysis.full, rows: analysis.rows, changes: analysis.series.changes, closesByT, event: analysis.event, resolution }),
-    [analysis, closesByT, resolution],
+      marketAdjustment({
+        full: analysis.full,
+        rows: analysis.rows,
+        changes: analysis.series.changes,
+        scale: variable.scale,
+        closesByT,
+        event: analysis.event,
+        resolution,
+      }),
+    [analysis, closesByT, resolution, variable.scale],
   );
   const canAdjust = Boolean(market?.model && market.abnormal);
   // Only computed while shown: the resampling isn't free.
@@ -252,7 +252,7 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
 
   function downloadCsv() {
     const csvBenchmark = closesByT && { symbol: benchmark.active.symbol, closesByT, model: market?.model ?? null };
-    const blob = new Blob([researchCsv(analysis.rows, resolution, csvBenchmark)], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob([researchCsv(analysis.rows, resolution, csvBenchmark, variable)], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -268,8 +268,8 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
     <div className="grid gap-4 sm:gap-5">
       <Card
         title="Research"
-        subtitle={`Kalshi probability changes vs. ${stockSymbol} returns, compared only where both have a real observation${
-          windowEnd === null ? "" : `, in windows ending at the market's close (${formatDateTime(windowEnd, { withYear: true })})`
+        subtitle={`${variable.kind === "probability" ? "Kalshi probability changes" : variable.text.changes} vs. ${stockSymbol} returns, compared only where both have a real observation${
+          windowEnd === null ? "" : `, in windows ending at the ${variable.kind === "probability" ? "market's" : "event's first"} close (${formatDateTime(windowEnd, { withYear: true })})`
         }`}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
@@ -304,9 +304,9 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
               onChange={(e) => setThresholds((t) => ({ ...t, [resolution]: Number(e.target.value) }))}
               className="h-10 w-full rounded-lg border border-border bg-surface-raised px-3 text-base text-ink focus:border-series-kalshi focus:outline-none sm:h-8 sm:w-auto sm:text-xs"
             >
-              {THRESHOLDS.map((t) => (
+              {variable.thresholds.map((t) => (
                 <option key={t} value={t}>
-                  ≥ {t} pp in one {settings.noun[0]}
+                  ≥ {t} {variable.unit} in one {settings.noun[0]}
                 </option>
               ))}
             </select>
@@ -333,6 +333,7 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
           settings={settings}
           adjustment={adjustment}
           rawR={analysis.raw.sameInterval.r}
+          variable={variable}
         />
 
         <PrimaryTest
@@ -343,13 +344,10 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
           benchmark={benchmark.active.symbol}
           stockSymbol={stockSymbol}
           settings={settings}
+          variable={variable}
         />
 
-        <p className="mt-3 text-xs text-ink-secondary">
-          <span className="font-medium text-ink">How to read the sign.</span> Positive means {stockSymbol} tended to rise
-          when the chance of YES rose; negative means it tended to fall. Here, YES = “{yesLabel}”. If YES is bad news for{" "}
-          {stockSymbol}, negative values are what you’d expect.
-        </p>
+        <SignNote stockSymbol={stockSymbol} variable={variable} />
       </Card>
 
       <MarketAdjustmentCard
@@ -363,14 +361,14 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
         unit={settings.unit}
         same={settings.same}
         noun={settings.noun}
-        yesLabel={yesLabel}
+        variable={variable}
       />
 
       {changes.length === 0 ? (
         <Notice
           tone="info"
           title="Nothing to analyze in this window"
-          message="No intervals have a usable Kalshi price and stock price at both ends. The CSV lists every row with the reason it was left out."
+          message={`No intervals have a usable ${variable.kind === "probability" ? "Kalshi price" : "expected value"} and stock price at both ends. The CSV lists every row with the reason it was left out.`}
         />
       ) : (
         <>
@@ -380,7 +378,7 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
               adjustedBy={returns === "adjusted" ? benchmark.active.symbol : null}
               settings={settings}
               stockSymbol={stockSymbol}
-              yesLabel={yesLabel}
+              variable={variable}
               adjustment={adjustment}
               resolution={resolution}
             />
@@ -390,6 +388,7 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
               settings={settings}
               resolution={resolution}
               adjustment={adjustment}
+              variable={variable}
             />
           </div>
           <EventStudyCard
@@ -398,7 +397,7 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
             settings={settings}
             stockSymbol={stockSymbol}
             threshold={threshold}
-            yesLabel={yesLabel}
+            variable={variable}
             adjustment={adjustment}
             resolution={resolution}
           />
@@ -418,12 +417,31 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
 /** Lowercases a sentence's first letter to continue a sentence, unless it starts a ticker (e.g. "TLT is …"). */
 const lowerFirst = (text: string) => (/^[A-Z][a-z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text);
 
-function sampleFlags(stats: CorrelationStats): string[] {
+/** How to read the sign of a correlation, for one market's YES side or an event's expected value. */
+function SignNote({ stockSymbol, variable }: { stockSymbol: string; variable: KalshiVariable }) {
+  if (variable.kind === "expected") {
+    return (
+      <p className="mt-3 text-xs text-ink-secondary">
+        <span className="font-medium text-ink">How to read the sign.</span> Positive means {stockSymbol} tended to rise when{" "}
+        {variable.text.rose}; negative, that it tended to fall.
+      </p>
+    );
+  }
+  return (
+    <p className="mt-3 text-xs text-ink-secondary">
+      <span className="font-medium text-ink">How to read the sign.</span> Positive means {stockSymbol} tended to rise
+      when the chance of YES rose; negative means it tended to fall. Here, YES = “{variable.yesLabel}”. If YES is bad news for{" "}
+      {stockSymbol}, negative values are what you’d expect.
+    </p>
+  );
+}
+
+function sampleFlags(stats: CorrelationStats, variable: KalshiVariable): string[] {
   const flags: string[] = [];
   if (stats.flag === "insufficient") flags.push(`Too few intervals to analyze (n = ${stats.n}; at least 10 needed)`);
   else if (stats.flag === "small") flags.push(`Small sample (n = ${stats.n}): results can swing a lot by chance`);
-  if (stats.noVariation) flags.push("Kalshi's probability didn't change, so there's no correlation to measure");
-  else if (stats.n > 0 && stats.fewKalshiMoves) flags.push(`Kalshi moved in only ${stats.kalshiMoves} intervals: a few moves decide the results`);
+  if (stats.noVariation) flags.push(`${variable.text.value} didn't change, so there's no correlation to measure`);
+  else if (stats.n > 0 && stats.fewKalshiMoves) flags.push(`${variable.text.subject} moved in only ${stats.kalshiMoves} intervals: a few moves decide the results`);
   return flags;
 }
 
@@ -445,6 +463,7 @@ function Summary({
   settings,
   adjustment,
   rawR,
+  variable,
 }: {
   changes: ChangePoint[];
   excluded: ChangeSeries["excluded"];
@@ -453,6 +472,7 @@ function Summary({
   settings: Settings;
   adjustment: Adjustment | null;
   rawR: number | null;
+  variable: KalshiVariable;
 }) {
   const intervalNoun: [string, string] = resolution === "hourly" ? ["hourly interval", "hourly intervals"] : ["daily interval", "daily intervals"];
   const range = changes.length > 0 ? ` (${formatShortDate(changes[0].t)} – ${formatShortDate(changes[changes.length - 1].t)})` : "";
@@ -462,12 +482,12 @@ function Summary({
   if (adjustment && adjustment.missingBenchmark > 0) {
     left.push(`${adjustment.missingBenchmark.toLocaleString("en-US")} without a ${adjustment.benchmark} price at both ends`);
   }
-  const flags = sampleFlags(stats);
+  const flags = sampleFlags(stats, variable);
   return (
     <div className="mt-4 text-sm text-ink-secondary">
       <p>
         <span className="font-semibold text-ink">{plural(changes.length, intervalNoun)}</span>
-        {range}, Kalshi moved in {plural(stats.kalshiMoves, [settings.noun[0], settings.noun[1]])}.
+        {range}, {variable.text.subject} moved in {plural(stats.kalshiMoves, [settings.noun[0], settings.noun[1]])}.
         {stats.r !== null && (
           <>
             {" "}
@@ -514,6 +534,7 @@ function PrimaryTest({
   benchmark,
   stockSymbol,
   settings,
+  variable,
 }: {
   primary: TestResult | null;
   /** For a result that isn't significant: the smallest correlation this sample could detect. */
@@ -525,6 +546,7 @@ function PrimaryTest({
   benchmark: string;
   stockSymbol: string;
   settings: Settings;
+  variable: KalshiVariable;
 }) {
   const missing = primary === null ? null : unavailableText(primary);
   return (
@@ -532,7 +554,7 @@ function PrimaryTest({
       <div className="flex flex-wrap items-center gap-2">
         <RoleBadge role="primary" />
         <span className="text-sm font-medium text-ink">
-          {settings.same} correlation of Kalshi changes with {stockSymbol}’s market-adjusted returns
+          {settings.same} correlation of {variable.kind === "probability" ? "Kalshi changes" : "ΔE"} with {stockSymbol}’s market-adjusted returns
           {primary && ` (vs. ${benchmark})`}
         </span>
       </div>
@@ -615,7 +637,7 @@ function LeadLagCard({
   adjustedBy,
   settings,
   stockSymbol,
-  yesLabel,
+  variable,
   adjustment,
   resolution,
 }: {
@@ -624,7 +646,7 @@ function LeadLagCard({
   adjustedBy: string | null;
   settings: Settings;
   stockSymbol: string;
-  yesLabel: string;
+  variable: KalshiVariable;
   adjustment: Adjustment | null;
   resolution: Resolution;
 }) {
@@ -647,7 +669,7 @@ function LeadLagCard({
     lead = (
       <>
         After correcting for the {tested.length} lags tested, {passing.length === 1 ? "one passes" : `${passing.length} pass`}: at{" "}
-        {fmt(top)}, Kalshi changes tended to move {top.r! > 0 ? "in the same direction as" : "opposite to"}{" "}
+        {fmt(top)}, {variable.kind === "probability" ? "Kalshi changes" : "ΔE"} tended to move {top.r! > 0 ? "in the same direction as" : "opposite to"}{" "}
         {when(top.lag, settings, `${stockSymbol}’s ${returnNoun}`)} (r = {fmtR(top.r)}, 95% CI {formatCi(top.test.ci, fmtR)}, Holm
         p = {formatP(top.test.holm)}, BH p = {formatP(top.test.bh)}).
         {others.length > 0 && ` Also ${others.map(fmt).join(", ")}.`} Exploratory: a lead to check, not a finding.
@@ -666,7 +688,7 @@ function LeadLagCard({
   }
 
   return (
-    <Card title="Lead-lag" subtitle={`Correlation of Kalshi changes with ${stockSymbol} ${returnNoun}s, shifted by ${settings.noun[1]}`}>
+    <Card title="Lead-lag" subtitle={`Correlation of ${variable.kind === "probability" ? "Kalshi changes" : "ΔE"} with ${stockSymbol} ${returnNoun}s, shifted by ${settings.noun[1]}`}>
       {measured.length === 0 ? (
         <Notice tone="info" title="Not enough data" message="Each lag needs at least 10 matching intervals, with some movement in both series." />
       ) : (
@@ -676,7 +698,7 @@ function LeadLagCard({
         lead={lead}
         caveats={
           <>
-            Right of 0: Kalshi moved first. Left of 0: {stockSymbol} moved first. Whiskers are 95% intervals; one that reaches
+            Right of 0: {variable.text.subject} moved first. Left of 0: {stockSymbol} moved first. Whiskers are 95% intervals; one that reaches
             ±1 means Kalshi’s moves at that lag fall in too few {resolution === "hourly" ? "sessions" : "runs of days"} to pin the
             correlation down.{" "}
             <strong className="font-medium text-ink-secondary">
@@ -685,8 +707,8 @@ function LeadLagCard({
             </strong>{" "}
             Holm keeps the chance of any false positive among them at 5%; Benjamini–Hochberg (BH) keeps the expected share of
             false positives among those that pass at 5%. Neighboring lags share most of their data, which makes Holm cautious.{" "}
-            {withMethod && withMethod.test.p !== null && methodText(withMethod.test)} Kalshi’s changes are left as observed, zeros
-            and all. The sign depends on what YES means (“{yesLabel}”).
+            {withMethod && withMethod.test.p !== null && methodText(withMethod.test)}{" "}
+            {variable.kind === "probability" ? "Kalshi’s changes" : "ΔE values"} are left as observed, zeros and all. {variable.text.sign}
             {adjustment && ` ${adjustmentNote(adjustment, stockSymbol, resolution)}`}
           </>
         }
@@ -705,12 +727,14 @@ function RollingCard({
   settings,
   resolution,
   adjustment,
+  variable,
 }: {
   points: RollingPoint[];
   changes: number;
   settings: Settings;
   resolution: Resolution;
   adjustment: Adjustment | null;
+  variable: KalshiVariable;
 }) {
   const w = settings.rollingWindow;
   const rs = points.map((p) => p.r).filter((r): r is number => r !== null);
@@ -746,8 +770,8 @@ function RollingCard({
             uses just {w} intervals and shares {w - 1} of them with the next, so the line moves smoothly by construction and its
             swings aren’t independent evidence; with so few intervals, large swings happen by chance alone. For tests, see the
             primary test and the lead-lag chart.
-            {points.some((p) => p.r === null) && " Gaps: one series didn't move in that window."} The sign depends on what YES
-            means (see above).
+            {points.some((p) => p.r === null) && " Gaps: one series didn't move in that window."}{" "}
+            {variable.kind === "probability" ? "The sign depends on what YES means (see above)." : variable.text.sign}
             {adjustment && ` Every window uses the same ${betaFrom(adjustment.model, resolution, adjustment.days)}.`}
           </>
         }
@@ -773,7 +797,7 @@ function EventStudyCard({
   settings,
   stockSymbol,
   threshold,
-  yesLabel,
+  variable,
   adjustment,
   resolution,
 }: {
@@ -782,15 +806,15 @@ function EventStudyCard({
   settings: Settings;
   stockSymbol: string;
   threshold: number;
-  yesLabel: string;
+  variable: KalshiVariable;
   adjustment: Adjustment | null;
   resolution: Resolution;
 }) {
   const kind = adjustment ? "market-adjusted return" : "return";
   const card = (children: ReactNode) => (
     <Card
-      title="Around Kalshi jumps"
-      subtitle={`Average ${stockSymbol} cumulative ${kind} in the ${settings.noun[1]} before and after the probability moved ≥${threshold} pp in one ${settings.noun[0]}`}
+      title={variable.kind === "probability" ? "Around Kalshi jumps" : "Around jumps in E"}
+      subtitle={`Average ${stockSymbol} cumulative ${kind} in the ${settings.noun[1]} before and after ${variable.text.moved} moved ≥${threshold} ${variable.unit} in one ${settings.noun[0]}`}
     >
       {children}
     </Card>
@@ -837,7 +861,8 @@ function EventStudyCard({
         tests={tests}
         unit={settings.unit}
         stockSymbol={adjustment ? `${stockSymbol} market-adjusted` : stockSymbol}
-        thresholdPp={threshold}
+        threshold={threshold}
+        variable={variable}
       />
       <Caption
         lead={
@@ -854,8 +879,8 @@ function EventStudyCard({
             whether the paths after jumps differ from the baseline; the whole-path test asks whether they differ anywhere in the
             window (the largest deviation, judged against how large it gets by chance).{" "}
             {method && methodText(method)} A jump’s own volatility counts against it, so a stock that’s merely jumpier around news
-            doesn’t pass. Based on {plural(study.rises.n, ["rise", "rises"])} and {plural(study.falls.n, ["fall", "falls"])} in the
-            chance of YES (“{yesLabel}”). Paths start at the close before the jump (bar −1); the shaded bar is the{" "}
+            doesn’t pass. Based on {plural(study.rises.n, ["rise", "rises"])} and {plural(study.falls.n, ["fall", "falls"])}{" "}
+            {variable.text.movesIn}. Paths start at the close before the jump (bar −1); the shaded bar is the{" "}
             {settings.noun[0]} the jump happened in. {settings.barNote}
             {skipped > 0 &&
               ` ${plural(skipped, ["jump was", "jumps were"])} skipped (within ${settings.eventBars} bars of an earlier jump, or too close to the edge of the data${

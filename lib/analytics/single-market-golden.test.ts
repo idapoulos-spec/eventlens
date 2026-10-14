@@ -52,16 +52,16 @@ describe("single-market Research outputs are unchanged", () => {
     const closesByT = new Map(rows.map((r, i) => [r.t, 400 + Math.cos(i)]));
     expect(sha(researchCsv(rows, "hourly"))).toBe("e199ecb6f8e383f8");
     expect(sha(researchCsv(rows, "hourly", { symbol: "SPY", closesByT, model: { alpha: 0.0001, beta: 1.2 } }))).toBe("23d93e10720ab016");
-    expect(sha(canon(computeChanges(rows)))).toBe("c9c280889638da7e");
+    expect(sha(canon(computeChanges(rows, 100)))).toBe("c9c280889638da7e");
   });
 
   for (const resolution of ["hourly", "daily"] as const) {
     it(`gives the same ${resolution} statistics, event study, and market adjustment`, () => {
       const { rows, closesByT } = simulateMarketRows({ sessions: resolution === "hourly" ? 40 : 60, resolution, seed: 31, effect: 0.05, sharedVolatility: true });
-      const series = computeChanges(rows);
-      const event = { thresholdPp: 1.5, before: 4, after: 4 };
+      const series = computeChanges(rows, 100);
+      const event = { threshold: 1.5, before: 4, after: 4 };
       const study = eventStudy(rows, series.changes, event);
-      const market = marketAdjustment({ full: rows, rows, changes: series.changes, closesByT, event, resolution });
+      const market = marketAdjustment({ full: rows, rows, changes: series.changes, scale: 100, closesByT, event, resolution });
       expect(sha(researchCsv(rows, resolution, { symbol: "SPY", closesByT, model: market.model }))).toBe({ hourly: "62fbef227e9fa7bd", daily: "a208ab4576f7993e" }[resolution]);
       expect(sha(canon(series))).toBe({ hourly: "a7f0cb0861513a94", daily: "5f4896c3f1253860" }[resolution]);
       expect(sha(canon(study))).toBe({ hourly: "aaf355f1f2abb946", daily: "4001227c95c3a7cd" }[resolution]);

@@ -20,7 +20,7 @@ export function rollingCorrelation(changes: ChangePoint[], window: number): Roll
     points.push({
       t: slice[slice.length - 1].t,
       startT: slice[0].t,
-      r: pearson(slice.map((c) => c.probChangePp), slice.map((c) => c.logReturn)),
+      r: pearson(slice.map((c) => c.kalshiChange), slice.map((c) => c.logReturn)),
       n: window,
     });
   }

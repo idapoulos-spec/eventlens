@@ -18,7 +18,9 @@ export type RowExclusion =
   /** After the market's close time: its last price is no longer a live probability. */
   | "market_closed"
   /** Estimated from the last trade (the book was one-sided), which may be stale. */
-  | "kalshi_last_price";
+  | "kalshi_last_price"
+  /** An event's expected value is missing at this time; `expected.missing` says why. Never an older value instead. */
+  | "expected_missing";
 
 export interface SourcedPoint extends TimePoint {
   source: ProbabilitySource;
@@ -33,13 +35,31 @@ export interface ResearchRow {
    */
   step: number;
   stockClose: number;
-  /** Kalshi probability in effect at `t` (0–1), or null before the first candle. */
-  probability: number | null;
+  /** Kalshi's value in effect at `t` (a probability, 0–1), or null before the first candle. */
+  kalshiValue: number | null;
   kalshiSource: ProbabilitySource | null;
   /** When the Kalshi candle that `probability` comes from ended, ms. */
   kalshiAsOf: number | null;
   /** Why Kalshi's value can't be used here, or null if it can. */
   exclusion: RowExclusion | null;
+  /** For an event's expected value: Σp, the open outcomes' tickers, and why E is missing. */
+  expected?: ExpectedDetail;
+}
+
+export interface ExpectedDetail {
+  sumP: number | null;
+  /** Tickers separated by spaces; an interval whose ends differ in it has no change. */
+  openSet: string;
+  missing: string | null;
+}
+
+/** An event's expected value at one top-of-hour mark, or null with the reason it's missing. */
+export interface ExpectedPoint {
+  t: number;
+  value: number | null;
+  sumP: number | null;
+  openSet: string[];
+  missing: string | null;
 }
 
 /**
@@ -61,9 +81,12 @@ interface BuildOptions {
   resolution: Resolution;
 }
 
+/** Usable stock observations, oldest first. */
+const usablePrices = (stock: TimePoint[]) => stock.filter((p) => Number.isFinite(p.value) && p.value > 0).sort((a, b) => a.t - b.t);
+
 /** One row per stock observation, with the Kalshi probability in effect at that moment. */
 export function buildResearchRows({ stock, kalshi, closeTime, resolution }: BuildOptions): ResearchRow[] {
-  const prices = stock.filter((p) => Number.isFinite(p.value) && p.value > 0).sort((a, b) => a.t - b.t);
+  const prices = usablePrices(stock);
   const probs = [...kalshi].sort((a, b) => a.t - b.t);
 
   const rows: ResearchRow[] = [];
@@ -75,7 +98,7 @@ export function buildResearchRows({ stock, kalshi, closeTime, resolution }: Buil
       t: p.t,
       step: resolution === "hourly" ? Math.round(p.t / HOUR_MS) : i,
       stockClose: p.value,
-      probability: k?.value ?? null,
+      kalshiValue: k?.value ?? null,
       kalshiSource: k?.source ?? null,
       kalshiAsOf: k?.t ?? null,
       exclusion:
@@ -89,6 +112,28 @@ export function buildResearchRows({ stock, kalshi, closeTime, resolution }: Buil
     });
   }
   return rows;
+}
+
+/**
+ * One row per stock observation, with an event's expected value at that exact moment. Stock
+ * observations are top-of-hour closes, and E is evaluated at every top of the hour, so each row
+ * reads its own mark: a missing E stays missing rather than falling back to an older value.
+ */
+export function buildExpectedRows({ stock, marks, resolution }: { stock: TimePoint[]; marks: ExpectedPoint[]; resolution: Resolution }): ResearchRow[] {
+  const byT = new Map(marks.map((m) => [m.t, m]));
+  return usablePrices(stock).map((p, i) => {
+    const m = byT.get(p.t);
+    return {
+      t: p.t,
+      step: resolution === "hourly" ? Math.round(p.t / HOUR_MS) : i,
+      stockClose: p.value,
+      kalshiValue: m?.value ?? null,
+      kalshiSource: null,
+      kalshiAsOf: m ? m.t : null,
+      exclusion: !m ? "before_kalshi" : m.value === null ? "expected_missing" : null,
+      ...(m && { expected: { sumP: m.sumP, openSet: m.openSet.join(" "), missing: m.missing } }),
+    };
+  });
 }
 
 /** Rows observed after `from` (ms). */

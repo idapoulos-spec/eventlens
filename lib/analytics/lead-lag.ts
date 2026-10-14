@@ -39,7 +39,7 @@ export function crossCorrelation(
     const pairs = [];
     for (const c of changes) {
       const later = byStep.get(c.step + lag);
-      if (later) pairs.push({ x: c.probChangePp, y: later.logReturn });
+      if (later) pairs.push({ x: c.kalshiChange, y: later.logReturn });
     }
     const test = tests[k].test.role === "exploratory" ? exploratory[next++] : tests[k].test;
     return { lag, ...correlationStats(pairs), test };
