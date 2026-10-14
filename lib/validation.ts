@@ -23,9 +23,9 @@ export function validateStockTicker(input: string | null | undefined): Validated
 
 export function validateKalshiTicker(input: string | null | undefined): Validated {
   const value = (input ?? "").trim().toUpperCase();
-  if (!value) return { ok: false, message: "Enter a Kalshi market ticker." };
+  if (!value) return { ok: false, message: "Enter a Kalshi market ticker, or a Fed decision event ticker." };
   if (!KALSHI_TICKER.test(value)) {
-    return { ok: false, message: `"${truncateForEcho(value)}" is not a valid Kalshi market ticker.` };
+    return { ok: false, message: `"${truncateForEcho(value)}" is not a valid Kalshi market or event ticker.` };
   }
   return { ok: true, value };
 }

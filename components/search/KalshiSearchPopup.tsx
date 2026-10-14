@@ -132,10 +132,17 @@ function ResultOption({ id, result, active, onMouseDown, onClick, onMouseMove }:
           <span className="font-mono break-all">{result.ticker}</span>
         </p>
       </div>
-      <p className="shrink-0 text-right">
-        <span className="block font-mono text-sm font-semibold text-ink">{formatChance(result.probability)}</span>
-        <span className="block text-[11px] text-ink-muted">{result.probability === null ? "no quote" : "chance"}</span>
-      </p>
+      {result.kind === "event" ? (
+        <p className="shrink-0 text-right">
+          <span className="block text-sm font-semibold text-ink">All</span>
+          <span className="block text-[11px] text-ink-muted">outcomes</span>
+        </p>
+      ) : (
+        <p className="shrink-0 text-right">
+          <span className="block font-mono text-sm font-semibold text-ink">{formatChance(result.probability)}</span>
+          <span className="block text-[11px] text-ink-muted">{result.probability === null ? "no quote" : "chance"}</span>
+        </p>
+      )}
     </li>
   );
 }

@@ -5,11 +5,13 @@ import { analysisHref, type Analysis } from "@/components/analysis/navigation";
 import { SignOutButton } from "@/components/auth/SignOutButton";
 import { Dashboard } from "@/components/Dashboard";
 import { Disclaimer } from "@/components/Disclaimer";
+import { EventDashboard } from "@/components/event/EventDashboard";
 import { LogoMark } from "@/components/LogoMark";
 import { TickerForm, type PageView } from "@/components/TickerForm";
 import { Notice } from "@/components/ui";
 import { ANALYSIS_LIMIT_SUMMARY, checkAnalysisRateLimit } from "@/lib/analysis-rate-limit";
 import { isAccessGateOn, requirePageSession } from "@/lib/auth/server";
+import { supportedEvent } from "@/lib/expected/series";
 import { formatWait } from "@/lib/format";
 import { validateKalshiTicker, validateStockTicker } from "@/lib/validation";
 
@@ -21,6 +23,9 @@ import { validateKalshiTicker, validateStockTicker } from "@/lib/validation";
 //   (the live 404, the stored row, then the archive: 14.5 s) sets Research's window; the stock's
 //   history waits for it (stored bars, then requests: 8.5 s), and the benchmark for the stock
 //   (the same again: 8.5 s).
+// - For a whole event, about 29 s: the event (6 s) and, once archived, its outcome list from the
+//   archive (6 s) set the window; the stock and benchmark follow as above (17 s). The outcomes'
+//   history (stored 2.5 s, then live up to 10 s) runs alongside.
 export const maxDuration = 40;
 
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
@@ -44,7 +49,9 @@ export async function generateMetadata({ searchParams }: PageProps<"/">): Promis
   if (!stock.ok || !kalshi.ok) return {};
   return {
     title: `${stock.value} vs. ${kalshi.value} · EventLens`,
-    description: `Kalshi market ${kalshi.value} compared with ${stock.value} stock on EventLens.`,
+    description: supportedEvent(kalshi.value)
+      ? `The expected outcome of Kalshi event ${kalshi.value} compared with ${stock.value} stock on EventLens.`
+      : `Kalshi market ${kalshi.value} compared with ${stock.value} stock on EventLens.`,
   };
 }
 
@@ -98,7 +105,11 @@ export default async function Home({ searchParams }: PageProps<"/">) {
               className="transition duration-300 ease-out starting:opacity-0 motion-safe:starting:translate-y-2"
             >
               <ResultsBar stock={stock.value} kalshi={kalshi.value} />
-              <Dashboard stock={stock.value} kalshi={kalshi.value} />
+              {supportedEvent(kalshi.value) ? (
+                <EventDashboard stock={stock.value} kalshi={kalshi.value} />
+              ) : (
+                <Dashboard stock={stock.value} kalshi={kalshi.value} />
+              )}
             </div>
           )}
         </AnalysisResults>
@@ -148,8 +159,9 @@ function EmptyState() {
       <h2 className="text-sm font-semibold text-ink">Pick a stock and a Kalshi market to compare</h2>
       <p className="mt-1.5 max-w-2xl text-sm text-ink-secondary">
         Market tickers appear in Kalshi market URLs and look like{" "}
-        <span className="font-mono break-all text-ink">KXFEDDECISION-26OCT-H25</span>. Use a market ticker, not an
-        event or series ticker.
+        <span className="font-mono break-all text-ink">KXFEDDECISION-26OCT-H25</span>. A Fed decision event ticker, such as{" "}
+        <span className="font-mono break-all text-ink">KXFEDDECISION-26OCT</span>, analyzes the whole meeting at once: the
+        expected rate change across every outcome. Other event and series tickers aren’t supported.
       </p>
       <ul className="mt-6 grid gap-5 sm:grid-cols-3 sm:gap-6">
         {FEATURES.map((f) => (

@@ -15,10 +15,12 @@ export interface StockSearchResult {
   type: string;
 }
 
-/** One Kalshi market matching a search. */
+/** One Kalshi market matching a search, or a whole event that can be analyzed as one (kind "event"). */
 export interface KalshiSearchResult {
-  /** Market ticker to analyze (not an event or series ticker); passes validateKalshiTicker. */
+  /** Market ticker to analyze, or a supported event's ticker (lib/expected/series.ts); passes validateKalshiTicker. */
   ticker: string;
+  /** "event": the whole event, analyzed by its expected value across every outcome. Absent for a market. */
+  kind?: "event";
   /** The market's own title, e.g. "Will the Fed hike 25bps?". */
   title: string;
   /**
@@ -36,7 +38,7 @@ export interface KalshiSearchResult {
   closeTime: string | null;
   /**
    * Current implied probability (0–1), estimated like the dashboard's headline
-   * probability. Null unless the market is open and has a quote or trade.
+   * probability. Null unless the market is open and has a quote or trade, and for an event.
    */
   probability: number | null;
 }

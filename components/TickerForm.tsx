@@ -16,6 +16,7 @@ export const EXAMPLES = [
   { stock: "NVDA", kalshi: "KXNASDAQ100Y-26DEC31H1600-T33000", label: "Nasdaq-100 above 33,000 at year-end" },
   { stock: "JPM", kalshi: "KXFEDDECISION-26OCT-H25", label: "Fed hikes 25bps in October" },
   { stock: "SPY", kalshi: "KXRECSSNBER-27", label: "US recession in 2027" },
+  { stock: "TLT", kalshi: "KXFEDDECISION-26OCT", label: "Expected Fed move in October (all outcomes)" },
 ];
 
 type Field = "stock" | "kalshi";
@@ -48,7 +49,7 @@ function checkStock(text: string): Validated {
 function checkKalshi(text: string): Validated {
   const ticker = validateKalshiTicker(text);
   if (!text.trim() || (ticker.ok && !isKalshiSearchText(text))) return ticker;
-  return { ok: false, message: "Pick a market from the list, or paste a Kalshi market ticker." };
+  return { ok: false, message: "Pick a market from the list, or paste a Kalshi market or Fed decision event ticker." };
 }
 
 /** On touch screens, close the on-screen keyboard so the results have the screen. */

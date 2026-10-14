@@ -7,6 +7,7 @@ Pick a stock or ETF (search by ticker or name, e.g. `NVDA` or "nvidia") and a Ka
 - **Kalshi market:** title, implied probability, YES bid / ask, last price, 24-hour volume, open interest, 1-hour and 24-hour probability change, and an event-uncertainty score
 - **Stock:** current price, daily change, volume (compared with average volume once the market has closed), and 30-day realized volatility (via [Twelve Data](https://twelvedata.com))
 - **Charts:** Kalshi probability vs. stock return over the last 7 days, aligned on timestamps, plus the probability history and ~3 months of daily closes
+- **Whole events:** for a Fed decision event ticker (`KXFEDDECISION-26OCT`), the expected rate change across every outcome instead of one market's probability; see [Event analysis](#event-analysis)
 - **Research:** how Kalshi probability changes relate to stock returns over 7, 30, or 90 days (hourly or daily; 90 days hourly by default): lead-lag correlation, rolling correlation, and an event study around Kalshi jumps, on raw or market-adjusted returns (net of SPY or another benchmark), with significance tests built for this data (one primary test; p-values and 95% intervals for every lag and event-study bar; Holm and Benjamini–Hochberg corrections), sample sizes, caveats, and a CSV export of the aligned data
 
 > Experimental market-research tool. Metrics are informational and are not investment recommendations.
@@ -98,9 +99,10 @@ Finds US stocks and ETFs by ticker or company name, 10 results at a time. Exact 
 Kalshi's API has no keyword search, so the server builds an index of every open market in every open event by paging through `GET /events` (about 12,000 events and 114,000 markets in September 2026: 61 pages, about 15 seconds). Pages are requested one at a time, at most 4 a second. The index is used as is for 3 minutes; after that, searches keep using it for up to 15 minutes while a single refresh runs in the background. After a failed build, Kalshi isn't asked again for 30 seconds. So Kalshi traffic doesn't grow with the number of searches.
 
 - **Matching:** every word of the query must start a word in the market's title or YES side, its event, its category, or its ticker ("fed hik" finds "Will the Fed hike…"). A pasted ticker ranks first; among equal matches, the most traded markets come first. Up to 20 results, each with its chance (at most a few minutes old) and close date. Markets that share a title within an event show their YES side underneath (e.g. each candidate in "Who will the next Pope be?").
+- **Whole events:** an open event EventLens can analyze as a whole (see [Event analysis](#event-analysis)) also appears as one result, "Whole event · N outcomes", ahead of its markets.
 - **Open markets only.** To analyze a closed or settled market, paste its ticker.
 
-Use a **market** ticker, not an event or series ticker. Market tickers appear in Kalshi market URLs and API responses, and look like `KXFEDDECISION-26OCT-H25` or `KXRECSSNBER-27`. The example buttons in the app use real markets, but markets close over time, so an example may stop working.
+Use a **market** ticker, or a supported event ticker (Fed decisions, see [Event analysis](#event-analysis)); other event and series tickers aren't supported. Market tickers appear in Kalshi market URLs and API responses, and look like `KXFEDDECISION-26OCT-H25` or `KXRECSSNBER-27`. The example buttons in the app use real markets, but markets close over time, so an example may stop working.
 
 ### Typed text that isn't a ticker
 
@@ -355,6 +357,16 @@ print(len(adjusted), adjusted.prob_change_pp.corr(adjusted.abnormal_log_return))
 
 The market model is fitted on all 90 days, so to reproduce β and α, use the 90-day CSV: regress `stock_log_return` on `benchmark_log_return` over rows whose `interval_exclusion` isn't `first_row` or `non_trading` (Kalshi exclusions still count) and that have both returns.
 
+## Event analysis
+
+A single outcome market of a multi-outcome event has an ambiguous sign: a rising "no change" probability is dovish when the alternative is a hike and hawkish when it's a cut. For Fed decision events (`KXFEDDECISION-26OCT`, and the legacy `FEDDECISION-…` ones), EventLens analyzes the whole event as one number, the **expected rate change** E = Σ pᵢ·vᵢ / Σ pᵢ over the outcomes open at the time, in basis points. The method is an exact port of the fed-history study's (`lib/expected/engine.ts`); `scripts/check-expected-value.ts` checks it against the study's marks (all 2,049 marks of its 27 meetings agree).
+
+- **Values v** come from each outcome's contract text: its structured strike (`custom_strike`) and YES label must agree, and its title and rules mustn't contradict them (KXFEDDECISION-25JAN-H0 has no structured strike, so its label, title, and rules must all agree). A cut is negative; "more than X" counts as the next 25 bp step. Ticker suffixes never decide a value. If any outcome can't be mapped, two map to the same value, or Kalshi doesn't mark the outcomes mutually exclusive, the event has no E, and the page says which outcome and why.
+- **Probabilities p** come from each hour's closing book: the bid/ask midpoint, half the ask without a bid, or halfway from the bid to $1 without an ask (a bid of 0 or an ask of $1 is no quote). An outcome with no usable quote in the last 7 days counts as 0 if it was last at most 5¢.
+- **E is missing**, never carried over, when Σp is outside 0.80–1.20, when an outcome's quote is stale, when the collected history has a gap, and from the first outcome's close on.
+- **The page** shows E now (from the live books), its 1h and 24h change, each outcome's value, probability, and weight, E over 90 days, and the outcome probabilities behind it. Research is the same as for one market, with ΔE in bp as the Kalshi variable: an interval whose open outcomes changed is left out, and the event study's jump sizes are 0.25–5 bp (0.5 bp hourly and 2 bp daily by default). For a closed event, Research ends at its first close. The CSV has the same columns with `kalshi_expected_bp` and `expected_change_bp` in place of the probability columns, `expected_missing:<reason>` in `kalshi_exclusion`, and `sum_p` and `open_outcomes` appended.
+- **Requests:** the event (`/events/{ticker}`), each outcome's 97 days of hourly candles from the store first (batched live requests, or Kalshi's archive, for the rest), and the same 3 or 5 Twelve Data credits as one market.
+
 ## Data store
 
 An optional Postgres database (Neon, free plan) keeps Kalshi's history, so Research can study markets that settled before Kalshi's archive cutoff and end a closed market's windows at its close. It's off unless `DATABASE_URL` is set: without it, every request is live, exactly as before. Setup, roles, the watchlist, and the collector's details are in [`db/README.md`](db/README.md).
@@ -388,6 +400,7 @@ components/           UI components (cards, form, panels)
   auth/               Sign-in form and Sign out button
   analysis/           Loading analyses, shareable links, Copy link, recent analyses
   charts/             Recharts client components
+  event/              A whole event's dashboard: its panel, E over time, outcome probabilities, Research with ΔE
   research/           Research panel (window, resolution, raw or market-adjusted returns, benchmark, analyses, CSV download)
   search/             Stock and Kalshi search fields (comboboxes)
 lib/
@@ -395,6 +408,7 @@ lib/
   kalshi/             Kalshi API client, market search index, normalized types (server-only)
   market-data/        Twelve Data client, symbol lists and search, popular symbols, research benchmarks (server-only)
   history/            Research's data: stored history first, live for the rest; windows that end at a close
+  expected/           Whole events: supported series, outcome values, the E(t) engine, and its read path
   store/              Data store: connections per role, migrations, runs and coverage, the watchlist
   collect/kalshi/     Kalshi collector: market discovery, candle windows, coverage, gap repair
   analytics/          Pure metric, alignment, research, regression, and significance-test functions (and the CSV export)
@@ -402,7 +416,7 @@ lib/
   validation.ts       Ticker input validation
   format.ts           Number and date formatting
 db/                   Data store migrations and setup (db/README.md)
-scripts/              collect-kalshi, migrate, and watchlist (pnpm collect:kalshi, db:migrate, db:watchlist)
+scripts/              collect-kalshi, migrate, and watchlist (pnpm collect:kalshi, db:migrate, db:watchlist); check-expected-value
 proxy.ts              Sends requests without a session to /login (API routes get a 401)
 ```
 
