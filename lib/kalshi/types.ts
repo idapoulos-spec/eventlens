@@ -83,7 +83,9 @@ export interface RawEvent {
   sub_title?: string;
   /** Deprecated by Kalshi in favor of the series' category, but still filled in. */
   category?: string;
-  /** Only with `with_nested_markets=true`. */
+  /** Whether exactly one of the event's markets can resolve YES. */
+  mutually_exclusive?: boolean;
+  /** Only with `with_nested_markets=true`, and only for markets the live endpoints still serve. */
   markets?: RawMarket[];
 }
 
