@@ -1,9 +1,10 @@
 import { Suspense, type ReactNode } from "react";
-import { alignSeries, buildExpectedRows, expectedVariable, rowsSince } from "@/lib/analytics";
+import { alignSeries, expectedVariable } from "@/lib/analytics";
 import { loadEventAnalysis } from "@/lib/expected/load";
 import type { EventAnalysis } from "@/lib/expected/types";
 import { formatDateTime } from "@/lib/format";
-import { RESEARCH_WINDOW_MS, provenanceNote, researchStockPoints } from "@/lib/history/window";
+import { eventResearchRows, lastRows, rowsOverlap } from "@/lib/history/rows";
+import { provenanceNote } from "@/lib/history/window";
 import type { StockAnalysis } from "@/lib/market-data";
 import type { BenchmarkSeries } from "@/lib/market-data/types";
 import type { Result } from "@/lib/result";
@@ -235,21 +236,17 @@ async function EventResearch({
   const why = noExpected(event);
   if (why) return notice("Research unavailable", why);
 
-  const fetchedAt = s.data.historyFetchedAt;
-  const asOf = end ?? fetchedAt;
-  const from = asOf - RESEARCH_WINDOW_MS;
-  const stockPoints = researchStockPoints({ ...s.data.research, fetchedAt });
-  const hourly = buildExpectedRows({ stock: stockPoints.hourly, marks: event.marks, resolution: "hourly" });
-  const daily = buildExpectedRows({ stock: stockPoints.daily, marks: event.marks, resolution: "daily" });
-  if (!hourly.some((r) => r.exclusion === null) && !daily.some((r) => r.exclusion === null)) {
+  const rows = eventResearchRows({ marks: event.marks, research: s.data.research, fetchedAt: s.data.historyFetchedAt });
+  if (!rowsOverlap(rows)) {
     return notice("Research unavailable", "E and the stock's prices don't overlap while the event was trading.");
   }
+  const { hourly, daily, asOf } = lastRows(rows);
 
   return (
     <div className="grid gap-4 sm:gap-5">
       <ResearchPanel
-        hourly={rowsSince(hourly, from)}
-        daily={rowsSince(daily, from)}
+        hourly={hourly}
+        daily={daily}
         asOf={asOf}
         windowEnd={end}
         stockSymbol={s.data.quote.symbol || stock}

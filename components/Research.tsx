@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
-import { buildResearchRows, probabilityVariable, rowsSince } from "@/lib/analytics";
+import { probabilityVariable } from "@/lib/analytics";
 import { formatDateTime } from "@/lib/format";
 import type { ResearchHistory } from "@/lib/history/types";
-import { RESEARCH_WINDOW_MS, researchStockPoints } from "@/lib/history/window";
+import { lastRows, marketResearchRows, rowsOverlap } from "@/lib/history/rows";
 import type { KalshiOverview } from "@/lib/kalshi";
 import type { BenchmarkSeries, StockAnalysis } from "@/lib/market-data";
 import type { Result } from "@/lib/result";
@@ -66,25 +66,21 @@ export async function Research({
 
   const { market } = k.data;
   const closeTime = market.closeTime === null ? null : Date.parse(market.closeTime);
-  const common = { kalshi: h.data.points, closeTime: Number.isFinite(closeTime) ? closeTime : null };
-  // When the bars were fetched: bars that hadn't closed by then may still have been forming.
-  const fetchedAt = s.data.historyFetchedAt;
-  // Windows count back from here.
-  const asOf = end ?? fetchedAt;
-  const from = asOf - RESEARCH_WINDOW_MS;
-  const stockPoints = researchStockPoints({ ...s.data.research, fetchedAt });
-
-  const hourly = buildResearchRows({ ...common, stock: stockPoints.hourly, resolution: "hourly" });
-  const daily = buildResearchRows({ ...common, stock: stockPoints.daily, resolution: "daily" });
-
-  if (!hourly.some((r) => r.exclusion === null) && !daily.some((r) => r.exclusion === null)) {
+  const rows = marketResearchRows({
+    kalshi: h.data.points,
+    closeTime: Number.isFinite(closeTime) ? closeTime : null,
+    research: s.data.research,
+    fetchedAt: s.data.historyFetchedAt,
+  });
+  if (!rowsOverlap(rows)) {
     return notice("Research unavailable", "The Kalshi and stock histories don't overlap while the market was trading.");
   }
+  const { hourly, daily, asOf } = lastRows(rows);
 
   return (
     <ResearchPanel
-      hourly={rowsSince(hourly, from)}
-      daily={rowsSince(daily, from)}
+      hourly={hourly}
+      daily={daily}
       asOf={asOf}
       windowEnd={end}
       stockSymbol={s.data.quote.symbol || stock}

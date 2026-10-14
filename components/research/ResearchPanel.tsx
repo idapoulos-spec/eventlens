@@ -2,18 +2,9 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import {
-  ALPHA,
-  computeChanges,
-  crossCorrelation,
-  detectableCorrelation,
-  eventStudy,
-  eventStudyTests,
-  marketAdjustment,
   MIN_TEST_EVENTS,
   passes,
   researchCsv,
-  rollingCorrelation,
-  rowsSince,
   SMALL_EVENT_COUNT,
   type ChangePoint,
   type ChangeSeries,
@@ -25,12 +16,20 @@ import {
   type KalshiVariable,
   type LagCorrelation,
   type MarketModel,
-  type RefitSample,
   type Resolution,
   type ResearchRow,
   type RollingPoint,
   type TestResult,
 } from "@/lib/analytics";
+import {
+  adjustedView,
+  closesByTime,
+  COMPUTE_SETTINGS,
+  primaryDetectable,
+  windowAnalysis,
+  windowMarket,
+  type ComputeSettings,
+} from "@/lib/analytics/panel";
 import { formatDateTime, formatShortDate, formatSigned } from "@/lib/format";
 import type { BenchmarkSeries } from "@/lib/market-data/types";
 import type { Result } from "@/lib/result";
@@ -55,11 +54,10 @@ import {
 } from "./stats";
 import { useBenchmark } from "./useBenchmark";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const WINDOWS = [7, 30, 90] as const;
 type WindowDays = (typeof WINDOWS)[number];
 
-interface Settings {
+interface Settings extends ComputeSettings {
   unit: LagUnit;
   /** Singular and plural names of one interval. */
   noun: [string, string];
@@ -67,32 +65,25 @@ interface Settings {
   same: string;
   /** What an event-study bar spans. */
   barNote: string;
-  maxLag: number;
-  rollingWindow: number;
   rollingSpan: string;
-  eventBars: number;
 }
 
 const SETTINGS: Record<Resolution, Settings> = {
   hourly: {
+    ...COMPUTE_SETTINGS.hourly,
     unit: "h",
     noun: ["hour", "hours"],
     same: "Same-hour",
     barNote: "Bars are trading hours, so a window can span a night or weekend.",
-    maxLag: 3,
-    rollingWindow: 18,
     rollingSpan: "about 3 sessions",
-    eventBars: 6,
   },
   daily: {
+    ...COMPUTE_SETTINGS.daily,
     unit: "d",
     noun: ["trading day", "trading days"],
     same: "Same-day",
     barNote: "Bars are trading days.",
-    maxLag: 5,
-    rollingWindow: 20,
     rollingSpan: "about a month",
-    eventBars: 5,
   },
 };
 
@@ -130,17 +121,6 @@ interface Props {
 /** Raw: the stock's own returns. Adjusted: net of the benchmark (alpha + beta × its return). */
 type Returns = "raw" | "adjusted";
 
-/** What the lead-lag, rolling, and event-study cards show. */
-interface View {
-  changes: ChangePoint[];
-  lags: LagCorrelation[];
-  sameInterval: CorrelationStats;
-  rolling: RollingPoint[];
-  /** Null in market-adjusted mode when beta can't be estimated outside the jump windows. */
-  study: EventStudy | null;
-  events: EventStudyTests | null;
-}
-
 /** How the market-adjusted view was adjusted, for its captions. */
 interface Adjustment {
   benchmark: string;
@@ -149,23 +129,6 @@ interface Adjustment {
   missingBenchmark: number;
   /** The selected window, in days. */
   days: number;
-}
-
-/**
- * Every result one set of changes gives. In market-adjusted mode (`refit` is the market
- * model's sample, refitted in every draw) lag 0 is the primary test, so it's left out of the
- * lead-lag family the other lags are corrected in.
- */
-function view(changes: ChangePoint[], study: EventStudy | null, settings: Settings, resolution: Resolution, refit: RefitSample | null): View {
-  const lags = crossCorrelation(changes, settings.maxLag, resolution, refit ? { primaryLag: 0, refit } : {});
-  return {
-    changes,
-    lags,
-    sameInterval: lags.find((l) => l.lag === 0)!,
-    rolling: rollingCorrelation(changes, settings.rollingWindow),
-    study,
-    events: study && eventStudyTests(study),
-  };
 }
 
 export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kalshiTicker, variable, initialBenchmark }: Props) {
@@ -183,54 +146,22 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
   const threshold = thresholds[resolution];
   const isSelf = benchmark.active.symbol === stockSymbol;
 
-  const analysis = useMemo(() => {
-    // Every loaded row (90 days): the market model is fitted on these, whatever the window.
-    const full = resolution === "hourly" ? hourly : daily;
-    const rows = rowsSince(full, asOf - days * DAY_MS);
-    const series = computeChanges(rows, variable.scale);
-    const event = { threshold, before: settings.eventBars, after: settings.eventBars };
-    return { full, rows, series, event, raw: view(series.changes, eventStudy(rows, series.changes, event), settings, resolution, null) };
-  }, [hourly, daily, asOf, days, resolution, settings, threshold, variable.scale]);
+  const analysis = useMemo(
+    () => windowAnalysis({ full: resolution === "hourly" ? hourly : daily, asOf, days, resolution, threshold, scale: variable.scale }),
+    [hourly, daily, asOf, days, resolution, threshold, variable.scale],
+  );
 
   const benchSeries = isSelf ? null : benchmark.series;
-  const closesByT = useMemo(
-    () => benchSeries && new Map((resolution === "hourly" ? benchSeries.hourly : benchSeries.daily).map((p) => [p.t, p.value])),
-    [benchSeries, resolution],
-  );
-  const market = useMemo(
-    () =>
-      closesByT &&
-      marketAdjustment({
-        full: analysis.full,
-        rows: analysis.rows,
-        changes: analysis.series.changes,
-        scale: variable.scale,
-        closesByT,
-        event: analysis.event,
-        resolution,
-      }),
-    [analysis, closesByT, resolution, variable.scale],
-  );
+  const closesByT = useMemo(() => benchSeries && closesByTime(benchSeries, resolution), [benchSeries, resolution]);
+  const market = useMemo(() => closesByT && windowMarket(analysis, closesByT, resolution, variable.scale), [analysis, closesByT, resolution, variable.scale]);
   const canAdjust = Boolean(market?.model && market.abnormal);
   // Only computed while shown: the resampling isn't free.
-  const adjusted = useMemo(
-    () =>
-      chosenReturns === "adjusted" && market?.model && market.abnormal
-        ? view(market.abnormal, market.studies.abnormal, settings, resolution, market.model.sample)
-        : null,
-    [chosenReturns, market, settings, resolution],
-  );
+  const adjusted = useMemo(() => (chosenReturns === "adjusted" && market ? adjustedView(market, resolution) : null), [chosenReturns, market, resolution]);
 
   const returns: Returns = adjusted ? chosenReturns : "raw";
   // How large a correlation the primary test could have detected, for a result that isn't significant.
   const primary = market?.primary ?? null;
-  const detectable = useMemo(
-    () =>
-      primary?.p != null && primary.p >= ALPHA && market?.model && market.abnormal
-        ? detectableCorrelation(market.abnormal, resolution, { refit: market.model.sample })
-        : null,
-    [primary, market, resolution],
-  );
+  const detectable = useMemo(() => market && primaryDetectable(market, resolution), [market, resolution]);
   const shown = returns === "adjusted" ? adjusted! : analysis.raw;
   const adjustment: Adjustment | null =
     returns === "adjusted" && market?.model
