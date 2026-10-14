@@ -12,16 +12,22 @@ import { simulateMarketRows } from "./test-helpers";
 
 // Pins a single market's Research outputs, CSV bytes included, as they were before the analytics
 // became unit-neutral (expected values in bp alongside probabilities in pp). Field names are
-// normalized before hashing, so only values, order, and the CSV's text count.
+// normalized before hashing, so only values, order, and the CSV's text count. The pins were taken
+// on the code before that change (bf6d488, with the rounding in canon).
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
 const RENAMED: Record<string, string> = { probChangePp: "x", kalshiChange: "x", probability: "v", kalshiValue: "v", thresholdPp: "th", threshold: "th" };
 
-/** JSON with renamed fields under one name, typed arrays as plain arrays, and undefined left out. */
+/**
+ * JSON with renamed fields under one name, typed arrays as plain arrays, undefined left out, and
+ * numbers to 9 significant digits: Math.log can differ in its last bit between CPUs (CI runs x64,
+ * a Mac arm64), which a renamed field or a wrong scale never stays within.
+ */
 function canon(value: unknown): string {
   return JSON.stringify(value, function (key, v) {
-    if (ArrayBuffer.isView(v) && !(v instanceof DataView)) return Array.from(v as unknown as ArrayLike<number>);
+    if (typeof v === "number" && Number.isFinite(v)) return Number(v.toPrecision(9));
+    if (ArrayBuffer.isView(v) && !(v instanceof DataView)) return Array.from(v as unknown as ArrayLike<number>, (x) => Number(x.toPrecision(9)));
     if (v && typeof v === "object" && !Array.isArray(v)) {
       return Object.fromEntries(Object.entries(v).map(([k, x]) => [RENAMED[k] ?? k, x]));
     }
@@ -52,7 +58,7 @@ describe("single-market Research outputs are unchanged", () => {
     const closesByT = new Map(rows.map((r, i) => [r.t, 400 + Math.cos(i)]));
     expect(sha(researchCsv(rows, "hourly"))).toBe("e199ecb6f8e383f8");
     expect(sha(researchCsv(rows, "hourly", { symbol: "SPY", closesByT, model: { alpha: 0.0001, beta: 1.2 } }))).toBe("23d93e10720ab016");
-    expect(sha(canon(computeChanges(rows, 100)))).toBe("c9c280889638da7e");
+    expect(sha(canon(computeChanges(rows, 100)))).toBe("6e9351ad2373a4a6");
   });
 
   for (const resolution of ["hourly", "daily"] as const) {
@@ -63,12 +69,12 @@ describe("single-market Research outputs are unchanged", () => {
       const study = eventStudy(rows, series.changes, event);
       const market = marketAdjustment({ full: rows, rows, changes: series.changes, scale: 100, closesByT, event, resolution });
       expect(sha(researchCsv(rows, resolution, { symbol: "SPY", closesByT, model: market.model }))).toBe({ hourly: "62fbef227e9fa7bd", daily: "a208ab4576f7993e" }[resolution]);
-      expect(sha(canon(series))).toBe({ hourly: "a7f0cb0861513a94", daily: "5f4896c3f1253860" }[resolution]);
-      expect(sha(canon(study))).toBe({ hourly: "aaf355f1f2abb946", daily: "4001227c95c3a7cd" }[resolution]);
+      expect(sha(canon(series))).toBe({ hourly: "6143e300ae59c999", daily: "6ae028c74c7c7ccd" }[resolution]);
+      expect(sha(canon(study))).toBe({ hourly: "34a2e9aa33781ee1", daily: "a7d96a53367d239c" }[resolution]);
       expect(sha(canon([...eventWindowRows(rows, series.changes, event)]))).toBe({ hourly: "203d39080bf568e2", daily: "b2a91cd0ade19e7e" }[resolution]);
-      expect(sha(canon(crossCorrelation(series.changes, 3, resolution)))).toBe({ hourly: "8138440374bfec88", daily: "80b506da5461f089" }[resolution]);
-      expect(sha(canon(rollingCorrelation(series.changes, 18)))).toBe({ hourly: "bc4c5e462f9ca807", daily: "9b9983df4edda35a" }[resolution]);
-      expect(sha(canon(market))).toBe({ hourly: "a1ed2bc07e863cbe", daily: "4ef371a34f3e7207" }[resolution]);
+      expect(sha(canon(crossCorrelation(series.changes, 3, resolution)))).toBe({ hourly: "d2e376615ffdd1b6", daily: "19c1427e3e22cea8" }[resolution]);
+      expect(sha(canon(rollingCorrelation(series.changes, 18)))).toBe({ hourly: "29ed8190986312ab", daily: "a33eb7f48b369f1e" }[resolution]);
+      expect(sha(canon(market))).toBe({ hourly: "f2eb4ed6bfa2b9af", daily: "4011284222b83255" }[resolution]);
     });
   }
 });
