@@ -9,15 +9,15 @@ function rows(closes: number[], probabilities: number[]): ResearchRow[] {
     t: (i + 1) * 1000,
     step: i + 1,
     stockClose,
-    probability: probabilities[i],
+    kalshiValue: probabilities[i],
     kalshiSource: "midpoint",
     kalshiAsOf: (i + 1) * 1000,
     exclusion: null,
   }));
 }
 
-const study = (r: ResearchRow[], thresholdPp: number, before = 3, after = 3) =>
-  eventStudy(r, computeChanges(r).changes, { thresholdPp, before, after });
+const study = (r: ResearchRow[], threshold: number, before = 3, after = 3) =>
+  eventStudy(r, computeChanges(r, 100).changes, { threshold, before, after });
 
 describe("eventStudy", () => {
   it("averages the stock path around a jump, starting from the close before it", () => {
@@ -29,7 +29,7 @@ describe("eventStudy", () => {
     expect(result.offsets).toEqual([-3, -2, -1, 0, 1, 2, 3]);
     expect(result.detected).toBe(1);
     expect(result.rises.n).toBe(1);
-    expect(result.rises.events).toEqual([{ t: 11_000, probChangePp: expect.closeTo(5, 10) }]);
+    expect(result.rises.events).toEqual([{ t: 11_000, kalshiChange: expect.closeTo(5, 10) }]);
     const up = Math.log(1.1) * 100;
     expect(result.rises.mean!.map((v) => Number(v.toFixed(10)))).toEqual([0, 0, 0, up, up, up, up].map((v) => Number(v.toFixed(10))));
     expect(result.falls).toMatchObject({ n: 0, mean: null, flag: "insufficient" });
@@ -86,13 +86,13 @@ describe("eventStudy", () => {
     const probs = Array.from({ length: 20 }, (_, i) => (i < 10 ? 0.4 : 0.45));
     const r = rows(closes, probs);
     // Half the stock's move, say net of a benchmark.
-    const half = eventStudy(r, computeChanges(r).changes, { thresholdPp: 5, before: 3, after: 3 }, (from, to) =>
+    const half = eventStudy(r, computeChanges(r, 100).changes, { threshold: 5, before: 3, after: 3 }, (from, to) =>
       Math.log(r[to].stockClose / r[from].stockClose) / 2,
     );
     expect(half.rises.mean!.at(-1)).toBeCloseTo((Math.log(1.1) * 100) / 2, 10);
     expect(half.skippedMissing).toBe(0);
 
-    const missing = eventStudy(r, computeChanges(r).changes, { thresholdPp: 5, before: 3, after: 3 }, (from, to) =>
+    const missing = eventStudy(r, computeChanges(r, 100).changes, { threshold: 5, before: 3, after: 3 }, (from, to) =>
       from === 9 || to === 9 ? null : Math.log(r[to].stockClose / r[from].stockClose),
     );
     expect(missing).toMatchObject({ detected: 1, skippedMissing: 1, rises: { n: 0 } });
@@ -106,7 +106,7 @@ describe("eventWindowRows", () => {
     // Jumps during bars 1 (too early for the study), 7, and 9 (within 3 bars of 7).
     const probs = [0.3, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.5, 0.5, 0.6, 0.6, 0.6, 0.6, 0.6, 0.6];
     const r = rows(Array(15).fill(100), probs);
-    const inside = eventWindowRows(r, computeChanges(r).changes, { thresholdPp: 5, before: 2, after: 1 });
+    const inside = eventWindowRows(r, computeChanges(r, 100).changes, { threshold: 5, before: 2, after: 1 });
     expect([...inside].sort((a, b) => a - b)).toEqual([0, 1, 2, 5, 6, 7, 8, 9, 10]);
   });
 });

@@ -65,6 +65,22 @@ describe("KalshiSearchPopup", () => {
     expect(html).toContain("a few minutes old");
   });
 
+  it("shows a whole event as covering all its outcomes, with no chance", () => {
+    const event: KalshiSearchResult = {
+      ...FED,
+      ticker: "KXFEDDECISION-26OCT",
+      kind: "event",
+      title: "Fed decision in October 2026",
+      subtitle: "Whole event · 5 outcomes",
+      probability: null,
+    };
+    const html = render(state({ status: "done", results: [event] }));
+    expect(html).toContain("Whole event · 5 outcomes");
+    expect(html).toContain(">All</span>");
+    expect(html).toContain(">outcomes</span>");
+    expect(html).not.toContain("no quote");
+  });
+
   it("is hidden while closed, keeping the listbox the input points at", () => {
     const html = render(state({ status: "done", results: [FED], open: false }));
     expect(html).toMatch(/^<div hidden=""/);

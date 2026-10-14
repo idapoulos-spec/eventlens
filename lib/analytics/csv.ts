@@ -4,6 +4,7 @@ import { timeZoneOffsetMs } from "@/lib/market-data/session";
 import { computeChanges } from "./changes";
 import { benchmarkCloses, benchmarkReturnsByT, type ReturnAdjustment } from "./market-model";
 import type { ResearchRow, Resolution } from "./research";
+import type { KalshiVariable } from "./variable";
 
 export const RESEARCH_CSV_COLUMNS = [
   "timestamp_utc",
@@ -28,6 +29,21 @@ export const RESEARCH_CSV_COLUMNS = [
   "abnormal_log_return",
   "excess_log_return",
 ] as const;
+
+/** Appended for an event's expected value, after the market-adjustment columns. */
+export const EXPECTED_CSV_COLUMNS = ["sum_p", "open_outcomes"] as const;
+
+/**
+ * The CSV's columns for a variable: one market's are RESEARCH_CSV_COLUMNS; an expected value
+ * names its value and change columns in its unit, and appends Σp and the open outcomes.
+ */
+export function researchCsvColumns(variable: KalshiVariable | null = null): string[] {
+  if (variable === null || variable.kind === "probability") return [...RESEARCH_CSV_COLUMNS];
+  const columns: string[] = RESEARCH_CSV_COLUMNS.map((c) =>
+    c === "kalshi_probability" ? variable.csv.value : c === "prob_change_pp" ? variable.csv.change : c,
+  );
+  return [...columns, ...EXPECTED_CSV_COLUMNS];
+}
 
 /** The benchmark for the CSV's market-adjustment columns. */
 export interface CsvBenchmark {
@@ -63,14 +79,23 @@ function isoNewYork(ms: number): string {
  * The aligned research dataset as CSV: every row, including excluded ones with the
  * reason, so the analysis can be redone or filtered differently elsewhere. The change
  * columns describe the interval ending at each row. Numbers are unrounded; missing
- * values are empty, including every benchmark column when there's no benchmark.
+ * values are empty, including every benchmark column when there's no benchmark. Without
+ * `variable`, the rows hold one market's probabilities. For an expected value, a row whose E
+ * is missing reads `expected_missing:<reason>` in kalshi_exclusion.
  */
-export function researchCsv(rows: ResearchRow[], resolution: Resolution, benchmark: CsvBenchmark | null = null): string {
-  const { intervals } = computeChanges(rows);
+export function researchCsv(
+  rows: ResearchRow[],
+  resolution: Resolution,
+  benchmark: CsvBenchmark | null = null,
+  variable: KalshiVariable | null = null,
+): string {
+  const expected = variable?.kind === "expected";
+  // Without a variable, the rows hold probabilities: changes in pp.
+  const { intervals } = computeChanges(rows, variable?.scale ?? 100);
   const closes = benchmark ? benchmarkCloses(rows, benchmark.closesByT) : null;
   const benchReturns = benchmark ? benchmarkReturnsByT(rows, benchmark.closesByT) : null;
   const model = benchmark?.model ?? null;
-  const lines = [RESEARCH_CSV_COLUMNS.join(",")];
+  const lines = [researchCsvColumns(variable).join(",")];
   rows.forEach((row, i) => {
     const interval = intervals[i];
     const rm = benchReturns?.get(row.t) ?? null;
@@ -80,14 +105,14 @@ export function researchCsv(rows: ResearchRow[], resolution: Resolution, benchma
       isoNewYork(row.t),
       resolution,
       row.stockClose,
-      row.probability,
+      row.kalshiValue,
       row.kalshiSource,
       row.kalshiAsOf === null ? null : isoUtc(row.kalshiAsOf),
       row.exclusion === null,
-      row.exclusion,
+      row.exclusion === "expected_missing" && row.expected?.missing ? `expected_missing:${row.expected.missing}` : row.exclusion,
       interval.exclusion === null,
       interval.exclusion,
-      interval.probChangePp,
+      interval.kalshiChange,
       interval.logReturn,
       benchmark?.symbol ?? null,
       closes?.[i] ?? null,
@@ -97,6 +122,7 @@ export function researchCsv(rows: ResearchRow[], resolution: Resolution, benchma
       model && r !== null && rm !== null ? r - model.alpha - model.beta * rm : null,
       r !== null && rm !== null ? r - rm : null,
     ];
+    if (expected) cells.push(row.expected?.sumP ?? null, row.expected?.openSet || null);
     lines.push(cells.map(csvField).join(","));
   });
   return `${lines.join("\r\n")}\r\n`;

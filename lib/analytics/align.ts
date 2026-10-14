@@ -2,9 +2,9 @@ import type { TimePoint } from "./types";
 
 export interface AlignedPoint {
   t: number;
-  /** Kalshi implied probability in percent (0–100). */
+  /** Kalshi's value, scaled: an implied probability in percent (0–100), or an expected value in its unit. Null in a gap. */
   probability: number | null;
-  /** Probability change since the first aligned observation, in percentage points. */
+  /** Its change since the first aligned observation (pp for a probability), or null in a gap. */
   probabilityChange: number | null;
   stockPrice: number | null;
   /** Stock return since the first aligned observation, in percent. */
@@ -27,9 +27,11 @@ export function mergeSeries<P extends TimePoint>(...series: P[][]): P[] {
  * The timeline is the union of both series' timestamps. At each timestamp,
  * each series carries forward its most recent known value, so a stock that
  * only trades during market hours lines up with a market that trades 24/7.
- * Points before both series have started are dropped.
+ * Points before both series have started are dropped. A null value in the first series (an
+ * expected value that's missing) is a gap until its next value, not a value carried over it.
+ * `scale` multiplies it: 100 shows a probability in percent.
  */
-export function alignSeries(probability: TimePoint[], stock: TimePoint[]): AlignedPoint[] {
+export function alignSeries(probability: { t: number; value: number | null }[], stock: TimePoint[], scale = 100): AlignedPoint[] {
   const probs = [...probability].sort((a, b) => a.t - b.t);
   const prices = [...stock].sort((a, b) => a.t - b.t);
   const timeline = Array.from(new Set([...probs, ...prices].map((p) => p.t))).sort((a, b) => a - b);
@@ -38,21 +40,25 @@ export function alignSeries(probability: TimePoint[], stock: TimePoint[]): Align
   let pi = 0;
   let si = 0;
   let lastProb: number | null = null;
+  let seenProb = false;
   let lastPrice: number | null = null;
   let baseProb: number | null = null;
   let basePrice: number | null = null;
 
   for (const t of timeline) {
-    while (pi < probs.length && probs[pi].t <= t) lastProb = probs[pi++].value;
+    while (pi < probs.length && probs[pi].t <= t) {
+      lastProb = probs[pi++].value;
+      seenProb = true;
+    }
     while (si < prices.length && prices[si].t <= t) lastPrice = prices[si++].value;
-    if (lastProb === null || lastPrice === null) continue;
+    if (!seenProb || lastPrice === null) continue;
 
-    baseProb ??= lastProb;
+    if (lastProb !== null) baseProb ??= lastProb;
     basePrice ??= lastPrice;
     aligned.push({
       t,
-      probability: lastProb * 100,
-      probabilityChange: (lastProb - baseProb) * 100,
+      probability: lastProb === null ? null : lastProb * scale,
+      probabilityChange: lastProb === null || baseProb === null ? null : (lastProb - baseProb) * scale,
       stockPrice: lastPrice,
       stockReturn: basePrice > 0 ? (lastPrice / basePrice - 1) * 100 : null,
     });

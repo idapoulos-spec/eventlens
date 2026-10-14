@@ -45,14 +45,14 @@ describe("robustSlopeT", () => {
 describe("blockLayout", () => {
   it("groups hourly changes by New York trading date, across a daylight-saving switch", () => {
     // 3:00 PM New York on Fri Mar 6 (EST) and Mon Mar 9, 2026 (EDT), and 10:00 AM on Mar 9.
-    const at = (utc: number, step: number): ChangePoint => ({ t: utc, step, probChangePp: 0, logReturn: 0 });
+    const at = (utc: number, step: number): ChangePoint => ({ t: utc, step, kalshiChange: 0, logReturn: 0 });
     const changes = [at(Date.UTC(2026, 2, 6, 20), 1), at(Date.UTC(2026, 2, 9, 14), 2), at(Date.UTC(2026, 2, 9, 19), 3)];
     expect(blockLayout(changes, "hourly")).toMatchObject({ unit: "session", blocks: 2, runDays: null });
     expect(Array.from(blockLayout(changes, "hourly").block)).toEqual([0, 1, 1]);
   });
 
   it("splits daily changes into runs of consecutive trading days, skipping empty runs", () => {
-    const changes = [0, 1, 2, 3, 6, 7].map((step) => ({ t: step, step, probChangePp: 0, logReturn: 0 }));
+    const changes = [0, 1, 2, 3, 6, 7].map((step) => ({ t: step, step, kalshiChange: 0, logReturn: 0 }));
     expect(runDays(6)).toBe(2);
     const layout = blockLayout(changes, "daily");
     expect(layout).toMatchObject({ unit: "day_run", blocks: 3, runDays: 2 });
@@ -106,7 +106,7 @@ describe("lagCorrelationTests", () => {
 
   it("reports nothing below 10 pairs, or when Kalshi never moved", () => {
     expect(lagCorrelationTests(changes.slice(0, 9), [0], "hourly")[0].test.pUnavailable).toBe("too_few_pairs");
-    const flat = changes.map((c) => ({ ...c, probChangePp: 0 }));
+    const flat = changes.map((c) => ({ ...c, kalshiChange: 0 }));
     expect(lagCorrelationTests(flat, [0], "hourly")[0].test).toMatchObject({ estimate: null, p: null, pUnavailable: "no_variation" });
   });
 });
@@ -118,8 +118,8 @@ describe("simulated data", () => {
     for (let s = 0; s < 100; s++) {
       for (const c of simulateHourly({ sessions: 21, seed: 2000 + s })) {
         total++;
-        if (c.probChangePp === 0) zeros++;
-        expect(Number.isInteger(c.probChangePp * 2)).toBe(true);
+        if (c.kalshiChange === 0) zeros++;
+        expect(Number.isInteger(c.kalshiChange * 2)).toBe(true);
       }
     }
     expect(zeros / total).toBeGreaterThan(0.75);
@@ -188,7 +188,7 @@ describe("simulations: detecting a built-in relationship", () => {
       const [{ test }] = lagCorrelationTests(changes, [0], "hourly", { draws: DRAWS });
       // The interval is shown as a correlation, slope × sx/sy; undo that to compare with the slope.
       const sd = (v: number[]) => Math.sqrt(v.reduce((a, b) => a + b * b, 0) - v.reduce((a, b) => a + b, 0) ** 2 / v.length);
-      const scale = sd(changes.map((c) => c.probChangePp)) / sd(changes.map((c) => c.logReturn));
+      const scale = sd(changes.map((c) => c.kalshiChange)) / sd(changes.map((c) => c.logReturn));
       if (test.ci![0] / scale <= beta / 100 && test.ci![1] / scale >= beta / 100) covered++;
     }
     expect(covered / reps).toBeGreaterThan(0.92);

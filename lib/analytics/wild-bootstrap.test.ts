@@ -13,7 +13,7 @@ import { bootstrapTs, drawWeights, frame } from "./wild-bootstrap";
 function sample() {
   const changes = simulateHourly({ sessions: 12, seed: 5, sharedVolatility: true });
   const rng = mulberry32(6);
-  const m = changes.map((c) => 0.0015 * normal(rng) + 0.0004 * c.probChangePp);
+  const m = changes.map((c) => 0.0015 * normal(rng) + 0.0004 * c.kalshiChange);
   const r = changes.map((c, i) => c.logReturn + 1.2 * m[i] + 0.0002);
   const block = Int32Array.from(changes, (_, i) => Math.floor(i / 6));
   const window = changes.map((_, i) => i).filter((i) => i >= 36);
@@ -31,7 +31,7 @@ const residuals = (X: number[][], y: number[]) => {
 describe("the closed form", () => {
   const { changes, m, r, block, window } = sample();
   const weights = drawWeights(12, 30, mulberry32(7));
-  const x = window.map((i) => changes[i].probChangePp);
+  const x = window.map((i) => changes[i].kalshiChange);
   const steps = window.map((i) => changes[i].step);
   const Z = m.map((v) => [1, v]);
 

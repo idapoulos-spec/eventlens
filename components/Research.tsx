@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { buildResearchRows, rowsSince } from "@/lib/analytics";
+import { buildResearchRows, probabilityVariable, rowsSince } from "@/lib/analytics";
 import { formatDateTime } from "@/lib/format";
 import type { ResearchHistory } from "@/lib/history/types";
 import { RESEARCH_WINDOW_MS, researchStockPoints } from "@/lib/history/window";
@@ -89,7 +89,7 @@ export async function Research({
       windowEnd={end}
       stockSymbol={s.data.quote.symbol || stock}
       kalshiTicker={kalshi}
-      yesLabel={market.subtitle ?? market.title}
+      variable={probabilityVariable(market.subtitle ?? market.title)}
       initialBenchmark={b}
     />
   );

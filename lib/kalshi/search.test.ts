@@ -209,7 +209,7 @@ describe("searchKalshiMarkets", () => {
     expect(tickers(await results(mod, "PARolin"))).toEqual(["KXNEWPOPE-70-PPAR"]); // YES side, any case
     expect(tickers(await results(mod, "isarescu"))).toEqual(["KXNEXTROMANIAPM-45JAN01-MISA"]); // accents
     expect(tickers(await results(mod, "nasdaq 33000"))).toEqual(["KXNASDAQ100Y-26DEC31H1600-T33000"]); // "33,000"
-    expect(tickers(await results(mod, "economics"))).toHaveLength(3); // category
+    expect(tickers(await results(mod, "economics"))).toHaveLength(4); // category: three markets and the whole Fed event
     expect(tickers(await results(mod, "KXNEWPOPE"))).toHaveLength(2); // ticker
   });
 
@@ -217,13 +217,35 @@ describe("searchKalshiMarkets", () => {
     stubEvents([EVENTS]);
     const mod = await loadSearch();
 
-    // All three open Fed markets match "fed" equally, so 24h volume orders them.
+    // The whole event and its three open markets match "fed" equally, so 24h volume orders them:
+    // the event's is its markets' combined.
     expect(tickers(await results(mod, "fed"))).toEqual([
+      "KXFEDDECISION-26OCT",
       "KXFEDDECISION-26OCT-H0",
       "KXFEDDECISION-26OCT-C25",
       "KXFEDDECISION-26OCT-H25",
     ]);
     expect(tickers(await results(mod, "kxfeddecision-26oct-h25"))[0]).toBe("KXFEDDECISION-26OCT-H25");
+  });
+
+  it("offers a supported event as a whole, with its open outcomes counted, and no other event", async () => {
+    stubEvents([EVENTS]);
+    const mod = await loadSearch();
+    const [event] = await results(mod, "kxfeddecision-26oct");
+    expect(event).toEqual({
+      ticker: "KXFEDDECISION-26OCT",
+      kind: "event",
+      title: "Fed decision in October 2026",
+      subtitle: "Whole event · 3 outcomes",
+      eventTitle: "Fed decision in October 2026",
+      category: "Economics",
+      status: "open",
+      closeTime: "2026-10-28T18:00:00.000Z",
+      probability: null,
+    });
+    expect(tickers(await results(mod, "whole event"))).toEqual(["KXFEDDECISION-26OCT"]);
+    // Pope isn't a supported series.
+    expect((await results(mod, "pope")).some((r) => r.kind === "event")).toBe(false);
   });
 
   it("ranks a whole-word match above a prefix match", async () => {
@@ -265,7 +287,7 @@ describe("searchKalshiMarkets", () => {
   it("skips an event that appears on two pages", async () => {
     stubEvents([[FED], [FED, POPE]]);
     const mod = await loadSearch();
-    expect(await results(mod, "fed")).toHaveLength(3);
+    expect(await results(mod, "fed")).toHaveLength(4);
   });
 
   it("stops paging after MAX_INDEX_PAGES and warns", async () => {
@@ -357,9 +379,9 @@ describe("the market index cache", () => {
     const stale = mod.searchKalshiMarkets("fed");
     const refresh = mod.pendingKalshiIndexRefresh();
     const staleResult = await stale;
-    expect(staleResult.ok && staleResult.data).toHaveLength(3);
+    expect(staleResult.ok && staleResult.data).toHaveLength(4);
     expect(await settle(refresh!)).toMatchObject({ ok: false });
-    expect(await results(mod, "fed")).toHaveLength(3);
+    expect(await results(mod, "fed")).toHaveLength(4);
 
     vi.setSystemTime(NOW + mod.INDEX_MAX_AGE_MS);
     expect(await settle(mod.searchKalshiMarkets("fed"))).toMatchObject({ ok: false, error: { code: "upstream_unavailable" } });

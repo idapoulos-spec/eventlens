@@ -3,7 +3,7 @@ import type { ChangePoint } from "./changes";
 import { pearson } from "./correlation";
 import { rollingCorrelation } from "./rolling";
 
-const change = (step: number, probChangePp: number, logReturn: number): ChangePoint => ({ t: step * 1000, step, probChangePp, logReturn });
+const change = (step: number, kalshiChange: number, logReturn: number): ChangePoint => ({ t: step * 1000, step, kalshiChange, logReturn });
 
 describe("rollingCorrelation", () => {
   const changes = [change(1, 1, 0.01), change(2, -1, 0.02), change(3, 2, 0.01), change(4, 0, -0.01), change(5, 3, 0.03)];

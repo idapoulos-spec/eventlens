@@ -1,6 +1,7 @@
 import "server-only";
 
 import { impliedProbability } from "@/lib/analytics";
+import { supportedEvent } from "@/lib/expected/series";
 import { LIVE } from "@/lib/fetch-cache";
 import { isTimeout } from "@/lib/request-timeout";
 import { fail, ok, type DataError, type Result } from "@/lib/result";
@@ -102,7 +103,7 @@ function toEntries(event: RawEvent): Entry[] {
     titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1);
   }
 
-  return markets.map((m) => {
+  const entries = markets.map((m): Entry => {
     const title = m.title || m.ticker;
     const yes = m.yes_sub_title || m.subtitle || "";
     const closeMs = m.close_time ? Date.parse(m.close_time) : NaN;
@@ -132,6 +133,38 @@ function toEntries(event: RawEvent): Entry[] {
       },
     };
   });
+  return supportedEvent(event.event_ticker) && entries.length > 1 ? [wholeEvent(event, eventTitle, category, entries), ...entries] : entries;
+}
+
+/**
+ * A supported event as one result, analyzed by its expected value: found by its own words and
+ * ticker, and ranked by its markets' combined trading, so it leads its own markets.
+ */
+function wholeEvent(event: RawEvent, eventTitle: string, category: string, markets: Entry[]): Entry {
+  const closes = markets.map((m) => m.closeMs).filter((t): t is number => t !== null);
+  const closeMs = closes.length > 0 ? Math.min(...closes) : null;
+  return {
+    result: {
+      ticker: event.event_ticker,
+      kind: "event",
+      title: eventTitle,
+      subtitle: `Whole event · ${markets.length} outcomes`,
+      eventTitle,
+      category,
+      status: "open",
+      closeTime: closeMs === null ? null : new Date(closeMs).toISOString(),
+      probability: null,
+    },
+    closeMs,
+    volume24h: markets.reduce((sum, m) => sum + m.volume24h, 0),
+    openInterest: markets.reduce((sum, m) => sum + m.openInterest, 0),
+    words: {
+      market: spaced(`${eventTitle} whole event expected`),
+      ticker: spaced(event.event_ticker),
+      event: spaced(`${eventTitle} ${event.sub_title ?? ""}`),
+      category: spaced(category),
+    },
+  };
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

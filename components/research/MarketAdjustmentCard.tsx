@@ -6,6 +6,7 @@ import {
   type ChangePoint,
   type CorrelationStats,
   type EventStudy,
+  type KalshiVariable,
   type MarketAdjustment,
   type MarketModel,
   type Resolution,
@@ -41,7 +42,7 @@ export function modelSample(model: MarketModel, resolution: Resolution): string 
 /** Alpha per interval in percent; hourly alphas are tiny, so they get more decimals. */
 const formatAlpha = (alpha: number) => formatSigned(alpha * 100, Math.abs(alpha * 100) >= 0.01 ? 3 : 4, "%");
 
-const pairs = (changes: ChangePoint[]) => changes.map((c) => ({ x: c.probChangePp, y: c.logReturn }));
+const pairs = (changes: ChangePoint[]) => changes.map((c) => ({ x: c.kalshiChange, y: c.logReturn }));
 const lastValue = (mean: number[] | null | undefined) => formatSigned(mean?.at(-1) ?? null, 2, "%");
 
 interface Props {
@@ -60,7 +61,7 @@ interface Props {
   same: string;
   /** Singular and plural names of one interval, e.g. ["hour", "hours"]. */
   noun: [string, string];
-  yesLabel: string;
+  variable: KalshiVariable;
 }
 
 /**
@@ -68,7 +69,8 @@ interface Props {
  * beta-adjusted, and simple excess returns, and a regression of the stock on the benchmark
  * and Kalshi together.
  */
-export function MarketAdjustmentCard({ stockSymbol, benchmark, isSelf, market, raw, resolution, days, unit, same, noun, yesLabel }: Props) {
+export function MarketAdjustmentCard({ stockSymbol, benchmark, isSelf, market, raw, resolution, days, unit, same, noun, variable }: Props) {
+  const changes = variable.kind === "probability" ? "Kalshi changes" : "ΔE";
   const bench = benchmark.active.symbol;
   const model = market?.model ?? null;
   const flags: string[] = [];
@@ -82,7 +84,7 @@ export function MarketAdjustmentCard({ stockSymbol, benchmark, isSelf, market, r
   const overlap = market?.kalshiVsBenchmark;
   if (overlap && overlap.test.p !== null && overlap.test.p < 0.05) {
     flags.push(
-      `Kalshi changes moved with ${bench}’s returns (r = ${fmtR(overlap.r)}, p = ${formatP(overlap.test.p)}, n = ${overlap.n}; uncorrected): adjusting for ${bench} removes part of what this market tracks`,
+      `${changes} moved with ${bench}’s returns (r = ${fmtR(overlap.r)}, p = ${formatP(overlap.test.p)}, n = ${overlap.n}; uncorrected): adjusting for ${bench} removes part of what this ${variable.kind === "probability" ? "market" : "event"} tracks`,
     );
   }
 
@@ -111,8 +113,8 @@ export function MarketAdjustmentCard({ stockSymbol, benchmark, isSelf, market, r
       {market && model && (
         <>
           <ModelStats model={model} stockSymbol={stockSymbol} bench={bench} resolution={resolution} days={days} noun={noun} />
-          <Comparison market={market} raw={raw} stockSymbol={stockSymbol} bench={bench} resolution={resolution} unit={unit} same={same} />
-          <KalshiRegressionNote market={market} stockSymbol={stockSymbol} bench={bench} resolution={resolution} noun={noun} />
+          <Comparison market={market} raw={raw} stockSymbol={stockSymbol} bench={bench} resolution={resolution} unit={unit} same={same} changes={changes} />
+          <KalshiRegressionNote market={market} stockSymbol={stockSymbol} bench={bench} resolution={resolution} noun={noun} variable={variable} />
         </>
       )}
 
@@ -121,7 +123,7 @@ export function MarketAdjustmentCard({ stockSymbol, benchmark, isSelf, market, r
         removes the part of the move {stockSymbol} shares with the market, which may be the very effect being studied: what’s
         left is how {stockSymbol} moved differently from {bench}. A benchmark that holds {stockSymbol} (as broad and sector ETFs
         often do) also absorbs part of its own move.{resolution === "hourly" && " Hourly beta uses trading hours only; daily beta includes overnight moves."}{" "}
-        The sign depends on what YES means (“{yesLabel}”). Trying several windows, resolutions, or benchmarks raises the odds
+        {variable.text.sign} Trying several windows, resolutions, or benchmarks raises the odds
         that one result looks significant by chance.
       </p>
     </Card>
@@ -268,6 +270,7 @@ function Comparison({
   resolution,
   unit,
   same,
+  changes,
 }: {
   market: MarketAdjustment;
   raw: Props["raw"];
@@ -276,6 +279,8 @@ function Comparison({
   resolution: Resolution;
   unit: LagUnit;
   same: string;
+  /** "Kalshi changes" or "ΔE". */
+  changes: string;
 }) {
   const abnormal = correlationStats(pairs(market.abnormal ?? []));
   const excess = correlationStats(pairs(market.excess));
@@ -301,7 +306,7 @@ function Comparison({
         ]}
       />
       <p className="mt-2 text-ink-muted">
-        r: correlation of Kalshi changes with each kind of return. The last three columns are the event study’s average
+        r: correlation of {changes} with each kind of return. The last three columns are the event study’s average
         path by {end}. Simple excess subtracts {bench}’s return one for one (beta 1, no alpha).{" "}
         {eventModel
           ? `The event study’s beta-adjusted paths use a separate beta, ${eventModel.beta.toFixed(2)}, also from ${modelSample(eventModel, resolution)} but leaving out every jump window, so the jumps don’t shape it.`
@@ -319,12 +324,14 @@ function KalshiRegressionNote({
   bench,
   resolution,
   noun,
+  variable,
 }: {
   market: MarketAdjustment;
   stockSymbol: string;
   bench: string;
   resolution: Resolution;
   noun: [string, string];
+  variable: KalshiVariable;
 }) {
   const fit = market.kalshi;
   let lead: ReactNode;
@@ -336,7 +343,7 @@ function KalshiRegressionNote({
     const { test, neweyWest } = fit;
     lead = (
       <>
-        With {bench}’s return held fixed, each 1 pp rise in the chance of YES went with a{" "}
+        With {bench}’s return held fixed, {variable.text.perUnit} went with a{" "}
         <span className="font-semibold text-ink">{pct(fit.coef)}</span> {stockSymbol} return in the same {noun[0]}
         {test.ci && ` (95% CI ${formatCi(test.ci, pct)})`}.{" "}
         {test.p !== null ? `p = ${formatP(test.p)}: ${verdictText(test.p)} from zero at the 5% level.` : unavailableText(test)}
@@ -345,8 +352,8 @@ function KalshiRegressionNote({
     caveats = (
       <>
         A cross-check of the primary test (which uses beta from the full 90 days), not a separate finding, so it isn’t
-        corrected. Regression of {stockSymbol}’s return on {bench}’s return and the Kalshi change over this window’s{" "}
-        {plural(fit.n, ["interval", "intervals"])} (Kalshi moved in {fit.kalshiMoves}); {bench}’s coefficient here is{" "}
+        corrected. Regression of {stockSymbol}’s return on {bench}’s return and {variable.kind === "probability" ? "the Kalshi change" : "ΔE"} over this window’s{" "}
+        {plural(fit.n, ["interval", "intervals"])} ({variable.text.subject} moved in {fit.kalshiMoves}); {bench}’s coefficient here is{" "}
         {fit.marketCoef.toFixed(2)}. {methodText(test)} The statistic is the coefficient’s t with Newey–West errors (
         {plural(fit.lags, ["lag", "lags"])}; no lag reaches across {resolution === "hourly" ? "a night or weekend" : "a missing session"})
         and HC3’s correction for {noun[1]} without a Kalshi move, which let a few large moves carry the estimate.{" "}

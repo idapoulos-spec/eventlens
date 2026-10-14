@@ -7,7 +7,7 @@ const EPSILON = 1e-9;
 
 export interface EventStudyOptions {
   /** Smallest Kalshi probability change, in percentage points, that counts as a jump. */
-  thresholdPp: number;
+  threshold: number;
   /** Bars shown before the jump. */
   before: number;
   /** Bars shown after the jump; a jump this close to the previous one is skipped. */
@@ -19,7 +19,7 @@ export interface EventGroup {
   mean: number[] | null;
   n: number;
   /** When each counted jump ended, and its size in pp. */
-  events: { t: number; probChangePp: number }[];
+  events: { t: number; kalshiChange: number }[];
   /** Each counted jump's path, in percent, in the same order as `events`. */
   paths: number[][];
   flag: SampleFlag;
@@ -62,19 +62,19 @@ function group(paths: number[][], events: EventGroup["events"]): EventGroup {
   return { mean: meanPath(paths), n: paths.length, events, paths, flag: sampleFlag(paths.length, 1, SMALL_EVENT_COUNT) };
 }
 
-/** Changes of at least `thresholdPp` in either direction, oldest first. */
-export function detectJumps(changes: ChangePoint[], thresholdPp: number): ChangePoint[] {
-  return changes.filter((c) => Math.abs(c.probChangePp) >= thresholdPp - EPSILON).sort((a, b) => a.t - b.t);
+/** Changes of at least `threshold` in either direction, oldest first. */
+export function detectJumps(changes: ChangePoint[], threshold: number): ChangePoint[] {
+  return changes.filter((c) => Math.abs(c.kalshiChange) >= threshold - EPSILON).sort((a, b) => a.t - b.t);
 }
 
 /**
  * Indices of the rows within `before` bars before to `after` bars after any jump, counting
  * every jump at or above the threshold, including ones the event study skips.
  */
-export function eventWindowRows(rows: ResearchRow[], changes: ChangePoint[], { thresholdPp, before, after }: EventStudyOptions): Set<number> {
+export function eventWindowRows(rows: ResearchRow[], changes: ChangePoint[], { threshold, before, after }: EventStudyOptions): Set<number> {
   const index = new Map(rows.map((r, i) => [r.t, i]));
   const inside = new Set<number>();
-  for (const jump of detectJumps(changes, thresholdPp)) {
+  for (const jump of detectJumps(changes, threshold)) {
     const i = index.get(jump.t);
     if (i === undefined) continue;
     for (let j = Math.max(0, i - before); j <= Math.min(rows.length - 1, i + after); j++) inside.add(j);
@@ -97,7 +97,7 @@ export function eventStudy(
   options: EventStudyOptions,
   logChange: LogChange = (from, to) => Math.log(rows[to].stockClose / rows[from].stockClose),
 ): EventStudy {
-  const { thresholdPp, before, after } = options;
+  const { threshold, before, after } = options;
   const offsets = Array.from({ length: before + after + 1 }, (_, i) => i - before);
   const index = new Map(rows.map((r, i) => [r.t, i]));
   const hasWindow = (i: number) => i - before >= 0 && i >= 1 && i + after < rows.length;
@@ -106,7 +106,7 @@ export function eventStudy(
     return values.every((v) => v !== null) ? values.map((v) => v! * 100) : null;
   };
 
-  const jumps = detectJumps(changes, thresholdPp);
+  const jumps = detectJumps(changes, threshold);
   const rises: number[][] = [];
   const falls: number[][] = [];
   const riseEvents: EventGroup["events"] = [];
@@ -130,8 +130,8 @@ export function eventStudy(
         continue;
       }
       lastKept = i;
-      const event = { t: jump.t, probChangePp: jump.probChangePp };
-      if (jump.probChangePp > 0) {
+      const event = { t: jump.t, kalshiChange: jump.kalshiChange };
+      if (jump.kalshiChange > 0) {
         rises.push(p);
         riseEvents.push(event);
       } else {

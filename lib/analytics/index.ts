@@ -20,3 +20,4 @@ export * from "./multiple-testing";
 export * from "./random";
 export * from "./correlation-test";
 export * from "./event-tests";
+export * from "./variable";

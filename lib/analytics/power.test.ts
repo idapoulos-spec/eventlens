@@ -14,7 +14,7 @@ const SIMULATION_TIMEOUT = 300_000;
 function sample(options: MarketSimOptions, window: number) {
   const { rows: full, closesByT } = simulateMarketRows(options);
   const model = fitMarketModel(full, closesByT)!;
-  const abnormal = adjustedChanges(computeChanges(lastSessions(full, window, options.resolution)).changes, benchmarkReturnsByT(full, closesByT), model);
+  const abnormal = adjustedChanges(computeChanges(lastSessions(full, window, options.resolution), 100).changes, benchmarkReturnsByT(full, closesByT), model);
   return { model, abnormal };
 }
 
@@ -43,7 +43,7 @@ describe("detectableCorrelation", () => {
       const block = Int32Array.from(s.abnormal, (_, i) => Math.floor(i / 6));
       const f = frame(
         { r: s.abnormal.map((c) => c.logReturn), m: null, block },
-        { index: Int32Array.from(s.abnormal, (_, i) => i), x: s.abnormal.map((c) => c.probChangePp), steps: s.abnormal.map((c) => c.step), market: false },
+        { index: Int32Array.from(s.abnormal, (_, i) => i), x: s.abnormal.map((c) => c.kalshiChange), steps: s.abnormal.map((c) => c.step), market: false },
       )!;
       return Array.from(scoreVarianceRatios(f, 400, seededRng("test"))).sort((a, b) => a - b)[200];
     };
@@ -63,7 +63,7 @@ describe("simulatePower", () => {
   it("rejects about 5% of the time with no effect built in", () => {
     // A frame for the plain correlation of one simulated window, its own pairs as stage 1.
     const { abnormal } = sample({ ...design, seed: 51 }, 62);
-    const x = abnormal.map((c) => c.probChangePp);
+    const x = abnormal.map((c) => c.kalshiChange);
     const block = Int32Array.from(abnormal, (_, i) => Math.floor(i / 6));
     const f = frame(
       { r: abnormal.map((c) => c.logReturn), m: null, block },

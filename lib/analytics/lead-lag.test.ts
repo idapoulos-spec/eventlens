@@ -11,7 +11,7 @@ function noise(seed: number) {
   };
 }
 
-const change = (step: number, probChangePp: number, logReturn: number): ChangePoint => ({ t: step * 1000, step, probChangePp, logReturn });
+const change = (step: number, kalshiChange: number, logReturn: number): ChangePoint => ({ t: step * 1000, step, kalshiChange, logReturn });
 
 describe("crossCorrelation", () => {
   it("peaks at a positive lag when the stock moves after Kalshi", () => {

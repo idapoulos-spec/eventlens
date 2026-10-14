@@ -31,7 +31,7 @@ function makeRows(closes: number[] = S): ResearchRow[] {
     t: step * HOUR,
     step,
     stockClose: closes[i],
-    probability: P[i],
+    kalshiValue: P[i],
     kalshiSource: P[i] === null ? null : "midpoint",
     kalshiAsOf: P[i] === null ? null : step * HOUR,
     exclusion: P[i] === null ? "before_kalshi" : null,
@@ -40,7 +40,7 @@ function makeRows(closes: number[] = S): ResearchRow[] {
 
 const rows = makeRows();
 const closesByT = new Map(steps.flatMap((step, i) => (i === 5 ? [] : [[step * HOUR, B[i]] as [number, number]])));
-const changes = computeChanges(rows).changes;
+const changes = computeChanges(rows, 100).changes;
 const benchReturns = benchmarkReturnsByT(rows, closesByT);
 
 describe("benchmarkReturnsByT", () => {
@@ -131,7 +131,7 @@ describe("kalshiRegression", () => {
 
   it("tests the coefficient with the wild bootstrap, refitting every coefficient, given enough sessions", () => {
     const { rows, closesByT } = simulateMarketRows({ sessions: 21, resolution: "hourly", seed: 4, effect: 0.6 });
-    const fit = kalshiRegression(computeChanges(rows).changes, benchmarkReturnsByT(rows, closesByT), "hourly", { draws: 199 })!;
+    const fit = kalshiRegression(computeChanges(rows, 100).changes, benchmarkReturnsByT(rows, closesByT), "hourly", { draws: 199 })!;
     expect(fit.n).toBe(126);
     expect(fit.coef).toBeGreaterThan(0.3);
     expect(fit.test).toMatchObject({ method: "wild_bootstrap", pUnavailable: null, ciUnavailable: null });
@@ -143,7 +143,7 @@ describe("kalshiRegression", () => {
   });
 
   it("is null when Kalshi never moved", () => {
-    expect(kalshiRegression(changes.map((c) => ({ ...c, probChangePp: 0 })), benchReturns, "hourly")).toBeNull();
+    expect(kalshiRegression(changes.map((c) => ({ ...c, kalshiChange: 0 })), benchReturns, "hourly")).toBeNull();
   });
 });
 
@@ -158,7 +158,7 @@ describe("kalshiBenchmarkCorrelation", () => {
 });
 
 describe("marketAdjustment", () => {
-  const result = marketAdjustment({ full: rows, rows, changes, closesByT, event: { thresholdPp: 3, before: 1, after: 1 }, resolution: "hourly" });
+  const result = marketAdjustment({ full: rows, rows, changes, scale: 100, closesByT, event: { threshold: 3, before: 1, after: 1 }, resolution: "hourly" });
 
   it("fits the model on all rows and adjusts the window's changes", () => {
     expect(result.model!.n).toBe(12);
@@ -177,7 +177,7 @@ describe("marketAdjustment", () => {
     // Jumps of ≥ 3 pp end at rows 6, 9, 11, and 14, so only intervals ending at rows 1–4 remain.
     expect(result.eventModel).toBeNull();
     expect(result.studies.abnormal).toBeNull();
-    const narrow = marketAdjustment({ full: rows, rows, changes, closesByT, event: { thresholdPp: 5, before: 0, after: 0 }, resolution: "hourly" });
+    const narrow = marketAdjustment({ full: rows, rows, changes, scale: 100, closesByT, event: { threshold: 5, before: 0, after: 0 }, resolution: "hourly" });
     // Jumps of ≥ 5 pp end at rows 9 and 14, and the windows are just those bars.
     expect(narrow.eventModel!.n).toBe(12 - 2);
     expect(narrow.eventModel!.beta).not.toBeCloseTo(narrow.model!.beta, 3);
@@ -189,7 +189,7 @@ describe("marketAdjustment", () => {
     // The jump at row 6 needs row 5, which has no benchmark bar.
     expect(study.skippedMissing).toBe(1);
     const rise = study.rises.events.find((e) => e.t === 21 * HOUR)!;
-    expect(rise.probChangePp).toBeCloseTo(5, 10);
+    expect(rise.kalshiChange).toBeCloseTo(5, 10);
     // Kept: rises at rows 9 and 14, and the fall at row 11; each is more than a bar after the last kept jump.
     expect(study.rises.events.map((e) => e.t)).toEqual([21 * HOUR, 26 * HOUR]);
     const path = (i: number) => [-1, 0, 1].map((k) => (Math.log(S[i + k] / S[i - 1]) - Math.log(B[i + k] / B[i - 1])) * 100);
@@ -201,7 +201,7 @@ describe("the primary test with alpha and beta refitted", () => {
   const { rows: full, closesByT } = simulateMarketRows({ sessions: 62, resolution: "hourly", seed: 21, kalshiInMarket: 0.1, sharedVolatility: true });
   const rows = lastSessions(full, 21, "hourly");
   const model = fitMarketModel(full, closesByT)!;
-  const abnormal = adjustedChanges(computeChanges(rows).changes, benchmarkReturnsByT(full, closesByT), model);
+  const abnormal = adjustedChanges(computeChanges(rows, 100).changes, benchmarkReturnsByT(full, closesByT), model);
 
   it("agrees with lag 0 of the market-adjusted lead-lag chart, and counts the window's sessions", () => {
     const primary = primaryTest(abnormal, model, "hourly", { draws: 199 });
@@ -242,7 +242,7 @@ function analyze({ window, ...options }: Setting, seed: number) {
   const rows = lastSessions(full, window, options.resolution);
   const model = fitMarketModel(full, closesByT)!;
   const bench = benchmarkReturnsByT(full, closesByT);
-  const changes = computeChanges(rows).changes;
+  const changes = computeChanges(rows, 100).changes;
   const abnormal = adjustedChanges(changes, bench, model);
   return {
     primary: primaryTest(abnormal, model, options.resolution, { draws: DRAWS }),
@@ -341,12 +341,12 @@ describe("simulations: intervals and detection", () => {
       const { rows: full, closesByT } = simulateMarketRows({ sessions: 62, resolution: "hourly", seed: 35_000 + s, effect, sharedVolatility: true });
       const model = fitMarketModel(full, closesByT)!;
       const bench = benchmarkReturnsByT(full, closesByT);
-      const changes = computeChanges(full).changes;
+      const changes = computeChanges(full, 100).changes;
       const abnormal = adjustedChanges(changes, bench, model);
       const test = primaryTest(abnormal, model, "hourly", { draws: DRAWS });
       // The primary interval is shown as a correlation, slope × sx/sy; undo that to compare with the slope.
       const sd = (v: number[]) => Math.sqrt(v.reduce((a, b) => a + b * b, 0) - v.reduce((a, b) => a + b, 0) ** 2 / v.length);
-      const scale = sd(abnormal.map((c) => c.probChangePp)) / sd(abnormal.map((c) => c.logReturn));
+      const scale = sd(abnormal.map((c) => c.kalshiChange)) / sd(abnormal.map((c) => c.logReturn));
       if (test.ci![0] / scale <= effect / 100 && test.ci![1] / scale >= effect / 100) primary++;
       const fit = kalshiRegression(changes, bench, "hourly", { draws: DRAWS })!;
       if (fit.test.ci![0] <= effect && fit.test.ci![1] >= effect) regression++;

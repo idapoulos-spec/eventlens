@@ -9,14 +9,16 @@ export type IntervalExclusion =
    * stock doesn't trade (overnight, a weekend, a holiday, a halt) or a missing bar.
    */
   | "non_trading"
+  /** An event's open outcomes differ between the two ends, so E's change mixes in a new outcome. */
+  | "outcome_set_changed"
   | RowExclusion;
 
 /** The interval between two consecutive rows, ending at `t`. */
 export interface RowInterval {
   t: number;
   step: number;
-  /** Kalshi probability change in percentage points, when both ends have a probability. */
-  probChangePp: number | null;
+  /** Change in Kalshi's value (a probability in pp, or an expected value in its unit), when both ends have one. */
+  kalshiChange: number | null;
   /** Stock log return ln(S₁/S₀); null for the first row. */
   logReturn: number | null;
   exclusion: IntervalExclusion | null;
@@ -26,7 +28,7 @@ export interface RowInterval {
 export interface ChangePoint {
   t: number;
   step: number;
-  probChangePp: number;
+  kalshiChange: number;
   logReturn: number;
 }
 
@@ -41,30 +43,33 @@ export interface ChangeSeries {
 type Exclusion = Exclude<IntervalExclusion, "first_row">;
 
 /**
- * Kalshi probability changes (pp) and stock log returns between consecutive rows.
- * An interval counts only if both ends have a usable Kalshi value and the rows are one
- * grid slot apart, so no change spans hours the stock wasn't trading.
+ * Kalshi changes and stock log returns between consecutive rows. An interval counts only if
+ * both ends have a usable Kalshi value and the rows are one grid slot apart, so no change spans
+ * hours the stock wasn't trading; for an event's expected value, its open outcomes must also be
+ * the same at both ends. `scale` converts a change in the rows' values to its unit (KalshiVariable):
+ * 100 turns probabilities into pp.
  */
-export function computeChanges(rows: ResearchRow[]): ChangeSeries {
+export function computeChanges(rows: ResearchRow[], scale: number): ChangeSeries {
   const intervals: RowInterval[] = [];
   const changes: ChangePoint[] = [];
   const excluded: Partial<Record<Exclusion, number>> = {};
 
   rows.forEach((row, i) => {
     const prev = i > 0 ? rows[i - 1] : null;
-    const probChangePp =
-      prev?.probability != null && row.probability !== null ? (row.probability - prev.probability) * 100 : null;
+    const sameOutcomes = prev?.expected === undefined || row.expected === undefined || prev.expected.openSet === row.expected.openSet;
+    const kalshiChange =
+      prev?.kalshiValue != null && row.kalshiValue !== null && sameOutcomes ? (row.kalshiValue - prev.kalshiValue) * scale : null;
     const logReturn = prev ? Math.log(row.stockClose / prev.stockClose) : null;
     const exclusion: IntervalExclusion | null =
       prev === null
         ? "first_row"
         : row.step - prev.step !== 1
           ? "non_trading"
-          : (prev.exclusion ?? row.exclusion);
+          : (prev.exclusion ?? row.exclusion ?? (sameOutcomes ? null : "outcome_set_changed"));
 
-    intervals.push({ t: row.t, step: row.step, probChangePp, logReturn, exclusion });
-    if (exclusion === null && probChangePp !== null && logReturn !== null) {
-      changes.push({ t: row.t, step: row.step, probChangePp, logReturn });
+    intervals.push({ t: row.t, step: row.step, kalshiChange, logReturn, exclusion });
+    if (exclusion === null && kalshiChange !== null && logReturn !== null) {
+      changes.push({ t: row.t, step: row.step, kalshiChange, logReturn });
     } else if (exclusion !== null && exclusion !== "first_row") {
       excluded[exclusion] = (excluded[exclusion] ?? 0) + 1;
     }
