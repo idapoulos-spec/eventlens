@@ -69,7 +69,7 @@ export function blockLayout(changes: ChangePoint[], resolution: Resolution): Blo
 }
 
 /** The New York trading date (hourly), or the run of `days` trading days counted from `first` (daily). */
-function blockKey(t: number, step: number, first: number, days: number | null): number {
+export function blockKey(t: number, step: number, first: number, days: number | null): number {
   return days === null ? Math.floor((t + timeZoneOffsetMs(t, DISPLAY_TIME_ZONE)) / DAY_MS) : Math.floor((step - first) / days);
 }
 
@@ -288,6 +288,22 @@ export function lagCorrelationTests(
     };
     return { lag, r, n, kalshiMoves: px.filter((v) => v !== 0).length, test };
   });
+}
+
+/** Lag 0's frame as the primary test builds it (the market model refitted), with the changes it pairs, in step order. */
+export interface PrimaryFrame {
+  f: Frame;
+  /** The window's changes sorted by step: pair p is sorted[p]. */
+  sorted: ChangePoint[];
+  /** The window's blocks, as the test counts them. */
+  layout: BlockLayout;
+}
+
+/** The primary test's frame (fragility.ts reads its residuals and blocks), or null when it can't be built. */
+export function primaryFrame(changes: ChangePoint[], resolution: Resolution, refit: RefitSample): PrimaryFrame | null {
+  const s = setup(changes, resolution, refit);
+  const { f } = lagFrame(s, 0);
+  return f && { f, sorted: s.sorted, layout: s.layout };
 }
 
 /** The smallest correlation the same-interval test detects with DETECTABLE_POWER, for one sample. */
