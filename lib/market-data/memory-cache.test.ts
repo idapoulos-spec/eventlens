@@ -50,4 +50,20 @@ describe("memoryCache", () => {
     await get("a", load, () => Infinity);
     expect(load).toHaveBeenCalledTimes(4);
   });
+
+  it("loads a value again when it doesn't cover the request, and keeps the new one", async () => {
+    const cache = memoryCache<{ from: number }>(5);
+    let loads = 0;
+    const load = (from: number) => async () => {
+      loads++;
+      return { ok: true as const, data: { from } };
+    };
+    const covers = (needed: number) => (v: { from: number }) => v.from <= needed;
+    await cache("NVDA", load(100), () => Infinity, covers(100));
+    expect(await cache("NVDA", load(150), () => Infinity, covers(150))).toEqual({ ok: true, data: { from: 100 } });
+    expect(loads).toBe(1);
+    expect(await cache("NVDA", load(50), () => Infinity, covers(50))).toEqual({ ok: true, data: { from: 50 } });
+    expect(await cache("NVDA", load(80), () => Infinity, covers(80))).toEqual({ ok: true, data: { from: 50 } });
+    expect(loads).toBe(2);
+  });
 });

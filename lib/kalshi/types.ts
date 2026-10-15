@@ -15,6 +15,8 @@ export interface KalshiMarket {
   lastPrice: number | null;
   volume24h: number | null;
   openInterest: number | null;
+  /** When the market opened for trading (ISO), or null if Kalshi didn't say. */
+  openTime: string | null;
   closeTime: string | null;
 }
 

@@ -87,6 +87,7 @@ export function normalizeMarket(raw: RawMarket): KalshiMarket {
     lastPrice: toNumber(raw.last_price_dollars),
     volume24h: toNumber(raw.volume_24h_fp),
     openInterest: toNumber(raw.open_interest_fp),
+    openTime: raw.open_time ?? null,
     closeTime: raw.close_time ?? null,
   };
 }
@@ -124,14 +125,14 @@ async function getLastTradeTime(ticker: string): Promise<number | null> {
  * Uses the batch endpoint, which is keyed by market ticker alone, so history can load
  * alongside the market instead of waiting for it to name its event and series.
  */
-async function getCandles(ticker: string, startSec: number, endSec: number, periodMinutes: number): Promise<KalshiPoint[]> {
+async function getCandles(ticker: string, startSec: number, endSec: number, periodMinutes: number, cache: RequestInit = cachedFor(60)): Promise<KalshiPoint[]> {
   const query = new URLSearchParams({
     market_tickers: ticker,
     start_ts: String(startSec),
     end_ts: String(endSec),
     period_interval: String(periodMinutes),
   });
-  const data = await kalshiGet<{ markets?: RawMarketCandlesticks[] }>(`/markets/candlesticks?${query}`, cachedFor(60));
+  const data = await kalshiGet<{ markets?: RawMarketCandlesticks[] }>(`/markets/candlesticks?${query}`, cache);
   return normalizeCandles(data.markets?.find((m) => m.market_ticker === ticker)?.candlesticks ?? []);
 }
 
@@ -252,10 +253,13 @@ export function getKalshiResearchHistory(ticker: string): Promise<Result<KalshiP
   return getHourlyHistory(ticker, end - (RESEARCH_DAYS + RESEARCH_LOOKBACK_DAYS) * DAY_SEC, end);
 }
 
-/** Hourly points from candles ending in [startSec, endSec], from the live endpoint. */
-export async function getHourlyHistory(ticker: string, startSec: number, endSec: number): Promise<Result<KalshiPoint[]>> {
+/**
+ * Hourly points from candles ending in [startSec, endSec], from the live endpoint. Cached for a
+ * minute unless `cache` says otherwise (a long window's response can pass the 2 MB Next.js caches).
+ */
+export async function getHourlyHistory(ticker: string, startSec: number, endSec: number, cache?: RequestInit): Promise<Result<KalshiPoint[]>> {
   try {
-    return ok(await getCandles(ticker, startSec, endSec, HOURLY));
+    return ok(await getCandles(ticker, startSec, endSec, HOURLY, cache));
   } catch (err) {
     return describeKalshiError(err, ticker);
   }

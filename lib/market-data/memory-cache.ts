@@ -7,16 +7,27 @@ import type { Result } from "@/lib/result";
  *
  * Each value is kept until `expiresAt(value)`. Concurrent requests for a key share one
  * load. Failures aren't kept, so the next request tries again. Beyond `maxEntries`, the
- * least recently loaded key is dropped.
+ * least recently loaded key is dropped. A value `covers` rejects (e.g. it starts too late
+ * for this request) is loaded again and replaced.
  */
 export function memoryCache<T>(maxEntries: number) {
   const entries = new Map<string, { value: T; expiresAt: number }>();
   const loading = new Map<string, Promise<Result<T>>>();
 
-  return function get(key: string, load: () => Promise<Result<T>>, expiresAt: (value: T) => number): Promise<Result<T>> {
+  return async function get(
+    key: string,
+    load: () => Promise<Result<T>>,
+    expiresAt: (value: T) => number,
+    covers: (value: T) => boolean = () => true,
+  ): Promise<Result<T>> {
     const hit = entries.get(key);
-    if (hit && Date.now() < hit.expiresAt) return Promise.resolve({ ok: true, data: hit.value });
+    if (hit && Date.now() < hit.expiresAt && covers(hit.value)) return { ok: true, data: hit.value };
 
+    const shared = loading.get(key);
+    if (shared) {
+      const result = await shared;
+      if (!result.ok || covers(result.data)) return result;
+    }
     let pending = loading.get(key);
     if (!pending) {
       pending = (async () => {

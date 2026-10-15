@@ -14,7 +14,7 @@ import type { Result } from "@/lib/result";
 import { createTestDb, type TestDb } from "@/lib/store/test-db";
 import type { loadEventAnalysis as LoadEventAnalysis } from "@/lib/expected/load";
 import type { loadAnalysis as LoadAnalysis } from "./analysis";
-import { eventResearchRows, lastRows, marketResearchRows, type ResearchRows } from "./rows";
+import { eventLongRows, eventResearchRows, lastRows, marketLongRows, marketResearchRows, type LongRows, type ResearchRows } from "./rows";
 import { seedCandles, seedCoverage, seedMarket, seedRun } from "./test-fixtures";
 import { HOUR_MS, stubWorld, worldEvent, worldMarket, type WorldMarket } from "./test-world";
 
@@ -29,6 +29,9 @@ const SETTLED = { status: "finalized" as const, open: Date.UTC(2025, 2, 3, 14), 
 const SETTLED_MARKET = worldMarket("KXFEDDECISION-25DEC-H0", SETTLED);
 const LIVE_EVENT = worldEvent("KXFEDDECISION-26DEC", { status: "active", open: Date.UTC(2025, 5, 2, 14), close: Date.UTC(2026, 11, 9, 19), archived: false });
 const SETTLED_EVENT = worldEvent("KXFEDDECISION-25DEC", SETTLED);
+// The same event with every book valid over its whole life, for the longer windows (LIVE_EVENT's
+// unbounded walk, which the pins above use, drifts out of range months before the 90 days).
+const LONG_EVENT = worldEvent("KXFEDDECISION-26DEC", { status: "active", open: Date.UTC(2025, 5, 2, 14), close: Date.UTC(2026, 11, 9, 19), archived: false }, { bounded: true });
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
@@ -178,3 +181,55 @@ describe("Research at 7, 30, and 90 days is unchanged", () => {
     });
   });
 });
+
+/** The longer windows' rows that fall in the 90 days: the same as the 90-day rows, but daily steps (positions in a longer list). */
+function overlap(long: LongRows, rows: ResearchRows) {
+  const recent = lastRows(rows);
+  const byT = (list: { t: number }[]) => new Map(list.map((r) => [r.t, r]));
+  const hourly = byT(long.hourly);
+  const daily = byT(long.daily);
+  return {
+    hourly: recent.hourly.map((r) => hourly.get(r.t)),
+    daily: recent.daily.map((r) => {
+      const d = daily.get(r.t) as (typeof recent.daily)[number] | undefined;
+      return d && { ...d, step: r.step };
+    }),
+    recent,
+  };
+}
+
+describe("the longer windows' rows", () => {
+  it("for a market, start at its open and agree with the 90 days where they overlap", async () => {
+    stubWorld([LIVE_MARKET]);
+    const { kalshiData, stockData, researchHistory, longHistory } = loadAnalysis("NVDA", LIVE_MARKET.ticker);
+    const [k, s, h, l] = await Promise.all([kalshiData, stockData, researchHistory, longHistory]);
+    if (!k.ok || !s.ok || !h.ok || !l.ok || !l.data) throw new Error("expected an analysis with longer windows");
+    const side = { research: s.data.research, fetchedAt: s.data.historyFetchedAt };
+    const closeTime = Date.parse(k.data.market.closeTime!);
+    const long = marketLongRows({ history: l.data, closeTime, ...side });
+    const rows = marketResearchRows({ kalshi: h.data.points, closeTime, ...side });
+
+    expect(long.start).toBe(LIVE_MARKET.open);
+    expect(long.hourly[0].t).toBeGreaterThanOrEqual(LIVE_MARKET.open);
+    expect(long.hourly.length).toBeGreaterThan(330 * 7 * 5 / 7);
+    const { hourly, daily, recent } = overlap(long, rows);
+    expect(hourly).toEqual(recent.hourly);
+    expect(daily).toEqual(recent.daily);
+  });
+
+  it("for an event, start at its first outcome's open and agree with the 90 days where they overlap", async () => {
+    stubWorld(LONG_EVENT);
+    const { event, stockData, long: longMarks } = loadEventAnalysis("TLT", "KXFEDDECISION-26DEC");
+    const [e, s, l] = await Promise.all([event, stockData, longMarks]);
+    if (!e.ok || !s.ok || !l.ok || !l.data) throw new Error("expected an analysis with longer windows");
+    const side = { research: s.data.research, fetchedAt: s.data.historyFetchedAt };
+    const long = eventLongRows({ marks: l.data.marks, start: l.data.start, ...side });
+    const rows = eventResearchRows({ marks: e.data.marks, ...side });
+
+    expect(long.start).toBe(LONG_EVENT[0].open);
+    const { hourly, daily, recent } = overlap(long, rows);
+    expect(hourly).toEqual(recent.hourly);
+    expect(daily).toEqual(recent.daily);
+  });
+});
+

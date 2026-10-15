@@ -132,8 +132,13 @@ function marketQuotes(ticker: string, open: number, close: number): Quote[] {
   return quotes;
 }
 
-/** An event's outcomes: cents move between the hold and the cut or hike outcomes in about 10% of hours. */
-function eventQuotes(event: string, open: number, close: number): Map<string, Quote[]> {
+/**
+ * An event's outcomes: cents move between the hold and the cut or hike outcomes in about 10% of
+ * hours. Unbounded, the hold outcome can drift below zero over many months, as in the walk the
+ * 7/30/90-day pins (research-golden.test.ts) were taken on, so that walk is kept as it was; a
+ * `bounded` walk keeps every book valid for tests that read an event's whole life.
+ */
+function eventQuotes(event: string, open: number, close: number, bounded: boolean): Map<string, Quote[]> {
   const rng = mulberry32(seedOf(event));
   const mids = new Map(OUTCOMES.map(([suffix]) => [suffix, { C26: 3, C25: 12, H0: 70, H25: 12, H26: 3 }[suffix]!]));
   const quotes = new Map<string, Quote[]>(OUTCOMES.map(([suffix]) => [suffix, []]));
@@ -149,6 +154,8 @@ function eventQuotes(event: string, open: number, close: number): Map<string, Qu
     const sign = rng() < 0.5 ? -1 : 1;
     const next = mids.get(other)! + sign * cents;
     if (next < 2 || next > 40) continue;
+    const hold = mids.get("H0")! - sign * cents;
+    if (bounded && (hold < 2 || hold > 96)) continue;
     mids.set(other, next);
     mids.set("H0", mids.get("H0")! - sign * cents);
     write(t, other);
@@ -181,9 +188,13 @@ export function worldMarket(ticker: string, { status, open, close, archived }: O
   return { ticker, event, status, open, close, archived, raw: rawMarket(ticker, event, status, open, close), quotes: marketQuotes(ticker, open, close) };
 }
 
-/** A Fed decision event's five outcomes, quoted together. */
-export function worldEvent(event: string, { status, open, close, archived }: Omit<WorldMarket, "ticker" | "event" | "raw" | "quotes">): WorldMarket[] {
-  const quotes = eventQuotes(event, open, close);
+/** A Fed decision event's five outcomes, quoted together; `bounded` keeps every book valid over its whole life. */
+export function worldEvent(
+  event: string,
+  { status, open, close, archived }: Omit<WorldMarket, "ticker" | "event" | "raw" | "quotes">,
+  { bounded = false }: { bounded?: boolean } = {},
+): WorldMarket[] {
+  const quotes = eventQuotes(event, open, close, bounded);
   return OUTCOMES.map(([suffix, strike, label]) => {
     const [word, amount] = Object.entries(strike)[0];
     const ticker = `${event}-${suffix}`;

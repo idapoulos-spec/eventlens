@@ -5,11 +5,12 @@ import { toKalshiCandles, type KalshiCandle } from "@/lib/kalshi/candles";
 import { getHistoricalCandles } from "@/lib/kalshi/historical";
 import type { RawEvent, RawMarket, RawMarketCandlesticks } from "@/lib/kalshi/types";
 import { marketPhase } from "@/lib/kalshi/status";
-import { coveragePlan } from "@/lib/history/merge";
-import { ARCHIVE_DEADLINE_MS, TAIL_OVERLAP_MS } from "@/lib/history/research";
+import { splitWindows } from "@/lib/collect/kalshi/ranges";
+import { coveragePlan, mergeByTime } from "@/lib/history/merge";
+import { ARCHIVE_DEADLINE_MS, LONG_DEADLINE_MS, TAIL_OVERLAP_MS, withDeadline } from "@/lib/history/research";
 import { readStore, storeOn } from "@/lib/history/store";
 import type { Provenance, ResearchWindow } from "@/lib/history/types";
-import { KALSHI_HISTORY_MS, LIVE_WINDOW, RESEARCH_WINDOW_MS } from "@/lib/history/window";
+import { KALSHI_HISTORY_MS, LIVE_WINDOW, longHistoryStart, RESEARCH_WINDOW_MS } from "@/lib/history/window";
 import { LIVE } from "@/lib/fetch-cache";
 import { DEFAULT_BENCHMARK } from "@/lib/market-data/benchmark-series";
 import { getBenchmarkSeries } from "@/lib/market-data/benchmark";
@@ -19,7 +20,7 @@ import { fail, ok, type Result } from "@/lib/result";
 import type { TimeRange } from "@/lib/store/runs";
 import { microsToDollars } from "@/lib/store/units";
 import { changeSince, chartPoints, currentExpected, eventPhase, lastValid, outcomeRows, weightPoints, type OutcomeBook } from "./analysis";
-import { expectedAt, hourlyMarks, Outcome, type OutcomeCandle, type OutcomeHistory, type OutcomeState } from "./engine";
+import { expectedAt, hourlyMarks, Outcome, type ExpectedMark, type OutcomeCandle, type OutcomeHistory, type OutcomeState } from "./engine";
 import { gapsIn, liveOutcome, storedOutcome, withLive, type OutcomeMeta } from "./history";
 import { mapEvent } from "./mapping";
 import { supportedEvent, type ExpectedSeries } from "./series";
@@ -32,6 +33,7 @@ import type { EventAnalysis, ExpectedNow } from "./types";
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
+const LOOKBACK_MS = 7 * DAY_MS;
 /** Kalshi answers 400 when one batch request spans more candles than this, across its tickers. */
 export const MAX_BATCH_CANDLES = 10_000;
 
@@ -126,10 +128,19 @@ export function firstCloseOf(markets: RawMarket[]): number | null {
   return closes.length > 0 ? Math.min(...closes) : null;
 }
 
-/** Research ends at the event's first close once that has passed (E isn't defined after it), otherwise now. */
+/** The first outcome's open (ms), or null if none has one. */
+export function firstOpenOf(markets: RawMarket[]): number | null {
+  const opens = markets.map((m) => time(m.open_time)).filter((t): t is number => t !== null);
+  return opens.length > 0 ? Math.min(...opens) : null;
+}
+
+/**
+ * Research ends at the event's first close once that has passed (E isn't defined after it),
+ * otherwise now; its longer windows start no earlier than the first outcome's open.
+ */
 export function eventWindow(found: FoundEvent, now: number): ResearchWindow {
   const close = firstCloseOf(found.markets);
-  return { end: close !== null && close <= now ? close : null, archived: found.archived };
+  return { end: close !== null && close <= now ? close : null, archived: found.archived, start: firstOpenOf(found.markets) };
 }
 
 export function eventWindowOf(found: Promise<Result<FoundEvent>>): Promise<ResearchWindow> {
@@ -142,14 +153,28 @@ const toBook = ({ endTs, yesBid, yesAsk }: KalshiCandle): OutcomeCandle => ({
   ask: microsToDollars(yesAsk.close),
 });
 
-/** Live hourly books for several markets ending in [startSec, endSec], in as few requests as Kalshi allows. */
+/** [startSec, endSec] as windows of at most MAX_PERIODS_PER_WINDOW hours (one window for 97 days), in seconds. */
+const timeWindows = (startSec: number, endSec: number) =>
+  splitWindows({ from: startSec * 1000, to: endSec * 1000 }, "60").map((w) => ({ startSec: w.from / 1000, endSec: w.to / 1000 }));
+
+/** Books from several windows as one series, oldest first; a candle on a shared edge is kept once. */
+const mergeBooks = (lists: OutcomeCandle[][]): OutcomeCandle[] =>
+  mergeByTime([], lists.flat().map((c) => ({ ...c, t: c.endTs }))).map(({ endTs, bid, ask }) => ({ endTs, bid, ask }));
+
+/**
+ * Live hourly books for several markets ending in [startSec, endSec], in as few requests as Kalshi
+ * allows: at most MAX_BATCH_CANDLES across a request's tickers, so a span past that is split in time too.
+ */
 async function getLiveBooks(tickers: string[], startSec: number, endSec: number): Promise<Result<Map<string, OutcomeCandle[]>>> {
-  const perRequest = Math.max(1, Math.floor(MAX_BATCH_CANDLES / Math.ceil((endSec - startSec) / 3600)));
-  const chunks: string[][] = [];
-  for (let i = 0; i < tickers.length; i += perRequest) chunks.push(tickers.slice(i, i + perRequest));
+  const requests = timeWindows(startSec, endSec).flatMap((w) => {
+    const perRequest = Math.max(1, Math.floor(MAX_BATCH_CANDLES / Math.ceil((w.endSec - w.startSec) / 3600)));
+    const chunks: string[][] = [];
+    for (let i = 0; i < tickers.length; i += perRequest) chunks.push(tickers.slice(i, i + perRequest));
+    return chunks.map((chunk) => ({ chunk, ...w }));
+  });
   try {
     const responses = await Promise.all(
-      chunks.map((chunk) => {
+      requests.map(({ chunk, startSec, endSec }) => {
         const query = new URLSearchParams({
           market_tickers: chunk.join(","),
           start_ts: String(startSec),
@@ -160,24 +185,32 @@ async function getLiveBooks(tickers: string[], startSec: number, endSec: number)
         return kalshiGet<{ markets?: RawMarketCandlesticks[] }>(`/markets/candlesticks?${query}`, LIVE);
       }),
     );
-    const books = new Map<string, OutcomeCandle[]>(tickers.map((t) => [t, []]));
+    const lists = new Map<string, OutcomeCandle[][]>(tickers.map((t) => [t, []]));
     for (const m of responses.flatMap((r) => r.markets ?? [])) {
-      if (books.has(m.market_ticker)) books.set(m.market_ticker, toKalshiCandles(m.candlesticks ?? []).map(toBook));
+      lists.get(m.market_ticker)?.push(toKalshiCandles(m.candlesticks ?? []).map(toBook));
     }
-    return ok(books);
+    return ok(new Map([...lists].map(([t, l]) => [t, l.length === 1 ? l[0] : mergeBooks(l)])));
   } catch (err) {
     return describeError(err, tickers.join(", "));
   }
 }
 
-/** An archived market's hourly books, giving up after ARCHIVE_DEADLINE_MS. */
+/** An archived market's hourly books, a request per window of at most 4,800 hours, giving up after ARCHIVE_DEADLINE_MS. */
 async function getArchivedBooks(ticker: string, startSec: number, endSec: number): Promise<Result<OutcomeCandle[]>> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<Result<OutcomeCandle[]>>((resolve) => {
-    timer = setTimeout(() => resolve(fail("timeout", "Kalshi didn't respond in time. Please try again shortly.")), ARCHIVE_DEADLINE_MS);
-  });
-  const candles = getHistoricalCandles(ticker, { startSec, endSec, periodMinutes: 60 }).then((r) => (r.ok ? ok(r.data.map(toBook)) : r));
-  return Promise.race([candles, late]).finally(() => clearTimeout(timer));
+  const windows = timeWindows(startSec, endSec);
+  const results = await Promise.all(
+    windows.map((w) =>
+      withDeadline(
+        getHistoricalCandles(ticker, { ...w, periodMinutes: 60 }).then((r) => (r.ok ? ok(r.data.map(toBook)) : r)),
+        ARCHIVE_DEADLINE_MS,
+        () => fail("timeout", "Kalshi didn't respond in time. Please try again shortly."),
+      ),
+    ),
+  );
+  const failed = results.find((r) => !r.ok);
+  if (failed) return failed;
+  const lists = results.map((r) => (r.ok ? r.data : []));
+  return ok(lists.length === 1 ? lists[0] : mergeBooks(lists));
 }
 
 interface Histories {
@@ -343,6 +376,44 @@ export async function loadEvent(found: FoundEvent, fetchedAt = Date.now()): Prom
   };
 }
 
+/** E for Research's longer windows: every top of the hour from where they start to the window's end. */
+export interface LongMarks {
+  marks: ExpectedMark[];
+  /** The longer windows start here (ms): the first outcome's open, or LONG_HISTORY_MS before the end. */
+  start: number;
+  provenance: Provenance;
+}
+
+/**
+ * E over Research's longer windows, from each outcome's history over them (store first, as for the
+ * 90 days). Null when the event is no older than the 90 days the page already has, or its outcomes
+ * can't be mapped; a failure when the history can't be loaded in LONG_DEADLINE_MS. Never rejects.
+ */
+export async function loadEventLong(found: FoundEvent, fetchedAt = Date.now()): Promise<Result<LongMarks | null>> {
+  const mapping = mapEvent(found.markets, found.mutuallyExclusive);
+  const window = eventWindow(found, fetchedAt);
+  const to = windowEndSec(window.end ?? fetchedAt) * 1000;
+  const start = longHistoryStart(window.start, to);
+  if (mapping.outcomes.length === 0 || start >= to - RESEARCH_WINDOW_MS) return ok(null);
+  const byTicker = new Map(found.markets.map((m) => [m.ticker, m]));
+  const metas: OutcomeMeta[] = mapping.outcomes.map((o) => ({
+    ticker: o.ticker,
+    value: o.value,
+    openTime: time(byTicker.get(o.ticker)?.open_time),
+    closeTime: time(byTicker.get(o.ticker)?.close_time),
+  }));
+  const load = async (): Promise<Result<LongMarks | null>> => {
+    // A week before the first mark, as for the 90 days, on a minute boundary.
+    const from = Math.floor((start - LOOKBACK_MS) / 60_000) * 60_000;
+    const { histories, provenance, error } = await loadHistories(found, metas, { from, to });
+    if (error !== null) return fail("unavailable", error);
+    const outcomes = histories.map((h) => new Outcome(h));
+    const marks = expectedAt(outcomes, hourlyMarks(start, to));
+    return ok({ marks, start, provenance });
+  };
+  return withDeadline(load(), LONG_DEADLINE_MS, () => fail("timeout", "Kalshi's longer history didn't load in time."));
+}
+
 /**
  * Starts every request a whole-event analysis needs, as loadAnalysis does for one market, and
  * returns a promise per section; none rejects. The stock's history waits for the event lookup,
@@ -353,9 +424,11 @@ export function loadEventAnalysis(stock: string, ticker: string) {
   const found = findEvent(ticker);
   const window = eventWindowOf(found);
   const event = found.then(async (r): Promise<Result<EventAnalysis>> => (r.ok ? ok(await loadEvent(r.data)) : r));
+  // Research's longer windows: loaded alongside, and streamed after the page's first render.
+  const long = found.then((r): Promise<Result<LongMarks | null>> => (r.ok ? loadEventLong(r.data) : Promise.resolve(ok(null))));
   const stockData = getStockOverview(stock, window);
   const benchmarkData = Promise.all([stockData, window]).then(([s, { end }]) =>
     s.ok && stock !== DEFAULT_BENCHMARK.symbol ? getBenchmarkSeries(DEFAULT_BENCHMARK.symbol, { end }) : null,
   );
-  return { event, stockData, benchmarkData };
+  return { event, stockData, benchmarkData, long };
 }

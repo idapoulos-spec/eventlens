@@ -15,11 +15,16 @@ export interface FoundMarket {
   archived: boolean;
 }
 
-/** Where Research's window ends. */
+/** Where Research's window ends, and where its longer windows can start. */
 export interface ResearchWindow {
   /** A closed market's close time (ms): Research ends there. Null: Research ends now. */
   end: number | null;
   archived: boolean;
+  /**
+   * When the market opened (for an event, its first outcome), ms; null if unknown. Research's
+   * longer windows start no earlier: nothing before it is the market's.
+   */
+  start: number | null;
 }
 
 /** Where Research's Kalshi history came from, for the Sources note. */
@@ -44,6 +49,19 @@ export interface ResearchBars {
   end: number | null;
   /** Close-stamped 30-minute bars, oldest first. */
   halfHourly: StockBar[];
-  /** Daily bars stamped at 00:00 UTC of their trading date, oldest first. */
+  /** Daily bars stamped at 00:00 UTC of their trading date, oldest first: those the 7, 30, and 90-day windows read. */
   daily: StockBar[];
+  /** Every daily bar since `longStart`, for the longer windows; the 30-minute bars reach back as far. */
+  longDaily: StockBar[];
+  /** Where the bars for the longer windows start (ms): see longHistoryStart. */
+  longStart: number;
+}
+
+/** Research's hourly Kalshi points for its longer windows, and where those windows can start. */
+export interface LongHistory {
+  /** From a week before `start`, so the probability in effect at `start` is known. */
+  points: KalshiPoint[];
+  /** The longer windows start here (ms): the market's open, or LONG_HISTORY_MS before the window's end. */
+  start: number;
+  provenance: Provenance;
 }

@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getAppSql } from "@/lib/store/db";
 import { createTestDb, type TestDb } from "@/lib/store/test-db";
-import { getResearchHistory, TAIL_OVERLAP_MS } from "./research";
+import { getLongResearchHistory, getResearchHistory, LONG_DEADLINE_MS, TAIL_OVERLAP_MS } from "./research";
 import { DAY_MS, HOUR_MS, seedCandles, seedCoverage, seedMarket, seedRun } from "./test-fixtures";
 import { paths, stubKalshi, type FakeCandle } from "./test-kalshi";
 import type { ResearchWindow } from "./types";
-import { KALSHI_HISTORY_MS, LIVE_WINDOW } from "./window";
+import { KALSHI_HISTORY_MS, LIVE_WINDOW, LONG_HISTORY_MS } from "./window";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/store/db", () => ({ getAppSql: vi.fn(() => null) }));
@@ -138,7 +138,7 @@ describe("getResearchHistory with the store", () => {
   describe("for a market settled before Kalshi's archive cutoff", () => {
     const CLOSE = Date.UTC(2025, 11, 10, 19);
     const OPEN = CLOSE - 400 * DAY_MS;
-    const window: ResearchWindow = { end: CLOSE, archived: true };
+    const window: ResearchWindow = { end: CLOSE, archived: true, start: null };
 
     it("reads only the store when it covers the 97 days before the close", async () => {
       const run = await seedRun(db.sql);
@@ -169,5 +169,57 @@ describe("getResearchHistory with the store", () => {
       expect(result.data.points.at(-1)).toMatchObject({ t: CLOSE, source: "midpoint" });
       expect(result.data.points.at(-1)?.value).toBeCloseTo(0.21, 10);
     });
+  });
+});
+
+describe("getLongResearchHistory", () => {
+  const long = (window: ResearchWindow) => getLongResearchHistory(TICKER, Promise.resolve(window));
+  const WEEK_MS = 7 * DAY_MS;
+
+  it("is null for a market no older than the 90 days the page already has", async () => {
+    const calls = stubKalshi(TICKER, {});
+    expect(await long({ ...LIVE_WINDOW, start: END - 60 * DAY_MS })).toEqual({ ok: true, data: null });
+    expect(calls).toEqual([]);
+  });
+
+  it("reads from a week before the open, store first, with the live tail after what's stored", async () => {
+    const open = END - 300 * DAY_MS;
+    const run = await seedRun(db.sql);
+    const id = await seedMarket(db.sql, { ticker: TICKER, status: "active", openTime: open, closeTime: Date.UTC(2026, 9, 28, 18) });
+    await seedCandles(db.sql, run, id, hourly(open, STORED_UNTIL, 0.3));
+    await seedCoverage(db.sql, run, "kalshi", TICKER, "60", open, STORED_UNTIL);
+    const calls = stubKalshi(TICKER, { candles: hourly(STORED_UNTIL - TAIL_OVERLAP_MS, END, 0.4) });
+    const result = await withStore(() => long({ ...LIVE_WINDOW, start: open }));
+    if (!result.ok || !result.data) throw new Error("expected the longer history");
+
+    expect(result.data.start).toBe(open);
+    expect(result.data.points[0].t).toBe(Math.ceil(open / HOUR_MS) * HOUR_MS);
+    expect(result.data.points.at(-1)).toMatchObject({ t: Math.floor(END / HOUR_MS) * HOUR_MS, source: "midpoint" });
+    expect(result.data.provenance).toEqual({ storedThrough: STORED_UNTIL, liveFrom: STORED_UNTIL - TAIL_OVERLAP_MS, liveFailed: false });
+    expect(calls.map((c) => Number(c.searchParams.get("start_ts")))).toEqual([(STORED_UNTIL - TAIL_OVERLAP_MS) / 1000]);
+  });
+
+  it("reaches back at most 540 days, in archive requests of at most 4,800 hours", async () => {
+    const CLOSE = Date.UTC(2025, 11, 10, 19);
+    const calls = stubKalshi(TICKER, { archiveCandles: hourly(CLOSE - LONG_HISTORY_MS - WEEK_MS, CLOSE, 0.2) });
+    const result = await withStore(() => long({ end: CLOSE, archived: true, start: CLOSE - 900 * DAY_MS }));
+    if (!result.ok || !result.data) throw new Error("expected the longer history");
+
+    expect(result.data.start).toBe(CLOSE - LONG_HISTORY_MS);
+    // 547 days is 13,128 hours: three requests, each within the archive's 5,000.
+    const spans = calls.map((c) => (Number(c.searchParams.get("end_ts")) - Number(c.searchParams.get("start_ts"))) / 3600);
+    expect(spans).toEqual([4800, 4800, 3528]);
+    expect(calls[0].searchParams.get("start_ts")).toBe(String((CLOSE - LONG_HISTORY_MS - WEEK_MS) / 1000));
+    // A candle on the edge between two requests is kept once.
+    expect(result.data.points).toHaveLength(547 * 24 + 1);
+  });
+
+  it("gives up after LONG_DEADLINE_MS, so the page finishes in time", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.setSystemTime(NOW);
+    vi.stubGlobal("fetch", () => new Promise(() => {}));
+    const pending = long({ ...LIVE_WINDOW, start: END - 300 * DAY_MS });
+    await vi.advanceTimersByTimeAsync(LONG_DEADLINE_MS);
+    expect(await pending).toMatchObject({ ok: false, error: { code: "timeout" } });
   });
 });

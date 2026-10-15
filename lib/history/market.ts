@@ -39,10 +39,15 @@ export function marketOf(found: Promise<Result<FoundMarket>>): Promise<Result<Ka
 }
 
 /**
- * Where Research's window ends: a closed market's close, with the store on. Without the store it
- * resolves at once to now, so nothing waits for the market lookup, exactly as before.
+ * Where Research's window ends (a closed market's close, with the store on; otherwise now) and
+ * where its longer windows can start (the market's open). It waits for the market lookup, so the
+ * stock's bars reach back only as far as the market's life needs.
  */
 export function researchWindowOf(found: Promise<Result<FoundMarket>>): Promise<ResearchWindow> {
-  if (!storeOn()) return Promise.resolve(LIVE_WINDOW);
-  return found.then((r) => (r.ok ? windowFor(r.data, Date.now()) : LIVE_WINDOW));
+  return found.then((r) => {
+    if (!r.ok) return LIVE_WINDOW;
+    const window = windowFor(r.data, Date.now());
+    // Without the store, Research ends now, as it always has.
+    return storeOn() ? window : { ...LIVE_WINDOW, start: window.start };
+  });
 }
