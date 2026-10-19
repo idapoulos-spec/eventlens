@@ -25,16 +25,23 @@ import { drain } from "./steps";
 
 /**
  * The fragile warning's thresholds, fixed before any result was seen (the feat/long-windows plan,
- * 2026-10-14) and not tuned since: simulations only report how often each one fires.
+ * 2026-10-14). F1 and F3 are unchanged since.
+ *
+ * Changed on 2026-10-19: F2 (fewer than MIN_BOOTSTRAP_BLOCKS effective sessions) is no longer part
+ * of the warning; the effective number of sessions is still shown, as a description. In null
+ * simulations F2 fired in 98.5% of data sets at 90 days and 61% at a year (fragility-rates.test.ts),
+ * because most sessions have no Kalshi movement, so the score always sits in a few of them and the
+ * check carried no information as a warning. Decided on simulated data only, not on any real result.
  */
 export const FRAGILE = {
   /** F1: the estimate rests on fewer equal intervals of Kalshi movement than the page's existing "a few moves decide" rule. */
   minEffectiveMoves: MIN_KALSHI_MOVES,
-  /** F2: the bootstrap behaves like fewer sessions than the page needs before it shows a p-value at all. */
-  minEffectiveSessions: MIN_BOOTSTRAP_BLOCKS,
   /** F3: leaving out any one of this many most influential sessions changes the decision. */
   leaveOut: 10,
 } as const;
+
+/** The pre-set F2 cutoff, now descriptive only: the page's minimum sessions for a p-value at all. */
+export const DESCRIPTIVE_MIN_SESSIONS = MIN_BOOTSTRAP_BLOCKS;
 
 /** Kish's effective number of equally weighted items: (Σw)² / Σw². */
 export function effectiveCount(weights: ArrayLike<number>): number {
@@ -270,13 +277,12 @@ export function* leaveOneOutSteps(input: LeaveOneOutInput): Generator<void, Leav
   };
 }
 
-/** Which of the warning's checks trip: F1 movement, F2 sessions, F3 leave-one-out (only once it has run). */
-export type FragileReason = "movement" | "sessions" | "leave_one_out";
+/** Which of the warning's checks trip: F1 movement, F3 leave-one-out (only once it has run). F2 is descriptive since 2026-10-19 (see FRAGILE). */
+export type FragileReason = "movement" | "leave_one_out";
 
 export function fragileReasons(f: Fragility, loo: LeaveOneOut | null): FragileReason[] {
   const reasons: FragileReason[] = [];
   if (f.movement.effective < FRAGILE.minEffectiveMoves) reasons.push("movement");
-  if (f.sessions.effective < FRAGILE.minEffectiveSessions) reasons.push("sessions");
   if (loo && loo.flips > 0) reasons.push("leave_one_out");
   return reasons;
 }

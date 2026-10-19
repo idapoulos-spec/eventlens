@@ -249,10 +249,12 @@ The data is hard on textbook statistics: Kalshi's hourly change is zero most of 
 **How much the primary result rests on a few hours** (`lib/analytics/fragility.ts`). Next to the primary test, and computed from its own bootstrap, so they describe exactly what the test used. They're diagnostics, not tests: they say how much the result rests on a few intervals or sessions, not whether it's right.
 
 - **Kalshi's movement:** the share of the Kalshi variable's variation (Σx̌², x̌ the change net of its mean) in the largest interval and the largest 5, and how many equal intervals that's as concentrated as. The correlation's slope is a weighted mean of each interval's slope with weights x̌²/Σx̌², so Kish's effective number, (Σw)²/Σw², is how many intervals it effectively rests on.
-- **Sessions:** each session's (or run of days') score s = Σ q·a over its intervals, where a is the abnormal return and q the Kalshi change net of what the market model absorbs; Σs is the estimate's numerator, and under "no link" the bootstrap's numerator is Σ s·w with one Webb weight w per session, so its variance is Σs². The page shows the shares of Σs² in the top 1, 5, and 10 sessions and their effective number.
+- **Sessions:** each session's (or run of days') score s = Σ q·a over its intervals, where a is the abnormal return and q the Kalshi change net of what the market model absorbs; Σs is the estimate's numerator, and under "no link" the bootstrap's numerator is Σ s·w with one Webb weight w per session, so its variance is Σs². The page shows the shares of Σs² in the top 1, 5, and 10 sessions and their effective number, as a description; it isn't part of the warning (below).
 - **The most influential sessions and hours,** with their New York times (to look up the news), Kalshi changes, abnormal returns, and which way each pushed the estimate.
 - **Leave one out:** the primary test rerun from scratch without each of the 10 most influential sessions in turn (ranked by score share before any rerun; α and β refitted without it), with the range of estimates and p-values and whether the decision at 5% ever changes; then without all 10 at once, for information. Reruns left with fewer than 8 sessions get no p-value.
-- **The fragile warning** uses thresholds fixed before any result was seen and not tuned since: fewer than 10 effective intervals of movement (where the page already says a few moves decide), fewer than 8 effective sessions (below which it shows no p-value at all), or a decision at 5% that changes when one of the 10 most influential sessions is left out (p crossing 0.05 either way, or a significant estimate changing sign). The warning names which tripped. A p-value near 0.05 can also cross from Monte Carlo error alone (about ±0.007 with 999 draws).
+- **The fragile warning** uses thresholds fixed before any result was seen: fewer than 10 effective intervals of movement (F1; where the page already says a few moves decide), or a decision at 5% that changes when one of the 10 most influential sessions is left out (F3; p crossing 0.05 either way, or a significant estimate changing sign). The warning names which tripped. A p-value near 0.05 can also cross from Monte Carlo error alone (about ±0.007 with 999 draws).
+- **It also comes on by chance,** and the page says how often: in hourly simulations with no real relationship it came on in 11.5% of data sets over a year and 13.0% over 180 days, but 22.5% over 90 days and 75.0% over 30 days, where few intervals carry Kalshi's movement (table below).
+- **Changed on 2026-10-19 from the pre-set thresholds:** a third check, fewer than 8 effective sessions (F2; below which the page shows no p-value at all), was dropped from the warning; the effective number of sessions is still shown as a description. In simulations with no real relationship F2 fired in 98.5% of data sets at 90 days and 61.0% at a year, because most sessions have no Kalshi movement, so the score always sits in a few of them and as a warning it carried no information. The decision was based only on simulated data, not on any real result, and the page notes it.
 
 **Event study: sign flips and bootstrap-t** (`lib/analytics/event-tests.ts`).
 
@@ -378,21 +380,21 @@ On these simulated data, the detectable correlation falls from 0.35 at 62 hourly
 
 Event study over a year (252 sessions, shared volatility, jumps of at least 1.5 pp, 300 data sets): bar +3 had p < 0.05 in 2.7% (8) ± 0.9 (range 1.4–5.2%), the whole path in 3.3% (10) ± 1.0 (1.8–6.0%), and the bar's 95% interval covered zero in 93.0% (279) ± 1.5 (89.5–95.4%). The test fails at 6% for the bar, 7.5% for the path, or below 92% coverage.
 
-How often the fragile warning fires (`lib/analytics/fragility-rates.test.ts`): hourly, Kalshi tracking the benchmark, shared volatility, 200 data sets per row, leave-one-out with 199 draws. These report, not calibrate: the thresholds were fixed before any of these runs and haven't been changed.
+How often the fragile warning fires (`lib/analytics/fragility-rates.test.ts`): hourly, Kalshi tracking the benchmark, shared volatility, 200 data sets per row, leave-one-out with 199 draws. These report, not calibrate. F1 and F3 are the thresholds fixed before any of these runs; F2 is the check dropped from the warning on 2026-10-19 because of the F2 column below, still counted to show why. The warning is F1 or F3.
 
-| Window | Effect | F1: < 10 effective moves | F2: < 8 effective sessions | F3: a leave-one-out flips the decision | Any |
+| Window | Effect | F1: < 10 effective moves | F3: a leave-one-out flips the decision | Warning (F1 or F3) | F2, dropped: < 8 effective sessions |
 | --- | --- | --- | --- | --- | --- |
-| 21 sessions (30 days) | none | 69.0% (138) | 99.0% (198) | 13.0% (26) | 99.5% (199) |
-| 21 sessions (30 days) | 0.3% per pp | 62.0% (124) | 100.0% (200) | 54.0% (108) | 100.0% (200) |
-| 62 sessions (90 days) | none | 10.5% (21) | 98.5% (197) | 15.0% (30) | 98.5% (197) |
-| 62 sessions (90 days) | 0.3% per pp | 9.0% (18) | 94.5% (189) | 29.0% (58) | 95.5% (191) |
-| 124 sessions (180 days) | none | 1.0% (2) | 85.5% (171) | 12.0% (24) | 88.0% (176) |
-| 124 sessions (180 days) | 0.3% per pp | 0.0% (0) | 72.5% (145) | 9.0% (18) | 74.0% (148) |
-| 252 sessions (a year) | none | 0.0% (0) | 61.0% (122) | 11.5% (23) | 66.5% (133) |
-| 252 sessions (a year) | 0.3% per pp | 0.0% (0) | 43.0% (86) | 2.0% (4) | 43.0% (86) |
+| 21 sessions (30 days) | none | 69.0% (138) | 13.0% (26) | **75.0% (150)** ± 3.1, range 68.6–80.5% | 99.0% (198) |
+| 21 sessions (30 days) | 0.3% per pp | 62.0% (124) | 54.0% (108) | 81.5% (163) | 100% (200) |
+| 62 sessions (90 days) | none | 10.5% (21) | 15.0% (30) | **22.5% (45)** ± 3.0, range 17.3–28.8% | 98.5% (197) |
+| 62 sessions (90 days) | 0.3% per pp | 9.0% (18) | 29.0% (58) | 36.0% (72) | 94.5% (189) |
+| 124 sessions (180 days) | none | 1.0% (2) | 12.0% (24) | **13.0% (26)** ± 2.4, range 9.0–18.4% | 85.5% (171) |
+| 124 sessions (180 days) | 0.3% per pp | 0% (0) | 9.0% (18) | 9.0% (18) | 72.5% (145) |
+| 252 sessions (a year) | none | 0% (0) | 11.5% (23) | **11.5% (23)** ± 2.3, range 7.8–16.7% | 61.0% (122) |
+| 252 sessions (a year) | 0.3% per pp | 0% (0) | 2.0% (4) | 2.0% (4) | 43.0% (86) |
 
-- **F2 fires in nearly every simulated data set at 30 and 90 days (99.0% and 98.5% with no link), though the bootstrap stays calibrated there** (false positives 4.4–4.7% in the same design, above). In this simulated data, news days with big Kalshi moves and a volatile stock carry most of the score, which is the concentration the warning is meant to show, but at these thresholds it would be on for almost every analysis. It fires less with more sessions (61.0% at a year).
-- F1 (few moves carry the movement) fires mostly in short windows (69.0% at 30 days, 10.5% at 90, none at a year). F3 (leaving one session out changes the decision) fires in 11.5–15.0% of data sets with no link, which includes p-values near 0.05 crossing it by Monte Carlo error, and in 54.0% at 30 days with an effect, where p is often near 0.05.
+- **With no real relationship, the warning comes on by chance in 11.5–13.0% of data sets at 180 days and a year, 22.5% at 90 days, and 75.0% at 30 days**, where F1 dominates: 30 days hold too few Kalshi moves for the estimate to rest on many. F3 alone is 11.5–15.0% with no link, which includes p-values near 0.05 crossing it by Monte Carlo error. The page quotes these rates under the warning.
+- **F2 fired in nearly every data set with no link (99.0% at 30 days, 98.5% at 90, 61.0% at a year), though the bootstrap stays calibrated there** (false positives 4.4–4.7% in the same design, above): most sessions have no Kalshi movement, so the score always sits in a few of them. That's why it was dropped from the warning; the same runs, with the same seeds, give every column here, and the warning's counts were recomputed on them after the change.
 
 Not in the test suite: comparisons with the methods tried and dropped (the old ±1.96/√n band, shuffling Kalshi between sessions, a placebo-window event test, and plain percentile event intervals). Those ran during development: the tests over-rejected, mostly when volatility was shared, and the percentile intervals under-covered. They aren't reproducible from the repository, so no figures are given here. An independent Python reimplementation (numpy and statsmodels, refitting every bootstrap draw instead of using the closed form) reproduced the p-values, intervals, Holm and BH adjustments, effective n, and random-number stream exactly. That check predates refitting β in every draw; raw-returns results are unchanged since (pinned in `wild-bootstrap.test.ts`), and the new closed form is checked in the test suite against refitting draw by draw.
 
@@ -408,7 +410,7 @@ Not in the test suite: comparisons with the methods tried and dropped (the old �
 - Small samples can't show much: 30 days of daily data has about 10 runs of days, and most of its intervals span nearly everything.
 - Daily data over a year runs a little liberal in simulation (intervals covering 90%, 7.0% false positives); the page says so for daily windows longer than 90 days.
 - Longer windows assume β, and the link being tested, are the same throughout up to 540 days; a Fed market a year before its meeting is a different instrument from one a week before.
-- The fragility diagnostics were added after the fed-history study's result (where one hour held 46% of ΔE's variation) and describe the data, not the hypothesis; the warning's thresholds were fixed before any of this branch's results.
+- The fragility diagnostics were added after the fed-history study's result (where one hour held 46% of ΔE's variation) and describe the data, not the hypothesis; the warning's thresholds were fixed before any of this branch's results, and one of the three (F2) was dropped on 2026-10-19 on simulated evidence alone. The warning comes on by chance in 11.5–75% of analyses with no relationship, depending on the window.
 
 ### CSV export
 

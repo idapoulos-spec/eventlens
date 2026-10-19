@@ -23,7 +23,7 @@ import {
   type TestResult,
   rowsSince,
 } from "@/lib/analytics";
-import { FRAGILE, fragileReasons, type Fragility, type FragileReason, type LeaveOneOut } from "@/lib/analytics/fragility";
+import { DESCRIPTIVE_MIN_SESSIONS, FRAGILE, fragileReasons, type Fragility, type FragileReason, type LeaveOneOut } from "@/lib/analytics/fragility";
 import {
   COMPUTE_SETTINGS,
   panelCore,
@@ -726,9 +726,15 @@ function PrimaryTest({
 const pct = (share: number) => `${Math.round(share * 100)}%`;
 const REASON_TEXT: Record<FragileReason, string> = {
   movement: "a few intervals carry most of the movement",
-  sessions: "a few sessions carry most of the test",
   leave_one_out: "leaving out one session changes the decision",
 };
+
+// From fragility-rates.test.ts: how often the warning (F1 or F3) came on in hourly simulations with
+// no real relationship, 200 data sets per window.
+const WARNING_BY_CHANCE =
+  "11.5% of data sets over a year and 13.0% over 180 days, but 22.5% over 90 days and 75.0% over 30 days, where few intervals carry Kalshi's movement";
+// The same runs, for the pre-set F2 check taken out of the warning on 2026-10-19.
+const F2_BY_CHANCE = "98.5% of data sets at 90 days and 61% at a year";
 
 /** When an interval ran: its New York date and hours (hourly), or the session it closed (daily). */
 function intervalText(t: number, resolution: Resolution): string {
@@ -786,7 +792,7 @@ function FragilityBlock({
         <li>
           The test: the most influential {blocks[0]} carries {pct(f.sessions.top1)} of the bootstrap’s score, the top 5 carry{" "}
           {pct(f.sessions.top5)}, and the top 10 {pct(f.sessions.top10)}, as concentrated as {f.sessions.effective.toFixed(1)} equal{" "}
-          {blocks[1]} (of {f.sessions.count}).
+          {blocks[1]} (of {f.sessions.count}). Shown as a description, not part of the warning (see below).
         </li>
         <li>
           {loo ? (
@@ -853,10 +859,17 @@ function FragilityBlock({
         is its part of {mover}’s variation (its weight in the correlation); a {blocks[0]}’s is its part of the variance of the
         bootstrap’s score under the null. “As concentrated as” counts are Kish’s effective numbers, (Σw)² / Σw². The warning uses
         thresholds fixed before any results were seen: fewer than {FRAGILE.minEffectiveMoves} equal {intervals[1]} of movement (where
-        the page already says a few moves decide), fewer than {FRAGILE.minEffectiveSessions} equal {blocks[1]} (below which it shows no
-        p-value at all), or a decision at 5% that changes when one of the {FRAGILE.leaveOut} most influential {blocks[1]} is left out
-        (alpha and beta refitted without it). A p-value near 0.05 can also cross it from Monte Carlo error alone (about ±0.007 with{" "}
-        {(primary.resampling?.draws ?? 999).toLocaleString("en-US")} draws).
+        the page already says a few moves decide), or a decision at 5% that changes when one of the {FRAGILE.leaveOut} most influential{" "}
+        {blocks[1]} is left out (alpha and beta refitted without it). A p-value near 0.05 can also cross it from Monte Carlo error
+        alone (about ±0.007 with {(primary.resampling?.draws ?? 999).toLocaleString("en-US")} draws).{" "}
+        <span className="font-medium text-ink-secondary">It comes on by chance too:</span> in hourly simulations with no real
+        relationship, it came on in {WARNING_BY_CHANCE}.
+      </p>
+      <p className="mt-1 text-xs text-ink-muted">
+        <span className="font-medium text-ink-secondary">Changed on Oct 19, 2026, from the pre-set thresholds:</span> the warning no
+        longer counts fewer than {DESCRIPTIVE_MIN_SESSIONS} equal {blocks[1]}, which is still shown above as a description. In simulations
+        with no real relationship it came on in {F2_BY_CHANCE}, because most {blocks[1]} have no Kalshi movement, so as a warning it
+        carried no information. The change was based only on simulated data, not on any real result.
       </p>
     </div>
   );

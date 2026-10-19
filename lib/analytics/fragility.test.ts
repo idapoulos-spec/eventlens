@@ -3,6 +3,7 @@ import { computeChanges } from "./changes";
 import { blockKey, primaryFrame } from "./correlation-test";
 import {
   decisionFlips,
+  DESCRIPTIVE_MIN_SESSIONS,
   effectiveCount,
   FRAGILE,
   fragileReasons,
@@ -195,12 +196,14 @@ describe("fragileReasons", () => {
   const f = (moves: number, sessions: number) => ({ movement: { effective: moves }, sessions: { effective: sessions } }) as Fragility;
   const loo = (flips: number) => ({ flips }) as LeaveOneOut;
 
-  it("names each check that trips, at the thresholds fixed before any result", () => {
-    expect(FRAGILE).toEqual({ minEffectiveMoves: 10, minEffectiveSessions: 8, leaveOut: 10 });
+  it("names each check that trips: F1 and F3 at the thresholds fixed before any result, F2 only described since 2026-10-19", () => {
+    expect(FRAGILE).toEqual({ minEffectiveMoves: 10, leaveOut: 10 });
+    expect(DESCRIPTIVE_MIN_SESSIONS).toBe(8);
     expect(fragileReasons(f(10, 8), loo(0))).toEqual([]);
     expect(fragileReasons(f(9.99, 8), null)).toEqual(["movement"]);
-    expect(fragileReasons(f(10, 7.99), loo(0))).toEqual(["sessions"]);
-    expect(fragileReasons(f(4.7, 4.7), loo(2))).toEqual(["movement", "sessions", "leave_one_out"]);
+    // Few effective sessions alone no longer trips it.
+    expect(fragileReasons(f(10, 1.5), loo(0))).toEqual([]);
+    expect(fragileReasons(f(4.7, 4.7), loo(2))).toEqual(["movement", "leave_one_out"]);
   });
 });
 
