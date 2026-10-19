@@ -7,6 +7,7 @@ import { seededRng } from "./random";
 import { confidenceInterval95, neweyWestLags, ols } from "./regression";
 import type { ResearchRow, Resolution } from "./research";
 import { MIN_BOOTSTRAP_BLOCKS, MIN_KALSHI_MOVES, MIN_PAIRS, sampleFlag, type SampleFlag } from "./sample";
+import { drain } from "./steps";
 import { drawWeights, frame, wildTest } from "./wild-bootstrap";
 
 /**
@@ -291,27 +292,60 @@ export function primaryTest(abnormal: ChangePoint[], model: MarketModel, resolut
   return lagCorrelationTests(abnormal, [0], resolution, { primaryLags: [0], refit: model.sample, draws })[0].test;
 }
 
-/** Every market-adjusted result for one window, resolution, and jump size. */
-export function marketAdjustment({ full, rows, changes, scale, closesByT, event, resolution }: MarketAdjustmentInput): MarketAdjustment {
+/** The market-adjusted results that don't depend on the event study's jump size. */
+export type MarketCore = Omit<MarketAdjustment, "eventModel" | "studies">;
+/** The event study's market-adjusted results: they depend on the jump size. */
+export type MarketEvents = Pick<MarketAdjustment, "eventModel" | "studies">;
+
+/** The models, adjusted changes, primary test, and cross-checks for one window and resolution, whatever the jump size. */
+export function marketCore(input: Omit<MarketAdjustmentInput, "rows" | "scale" | "event">): MarketCore {
+  return drain(marketCoreSteps(input));
+}
+
+/** marketCore a test at a time (each is a bootstrap), so a page can compute it in slices. */
+export function* marketCoreSteps({ full, changes, closesByT, resolution }: Omit<MarketAdjustmentInput, "rows" | "scale" | "event">): Generator<void, MarketCore> {
   const benchReturns = benchmarkReturnsByT(full, closesByT);
   const model = fitMarketModel(full, closesByT);
+  const excess = adjustedChanges(changes, benchReturns, SIMPLE_EXCESS);
+  const abnormal = model && adjustedChanges(changes, benchReturns, model);
+  const primary = model && abnormal && primaryTest(abnormal, model, resolution);
+  yield;
+  const kalshi = kalshiRegression(changes, benchReturns, resolution);
+  yield;
+  const kalshiVsBenchmark = kalshiBenchmarkCorrelation(changes, benchReturns, resolution);
+  return { model, abnormal, excess, missingBenchmark: changes.length - excess.length, primary, kalshi, kalshiVsBenchmark };
+}
+
+/** The event study's beta and its paths on abnormal and simple excess returns, for one jump size. */
+export function marketEvents({ full, rows, changes, scale, closesByT, event }: Omit<MarketAdjustmentInput, "resolution">): MarketEvents {
   // Fitted only outside the jump windows, so the jumps being studied don't shape beta.
   const windows = eventWindowRows(full, computeChanges(full, scale).changes, event);
   const eventModel = fitMarketModel(full, closesByT, (i) => windows.has(i));
-  const excess = adjustedChanges(changes, benchReturns, SIMPLE_EXCESS);
-  const abnormal = model && adjustedChanges(changes, benchReturns, model);
   return {
-    model,
     eventModel,
-    abnormal,
-    excess,
-    missingBenchmark: changes.length - excess.length,
-    primary: model && abnormal && primaryTest(abnormal, model, resolution),
-    kalshi: kalshiRegression(changes, benchReturns, resolution),
-    kalshiVsBenchmark: kalshiBenchmarkCorrelation(changes, benchReturns, resolution),
     studies: {
       abnormal: eventModel && eventStudy(rows, changes, event, adjustedLogChange(rows, closesByT, eventModel)),
       excess: eventStudy(rows, changes, event, adjustedLogChange(rows, closesByT, SIMPLE_EXCESS)),
     },
   };
+}
+
+/** Both parts as one, in marketAdjustment's field order. */
+export function combineMarket(core: MarketCore, events: MarketEvents): MarketAdjustment {
+  return {
+    model: core.model,
+    eventModel: events.eventModel,
+    abnormal: core.abnormal,
+    excess: core.excess,
+    missingBenchmark: core.missingBenchmark,
+    primary: core.primary,
+    kalshi: core.kalshi,
+    kalshiVsBenchmark: core.kalshiVsBenchmark,
+    studies: events.studies,
+  };
+}
+
+/** Every market-adjusted result for one window, resolution, and jump size. */
+export function marketAdjustment(input: MarketAdjustmentInput): MarketAdjustment {
+  return combineMarket(marketCore(input), marketEvents(input));
 }

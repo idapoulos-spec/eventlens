@@ -4,6 +4,7 @@ import { ALPHA, type TestResult } from "./inference";
 import { adjustedChanges, benchmarkReturnsByT, fitMarketModel, primaryTest, type MarketModel } from "./market-model";
 import type { ResearchRow, Resolution } from "./research";
 import { MIN_BOOTSTRAP_BLOCKS, MIN_KALSHI_MOVES } from "./sample";
+import { drain } from "./steps";
 
 /**
  * How much the primary test rests on a few intervals or sessions (fed-history's post-hoc
@@ -244,11 +245,18 @@ const unavailable = (base: TestResult): TestResult => ({ ...base, p: null, ci: n
 
 /** The primary test without each of its FRAGILE.leaveOut most influential sessions in turn (ranked before any rerun), then without them all. */
 export function leaveOneOut(input: LeaveOneOutInput): LeaveOneOut {
+  return drain(leaveOneOutSteps(input));
+}
+
+/** leaveOneOut a rerun at a time, so a page can compute it in slices. */
+export function* leaveOneOutSteps(input: LeaveOneOutInput): Generator<void, LeaveOneOut> {
   const { primary, fragility: frag, draws } = input;
-  const runs = frag.sessions.ranked.map((session, i) => {
+  const runs: LeaveOneOutRun[] = [];
+  for (const [i, session] of frag.sessions.ranked.entries()) {
     const test = primaryWithout(input, new Set([session.key]), draws) ?? unavailable(primary);
-    return { session, rank: i + 1, test, flips: decisionFlips(primary, test) };
-  });
+    runs.push({ session, rank: i + 1, test, flips: decisionFlips(primary, test) });
+    yield;
+  }
   const together = primaryWithout(input, new Set(frag.sessions.ranked.map((s) => s.key)), draws) ?? unavailable(primary);
   const range = (values: number[]): [number, number] | null => (values.length ? [Math.min(...values), Math.max(...values)] : null);
   const tested = runs.filter((r) => r.test.p !== null);

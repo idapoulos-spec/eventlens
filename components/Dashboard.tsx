@@ -27,7 +27,7 @@ type StockResult = Promise<Result<StockAnalysis>>;
  * section then fades in over its placeholder.
  */
 export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) {
-  const { kalshiData, stockData, researchHistory, benchmarkData } = loadAnalysis(stock, kalshi);
+  const { kalshiData, stockData, researchHistory, benchmarkData, longHistory } = loadAnalysis(stock, kalshi);
 
   return (
     <div className="grid gap-4 sm:gap-5">
@@ -93,6 +93,7 @@ export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) 
             kalshiData={kalshiData}
             stockData={stockData}
             historyData={researchHistory}
+            longData={longHistory}
             benchmarkData={benchmarkData}
             stock={stock}
             kalshi={kalshi}

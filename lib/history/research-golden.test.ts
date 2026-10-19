@@ -7,7 +7,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { expectedVariable, probabilityVariable, type KalshiVariable } from "@/lib/analytics/variable";
-import { adjustedView, closesByTime, primaryDetectable, windowAnalysis, windowMarket } from "@/lib/analytics/panel";
+import { adjustedView, closesByTime, panelCore, panelEvents, panelResults, primaryDetectable, secondaryDetectable, windowAnalysis, windowMarket } from "@/lib/analytics/panel";
 import type { Resolution } from "@/lib/analytics/research";
 import type { BenchmarkSeries } from "@/lib/market-data/types";
 import type { Result } from "@/lib/result";
@@ -63,6 +63,18 @@ function panelHashes(loaded: ResearchRows, benchmark: BenchmarkSeries, variable:
     const market = windowMarket(analysis, closesByTime(benchmark, resolution), resolution, variable.scale);
     const results = { series: analysis.series, raw: analysis.raw, market, adjusted: adjustedView(market, resolution), detectable: primaryDetectable(market, resolution) };
     out[`${days}${resolution[0]}`] = sha(canon(results));
+    // The panel computes them in two parts (so a new jump size recomputes only the event study),
+    // running lead-lag tests only for the returns shown: the same results either way.
+    for (const returns of ["raw", "adjusted"] as const) {
+      const input = { full, from: rows.asOf - days * 24 * HOUR_MS, resolution, scale: variable.scale, closes: resolution === "hourly" ? benchmark.hourly : benchmark.daily, returns };
+      const core = panelCore(input);
+      const panel = panelResults(core, panelEvents(input, core, variable.defaultThreshold[resolution]));
+      expect(panel.market).toEqual(market);
+      expect(panel.view).toEqual(returns === "raw" ? analysis.raw : results.adjusted);
+      expect(panel.rawSame).toEqual(expect.objectContaining({ r: analysis.raw.sameInterval.r, n: analysis.raw.sameInterval.n }));
+      expect(panel.rawStudy).toEqual(analysis.raw.study);
+      expect(secondaryDetectable(core, resolution)).toEqual(results.detectable);
+    }
   }
   return out;
 }
