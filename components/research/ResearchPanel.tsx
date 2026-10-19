@@ -408,6 +408,7 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
               pending={secondaryPending}
               significant={significant}
               fewRuns={resolution === "daily" && plan.kind === "loaded" && plan.days < 90}
+              longDaily={resolution === "daily" && plan.kind === "long"}
               unavailable={unavailable}
               benchmark={benchmark.active.symbol}
               stockSymbol={stockSymbol}
@@ -635,6 +636,7 @@ function PrimaryTest({
   pending,
   significant,
   fewRuns,
+  longDaily,
   unavailable,
   benchmark,
   stockSymbol,
@@ -652,6 +654,8 @@ function PrimaryTest({
   significant: boolean;
   /** About 10 runs of days (30 days daily), where the detectable size was validated as unreliable. */
   fewRuns: boolean;
+  /** Daily data over a window past 90 days, where the intervals covered less than 95% in validation. */
+  longDaily: boolean;
   /** Why market adjustment isn't available, when it isn't. */
   unavailable: string;
   benchmark: string;
@@ -701,6 +705,14 @@ function PrimaryTest({
             so it’s judged on its own p-value. Everything else on the page is exploratory: corrected for the other tests in its
             chart, and best treated as leads to check, not findings. Switching window, resolution, or benchmark until something
             looks significant isn’t corrected for.
+            {longDaily && primary.p !== null && (
+              <>
+                {" "}
+                <strong className="font-medium text-ink-secondary">Daily data over a long window runs a little liberal:</strong> in
+                simulations with a year of trading days, these 95% intervals covered the true value only {LONG_DAILY_COVERAGE} of the time,
+                and with no link {LONG_DAILY_FALSE_POSITIVES} came out below 0.05. Read the interval as somewhat too narrow.
+              </>
+            )}
           </p>
           {fragility && (
             <FragilityBlock fragility={fragility} leaveOneOut={leaveOneOut} pending={pending} primary={primary} variable={variable} resolution={resolution} />
@@ -849,6 +861,12 @@ function FragilityBlock({
     </div>
   );
 }
+
+// From long-windows.test.ts, daily with 252 trading days: the primary test's interval covered the
+// true effect in 180 of 200 data sets (below the 92% bar set beforehand, so shown here), and with no
+// link 28 of 400 had p < 0.05 (within the 7.5% bar, but above 5%).
+const LONG_DAILY_COVERAGE = "90% (180 of 200, 95% range 85–93%)";
+const LONG_DAILY_FALSE_POSITIVES = "7.0% (28 of 400, 95% range 4.9–9.9%)";
 
 /** The smallest correlation the primary test could detect with 80% power in this sample. */
 // From power.test.ts, on validation seeds: with 20 daily intervals (about 10 runs of days), effects of the
