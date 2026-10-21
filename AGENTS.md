@@ -48,3 +48,14 @@ pnpm dev -p 3001
 Next.js runs only one `next dev` per directory (a second one exits with "Another next dev server is already running"), so each dev server needs its own worktree. A new worktree has no `node_modules` or `.env.local` (both are gitignored): run `pnpm install` and copy `.env.local` from the main checkout.
 
 Before pushing, run `pnpm lint`, `pnpm test`, and `pnpm build`. CI (`.github/workflows/ci.yml`) runs the same three on every push and pull request, and the slow simulations (`pnpm test:sim`, files named `*.sim.test.ts`) in a separate job; run those too when you change the statistics.
+
+## Merging and tagging
+
+Run each step as its own command, and check it before the next. Never chain a tag onto the merge command (with `&&` or `;`, or in the same script):
+
+1. Merge (`git merge --no-ff <branch>`, with the message from a file via `-F <file>`: `-F -` doesn't read stdin, so the merge fails).
+2. Verify the merge succeeded: `git log -1` on `main` shows the new merge commit, and `git rev-parse HEAD` is that commit.
+3. Push `main`.
+4. Only then create the tag on that commit (`git tag -a vX.Y.Z -F <file> <merge commit>`) and push it.
+
+On 2026-10-21 a failed merge (`-F -`) was followed by a chained `git tag` and `git push`, which tagged and published the previous `main` commit; the tag had to be deleted and re-created.
