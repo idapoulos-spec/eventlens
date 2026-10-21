@@ -1,12 +1,11 @@
-import { fileURLToPath } from "node:url";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
+import { alias, SIMULATIONS } from "./vitest.shared";
 
+// Everything but the slow simulations (see vitest.shared.ts).
 export default defineConfig({
-  resolve: {
-    // Mirror the "@/*" path alias from tsconfig.json.
-    alias: { "@": fileURLToPath(new URL(".", import.meta.url)) },
-  },
+  resolve: { alias },
   test: {
     environment: "node",
+    exclude: [...configDefaults.exclude, SIMULATIONS],
   },
 });

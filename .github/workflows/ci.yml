@@ -46,3 +46,24 @@ jobs:
 
       # The build doesn't need TWELVE_DATA_API_KEY: it is only read at request time.
       - run: pnpm build
+
+  # The slow simulations (pnpm test:sim, files named *.sim.test.ts): calibration at Research's longer
+  # windows and how often the fragile warning fires. Several minutes, so they run alongside the job
+  # above rather than in it, with their own limit.
+  simulations:
+    name: Simulations
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: package.json
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm test:sim

@@ -77,7 +77,8 @@ The dev server only listens on `127.0.0.1`, so other devices on your network can
 
 ```bash
 pnpm lint    # ESLint
-pnpm test    # unit tests (Vitest)
+pnpm test    # unit tests (Vitest), without the slow simulations
+pnpm test:sim  # the slow simulations: calibration at the longer windows and the fragile warning's rates (several minutes)
 pnpm build   # production build (includes type checking)
 pnpm start   # serve the production build (needs ACCESS_PASSWORD and AUTH_SECRET)
 ```
@@ -346,7 +347,7 @@ Event study (62 sessions, shared volatility, jumps of at least 1.5 pp; 300 data 
 
 **The whole-path test is also slightly above 5% (5.3%)**, 0.2 standard errors away, so it's well within Monte Carlo error.
 
-**Longer windows** (`lib/analytics/long-windows.test.ts`): the same simulated data and the same checks at 124, 252, and 372 sessions (or trading days), the market model fitted on the window itself as the page now does. Every seed was fresh (300,000 and up; designs 210,000–215,019 for the detectable size, their fresh samples 1,000,000 + 100 × design + j), and each setting ran once, with its bar and what to do outside it set beforehand.
+**Longer windows** (`lib/analytics/long-windows.sim.test.ts`, run with `pnpm test:sim`): the same simulated data and the same checks at 124, 252, and 372 sessions (or trading days), the market model fitted on the window itself as the page now does. Every seed was fresh (300,000 and up; designs 210,000–215,019 for the detectable size, their fresh samples 1,000,000 + 100 × design + j), and each setting ran once, with its bar and what to do outside it set beforehand.
 
 False positives, Kalshi tracking the benchmark (0.1% per pp hourly, 0.3% daily), shared volatility, 400 data sets each:
 
@@ -380,7 +381,7 @@ On these simulated data, the detectable correlation falls from 0.35 at 62 hourly
 
 Event study over a year (252 sessions, shared volatility, jumps of at least 1.5 pp, 300 data sets): bar +3 had p < 0.05 in 2.7% (8) ± 0.9 (range 1.4–5.2%), the whole path in 3.3% (10) ± 1.0 (1.8–6.0%), and the bar's 95% interval covered zero in 93.0% (279) ± 1.5 (89.5–95.4%). The test fails at 6% for the bar, 7.5% for the path, or below 92% coverage.
 
-How often the fragile warning fires (`lib/analytics/fragility-rates.test.ts`): hourly, Kalshi tracking the benchmark, shared volatility, 200 data sets per row, leave-one-out with 199 draws. These report, not calibrate. F1 and F3 are the thresholds fixed before any of these runs; F2 is the check dropped from the warning on 2026-10-19 because of the F2 column below, still counted to show why. The warning is F1 or F3.
+How often the fragile warning fires (`lib/analytics/fragility-rates.sim.test.ts`, run with `pnpm test:sim`): hourly, Kalshi tracking the benchmark, shared volatility, 200 data sets per row, leave-one-out with 199 draws. These report, not calibrate. F1 and F3 are the thresholds fixed before any of these runs; F2 is the check dropped from the warning on 2026-10-19 because of the F2 column below, still counted to show why. The warning is F1 or F3.
 
 | Window | Effect | F1: < 10 effective moves | F3: a leave-one-out flips the decision | Warning (F1 or F3) | F2, dropped: < 8 effective sessions |
 | --- | --- | --- | --- | --- | --- |

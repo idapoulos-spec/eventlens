@@ -47,4 +47,4 @@ pnpm dev -p 3001
 
 Next.js runs only one `next dev` per directory (a second one exits with "Another next dev server is already running"), so each dev server needs its own worktree. A new worktree has no `node_modules` or `.env.local` (both are gitignored): run `pnpm install` and copy `.env.local` from the main checkout.
 
-Before pushing, run `pnpm lint`, `pnpm test`, and `pnpm build`. CI (`.github/workflows/ci.yml`) runs the same three on every push and pull request.
+Before pushing, run `pnpm lint`, `pnpm test`, and `pnpm build`. CI (`.github/workflows/ci.yml`) runs the same three on every push and pull request, and the slow simulations (`pnpm test:sim`, files named `*.sim.test.ts`) in a separate job; run those too when you change the statistics.

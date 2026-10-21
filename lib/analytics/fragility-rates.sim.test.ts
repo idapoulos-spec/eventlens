@@ -5,7 +5,7 @@ import { adjustedChanges, benchmarkReturnsByT, fitMarketModel, primaryTest } fro
 import { lastSessions, simulateMarketRows, type MarketSimOptions } from "./test-helpers";
 
 // How often the fragile warning's checks fire on simulated data (in its own file so it runs
-// alongside long-windows.test.ts). Seeds 600,000–689,199, fresh when first run; figures in the README.
+// alongside long-windows.sim.test.ts; both run with `pnpm test:sim`). Seeds 600,000–689,199, fresh when first run; figures in the README.
 
 // Simulations run hundreds of analyses; allow for slow CI machines.
 const SIMULATION_TIMEOUT = 600_000;

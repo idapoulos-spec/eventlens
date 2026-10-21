@@ -29,7 +29,7 @@ import { drain } from "./steps";
  *
  * Changed on 2026-10-19: F2 (fewer than MIN_BOOTSTRAP_BLOCKS effective sessions) is no longer part
  * of the warning; the effective number of sessions is still shown, as a description. In null
- * simulations F2 fired in 98.5% of data sets at 90 days and 61% at a year (fragility-rates.test.ts),
+ * simulations F2 fired in 98.5% of data sets at 90 days and 61% at a year (fragility-rates.sim.test.ts),
  * because most sessions have no Kalshi movement, so the score always sits in a few of them and the
  * check carried no information as a warning. Decided on simulated data only, not on any real result.
  */

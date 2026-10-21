@@ -729,7 +729,7 @@ const REASON_TEXT: Record<FragileReason, string> = {
   leave_one_out: "leaving out one session changes the decision",
 };
 
-// From fragility-rates.test.ts: how often the warning (F1 or F3) came on in hourly simulations with
+// From fragility-rates.sim.test.ts: how often the warning (F1 or F3) came on in hourly simulations with
 // no real relationship, 200 data sets per window.
 const WARNING_BY_CHANCE =
   "11.5% of data sets over a year and 13.0% over 180 days, but 22.5% over 90 days and 75.0% over 30 days, where few intervals carry Kalshi's movement";
@@ -875,7 +875,7 @@ function FragilityBlock({
   );
 }
 
-// From long-windows.test.ts, daily with 252 trading days: the primary test's interval covered the
+// From long-windows.sim.test.ts, daily with 252 trading days: the primary test's interval covered the
 // true effect in 180 of 200 data sets (below the 92% bar set beforehand, so shown here), and with no
 // link 28 of 400 had p < 0.05 (within the 7.5% bar, but above 5%).
 const LONG_DAILY_COVERAGE = "90% (180 of 200, 95% range 85–93%)";
