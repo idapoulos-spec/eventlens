@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DAY_MS, HOUR_MS, seedBars, seedCoverage, seedRun } from "@/lib/history/test-fixtures";
+import { LONG_HISTORY_MS } from "@/lib/history/window";
 import { createTestDb, type TestDb } from "@/lib/store/test-db";
 import type { getBenchmarkSeries as GetBenchmarkSeries } from "./benchmark";
 import type { getStockOverview as GetStockOverview } from "./twelve-data";
@@ -14,6 +15,8 @@ vi.mock("@/lib/store/db", () => ({ getAppSql: appSql }));
 const NOW = Date.UTC(2026, 9, 7, 20, 30); // 4:30 PM New York, after the close
 // KXFEDDECISION-25DEC closed at 2:00 PM New York on Dec 10, 2025.
 const END = Date.UTC(2025, 11, 10, 19);
+// It opened on Mar 3, 2025: Research's longer windows reach back to then.
+const OPEN = Date.UTC(2025, 2, 3, 15);
 const HALF_HOUR_MS = HOUR_MS / 2;
 
 /** Weekdays (00:00 UTC) from `from` through `to`. */
@@ -88,10 +91,10 @@ afterEach(async () => {
   await db.close();
 });
 
-/** Stores 30-minute and daily bars of `symbol` for the 100 days before END, covered completely. */
-async function storeWindow(symbol: string) {
+/** Stores 30-minute and daily bars of `symbol` from `from` to END, covered completely. */
+async function storeWindow(symbol: string, from: number) {
   const run = await seedRun(db.sql, "stocks");
-  const days = weekdays(END - 100 * DAY_MS, END);
+  const days = weekdays(from, END);
   await seedBars(
     db.sql,
     run,
@@ -101,36 +104,40 @@ async function storeWindow(symbol: string) {
   );
   await seedBars(db.sql, run, symbol, "1day", days.map((d) => ({ start: d, end: d + 21 * HOUR_MS, close: 400 })));
   for (const interval of ["30min", "1day"] as const) {
-    await seedCoverage(db.sql, run, "twelve_data", symbol, interval, END - 101 * DAY_MS, NOW - DAY_MS);
+    await seedCoverage(db.sql, run, "twelve_data", symbol, interval, from - DAY_MS, NOW - DAY_MS);
   }
 }
 
-const window = { end: END, archived: true };
+const window = { end: END, archived: true, start: OPEN };
 
 describe("getStockOverview with Research ending at a closed market's close", () => {
-  it("spends the usual 3 credits: the window's 30-minute bars, and daily bars reaching back to it", async () => {
+  it("spends the usual 3 credits: 30-minute bars from the market's open to the window's end, and daily bars reaching back as far", async () => {
     const requests = stubTwelveData();
     const result = await getStockOverview("NVDA", Promise.resolve(window));
     if (!result.ok) throw new Error(result.error.code);
 
     expect(requests.map((u) => u.pathname).sort()).toEqual(["/quote", "/time_series", "/time_series"]);
     const series = requests.filter((u) => u.pathname === "/time_series").map(params);
-    expect(series).toContainEqual({ interval: "30min", outputsize: "5000", start_date: "2025-09-01", end_date: "2025-12-11" });
-    expect(series).toContainEqual({ interval: "1day", outputsize: "5000", start_date: "2025-09-01" });
+    expect(series).toContainEqual({ interval: "30min", outputsize: "5000", start_date: "2025-03-03", end_date: "2025-12-11" });
+    expect(series).toContainEqual({ interval: "1day", outputsize: "5000", start_date: "2025-03-03" });
 
     const { daily, research } = result.data;
     // The panel keeps the latest completed sessions, as before.
     expect(daily).toHaveLength(90);
     expect(daily.at(-1)?.t).toBe(Date.UTC(2026, 9, 7));
-    // Research reads the window's bars.
+    // Research reads the window's bars: the 90-day windows from 100 days before the end, as they always have.
     expect(research.end).toBe(END);
     expect(research.halfHourly.at(-1)?.t).toBe(Date.UTC(2025, 11, 10, 21));
     expect(research.daily[0].t).toBe(Date.UTC(2025, 8, 1));
     expect(research.daily.some((b) => b.t === Date.UTC(2025, 11, 10))).toBe(true);
+    // The longer windows from the market's open.
+    expect(research.longStart).toBe(OPEN);
+    expect(research.halfHourly[0].t).toBe(Date.UTC(2025, 2, 3, 15));
+    expect(research.longDaily[0].t).toBe(Date.UTC(2025, 2, 3));
   });
 
   it("reads the window from the store when it covers it, fetching only the latest daily bars", async () => {
-    await storeWindow("NVDA");
+    await storeWindow("NVDA", OPEN);
     const requests = stubTwelveData();
     const result = await getStockOverview("NVDA", Promise.resolve(window));
     if (!result.ok) throw new Error(result.error.code);
@@ -141,16 +148,33 @@ describe("getStockOverview with Research ending at a closed market's close", () 
     expect(result.data.daily).toHaveLength(90);
   });
 
-  it("reads the latest bars, as before, when Research ends now; Research then reads the panel's bars", async () => {
+  it("reads the latest bars when Research ends now, as far back as the longer windows need; the 90-day windows read the panel's daily bars", async () => {
     const requests = stubTwelveData();
     const result = await getStockOverview("NVDA");
     if (!result.ok) throw new Error(result.error.code);
 
+    // With the market's open unknown, the longest history: still one credit each.
+    const from = new Date(NOW - LONG_HISTORY_MS).toISOString().slice(0, 10);
     expect(requests.filter((u) => u.pathname === "/time_series").map(params)).toEqual([
-      { interval: "30min", outputsize: "900" },
-      { interval: "1day", outputsize: "90" },
+      { interval: "30min", outputsize: "5000", start_date: from },
+      { interval: "1day", outputsize: "5000", start_date: from },
     ]);
-    expect(result.data.research).toEqual({ end: null, halfHourly: result.data.halfHourly, daily: result.data.daily });
+    expect(result.data.research).toMatchObject({ end: null, halfHourly: result.data.halfHourly, daily: result.data.daily, longStart: NOW - LONG_HISTORY_MS });
+    expect(result.data.daily).toHaveLength(90);
+    expect(result.data.research.longDaily.length).toBeGreaterThan(350);
+    expect(result.data.research.longDaily.at(-1)).toEqual(result.data.daily.at(-1));
+  });
+
+  it("keeps a stock's bars for the next analysis only if they reach back far enough", async () => {
+    const requests = stubTwelveData();
+    const young = { end: null, archived: false, start: NOW - 30 * DAY_MS };
+    await getStockOverview("NVDA", young);
+    await getStockOverview("NVDA", young);
+    expect(requests.filter((u) => u.pathname === "/time_series")).toHaveLength(2);
+    // An older market needs earlier bars: 2 more credits, which then serve the younger one too.
+    await getStockOverview("NVDA", { ...young, start: NOW - 300 * DAY_MS });
+    await getStockOverview("NVDA", young);
+    expect(requests.filter((u) => u.pathname === "/time_series")).toHaveLength(4);
   });
 
   it("keeps the latest bars and a window's bars apart in memory", async () => {
@@ -169,9 +193,11 @@ describe("getBenchmarkSeries for a window that ended in the past", () => {
     const requests = stubTwelveData();
     const first = await getBenchmarkSeries("SPY", { end: END });
     if (!first.ok) throw new Error(first.error.code);
+    // The longest history any market's longer windows read, so one download serves them all.
+    const from = new Date(END - LONG_HISTORY_MS).toISOString().slice(0, 10);
     expect(requests.map(params).sort((a, b) => a.interval.localeCompare(b.interval))).toEqual([
-      { interval: "1day", outputsize: "5000", start_date: "2025-09-01", end_date: "2025-12-11" },
-      { interval: "30min", outputsize: "5000", start_date: "2025-09-01", end_date: "2025-12-11" },
+      { interval: "1day", outputsize: "5000", start_date: from, end_date: "2025-12-11" },
+      { interval: "30min", outputsize: "5000", start_date: from, end_date: "2025-12-11" },
     ]);
     expect(first.data.hourly.some((p) => p.t === END)).toBe(true);
 
@@ -181,7 +207,7 @@ describe("getBenchmarkSeries for a window that ended in the past", () => {
   });
 
   it("reads the window from the store when it covers it, spending no credits", async () => {
-    await storeWindow("SPY");
+    await storeWindow("SPY", END - LONG_HISTORY_MS);
     const requests = stubTwelveData();
     const result = await getBenchmarkSeries("SPY", { end: END });
     expect(requests).toEqual([]);

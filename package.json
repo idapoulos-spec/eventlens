@@ -11,6 +11,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "test:sim": "vitest run --config vitest.sim.config.mts",
     "db:migrate": "tsx --env-file-if-exists=.env.local --conditions=react-server scripts/migrate.ts",
     "db:watchlist": "tsx --env-file-if-exists=.env.local --conditions=react-server scripts/watchlist.ts",
     "collect:kalshi": "tsx --env-file-if-exists=.env.local --conditions=react-server scripts/collect-kalshi.ts"

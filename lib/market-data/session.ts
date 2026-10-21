@@ -125,3 +125,63 @@ export function toHourlyBars(bars: StockBar[], intervalMs: number, exchangeTimeZ
   }
   return hourly;
 }
+
+// A split leaves an intraday close this far from the split-adjusted daily close; ordinary
+// differences (the closing auction against the last half hour's trade) are far smaller.
+const SPLIT_RATIO = Math.log(1.25);
+
+/** The nearest p/q with q ≤ 10 when it's within 0.5% (splits are simple ratios), else the ratio itself. */
+function splitFactor(ratio: number): number {
+  for (let q = 1; q <= 10; q++) {
+    const p = Math.round(ratio * q);
+    if (p > 0 && Math.abs(p / q / ratio - 1) < 0.005) return p / q;
+  }
+  return ratio;
+}
+
+/**
+ * Twelve Data adjusts daily bars for splits but not intraday bars, so across a split a stock's
+ * 30-minute bars jump while its daily closes don't. Sessions whose last 30-minute close is more
+ * than 25% off that day's daily close are scaled onto the daily bars' basis, each run of such
+ * sessions by one factor (the run's median ratio, as a simple fraction when it's within 0.5% of
+ * one). Within a session, returns don't change. Without a split, the bars are returned as they are.
+ */
+export function adjustIntradayForSplits(halfHourly: StockBar[], daily: StockBar[]): StockBar[] {
+  const closes = sessionCloseTimes(halfHourly);
+  const lastClose = new Map(halfHourly.map((b) => [b.t, b.close]));
+  // The ratio of each session's daily close to its last 30-minute close, in date order.
+  const ratios = daily
+    .map((d) => ({ date: d.t, ratio: d.close / (lastClose.get(closes.get(d.t) ?? NaN) ?? NaN) }))
+    .filter((r) => Number.isFinite(r.ratio) && r.ratio > 0)
+    .sort((a, b) => a.date - b.date);
+  // Runs of consecutive split sessions with about the same ratio (a later split starts another run).
+  const runs: { date: number; ratio: number }[][] = [];
+  let previous: { ratio: number } | null = null;
+  for (const r of ratios) {
+    const split = Math.abs(Math.log(r.ratio)) > SPLIT_RATIO;
+    if (split && previous && Math.abs(Math.log(r.ratio / previous.ratio)) < 0.05) runs.at(-1)!.push(r);
+    else if (split) runs.push([r]);
+    previous = split ? r : null;
+  }
+  if (runs.length === 0) return halfHourly;
+
+  const factorByDate = new Map<number, number>();
+  for (const run of runs) {
+    const sorted = run.map((r) => r.ratio).sort((a, b) => a - b);
+    const factor = splitFactor(sorted[Math.floor(sorted.length / 2)]);
+    for (const r of run) factorByDate.set(r.date, factor);
+  }
+  return halfHourly.map((b) => {
+    const local = b.t + timeZoneOffsetMs(b.t, US_EXCHANGE_TIMEZONE);
+    const factor = factorByDate.get(local - (((local % DAY_MS) + DAY_MS) % DAY_MS));
+    if (factor === undefined) return b;
+    return {
+      ...b,
+      open: b.open * factor,
+      high: b.high * factor,
+      low: b.low * factor,
+      close: b.close * factor,
+      volume: b.volume === null ? null : b.volume / factor,
+    };
+  });
+}

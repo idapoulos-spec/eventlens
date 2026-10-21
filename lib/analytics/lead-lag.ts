@@ -1,8 +1,9 @@
 import type { ChangePoint } from "./changes";
 import { correlationStats, type CorrelationStats } from "./correlation";
-import { lagCorrelationTests, type CorrelationTestOptions } from "./correlation-test";
+import { lagCorrelationTests, type CorrelationTestOptions, type LagTest } from "./correlation-test";
 import { adjustFamily, type TestResult } from "./inference";
 import type { Resolution } from "./research";
+import { drain } from "./steps";
 
 export interface LagCorrelation extends CorrelationStats {
   /**
@@ -25,11 +26,28 @@ export function crossCorrelation(
   changes: ChangePoint[],
   maxLag: number,
   resolution: Resolution,
-  { primaryLag, ...options }: Omit<CorrelationTestOptions, "primaryLags"> & { primaryLag?: number } = {},
+  options: Omit<CorrelationTestOptions, "primaryLags"> & { primaryLag?: number } = {},
 ): LagCorrelation[] {
+  return drain(crossCorrelationSteps(changes, maxLag, resolution, options));
+}
+
+/**
+ * crossCorrelation a lag at a time, so a page can compute it in slices: a lag's test doesn't
+ * depend on which others are tested alongside (correlation-test.test.ts), so the result is the same.
+ */
+export function* crossCorrelationSteps(
+  changes: ChangePoint[],
+  maxLag: number,
+  resolution: Resolution,
+  { primaryLag, ...options }: Omit<CorrelationTestOptions, "primaryLags"> & { primaryLag?: number } = {},
+): Generator<void, LagCorrelation[]> {
   const byStep = new Map(changes.map((c) => [c.step, c]));
   const lags = Array.from({ length: 2 * maxLag + 1 }, (_, i) => i - maxLag);
-  const tests = lagCorrelationTests(changes, lags, resolution, { ...options, primaryLags: primaryLag === undefined ? [] : [primaryLag] });
+  const tests: LagTest[] = [];
+  for (const lag of lags) {
+    tests.push(lagCorrelationTests(changes, [lag], resolution, { ...options, primaryLags: primaryLag === undefined ? [] : [primaryLag] })[0]);
+    yield;
+  }
   const exploratory = adjustFamily(
     tests.filter((t) => t.test.role === "exploratory").map((t) => t.test),
     "lead_lag",

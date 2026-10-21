@@ -1,12 +1,15 @@
 import { Suspense, type ReactNode } from "react";
-import { alignSeries, buildExpectedRows, expectedVariable, rowsSince } from "@/lib/analytics";
+import { alignSeries, expectedVariable } from "@/lib/analytics";
 import { loadEventAnalysis } from "@/lib/expected/load";
 import type { EventAnalysis } from "@/lib/expected/types";
 import { formatDateTime } from "@/lib/format";
-import { RESEARCH_WINDOW_MS, provenanceNote, researchStockPoints } from "@/lib/history/window";
+import { eventLongRows, eventResearchRows, lastRows, rowsOverlap, type LongRows } from "@/lib/history/rows";
+import { provenanceNote, STOCK_HISTORY_MS } from "@/lib/history/window";
+import type { LongMarks } from "@/lib/expected/load";
+import { benchmarkFrom } from "@/lib/market-data/benchmark-series";
 import type { StockAnalysis } from "@/lib/market-data";
 import type { BenchmarkSeries } from "@/lib/market-data/types";
-import type { Result } from "@/lib/result";
+import { ok, type Result } from "@/lib/result";
 import { RememberAnalysis } from "../analysis/RecentAnalyses";
 import { ComparisonChart } from "../charts/ComparisonChart";
 import { ResearchCard } from "../Research";
@@ -31,7 +34,7 @@ const upperFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
  * history end at the event's first close once it has passed.
  */
 export function EventDashboard({ stock, kalshi }: { stock: string; kalshi: string }) {
-  const { event, stockData, benchmarkData } = loadEventAnalysis(stock, kalshi);
+  const { event, stockData, benchmarkData, long } = loadEventAnalysis(stock, kalshi);
 
   return (
     <div className="grid gap-4 sm:gap-5">
@@ -64,7 +67,7 @@ export function EventDashboard({ stock, kalshi }: { stock: string; kalshi: strin
           </ResearchCard>
         }
       >
-        <EventResearch eventData={event} stockData={stockData} benchmarkData={benchmarkData} stock={stock} kalshi={kalshi} />
+        <EventResearch eventData={event} stockData={stockData} benchmarkData={benchmarkData} longData={long} stock={stock} kalshi={kalshi} />
       </Suspense>
 
       <Suspense fallback={null}>
@@ -214,12 +217,15 @@ async function EventResearch({
   eventData,
   stockData,
   benchmarkData,
+  longData,
   stock,
   kalshi,
 }: {
   eventData: EventResult;
   stockData: StockResult;
   benchmarkData: Promise<Result<BenchmarkSeries> | null>;
+  /** E over the longer windows: the panel gets its rows after the first render. */
+  longData: Promise<Result<LongMarks | null>>;
   stock: string;
   kalshi: string;
 }) {
@@ -235,27 +241,30 @@ async function EventResearch({
   const why = noExpected(event);
   if (why) return notice("Research unavailable", why);
 
-  const fetchedAt = s.data.historyFetchedAt;
-  const asOf = end ?? fetchedAt;
-  const from = asOf - RESEARCH_WINDOW_MS;
-  const stockPoints = researchStockPoints({ ...s.data.research, fetchedAt });
-  const hourly = buildExpectedRows({ stock: stockPoints.hourly, marks: event.marks, resolution: "hourly" });
-  const daily = buildExpectedRows({ stock: stockPoints.daily, marks: event.marks, resolution: "daily" });
-  if (!hourly.some((r) => r.exclusion === null) && !daily.some((r) => r.exclusion === null)) {
+  const rows = eventResearchRows({ marks: event.marks, research: s.data.research, fetchedAt: s.data.historyFetchedAt });
+  if (!rowsOverlap(rows)) {
     return notice("Research unavailable", "E and the stock's prices don't overlap while the event was trading.");
   }
+  const { hourly, daily, asOf } = lastRows(rows);
+  // The longer windows' rows, streamed to the panel once E over them is in.
+  const side = { research: s.data.research, fetchedAt: s.data.historyFetchedAt };
+  const long = longData.then((l): Result<LongRows | null> =>
+    !l.ok ? l : l.data === null ? ok(null) : ok(eventLongRows({ marks: l.data.marks, start: l.data.start, ...side })),
+  );
 
   return (
     <div className="grid gap-4 sm:gap-5">
       <ResearchPanel
-        hourly={rowsSince(hourly, from)}
-        daily={rowsSince(daily, from)}
+        hourly={hourly}
+        daily={daily}
         asOf={asOf}
         windowEnd={end}
         stockSymbol={s.data.quote.symbol || stock}
         kalshiTicker={kalshi}
         variable={expectedVariable(event)}
-        initialBenchmark={b}
+        initialBenchmark={b?.ok ? ok(benchmarkFrom(b.data, Math.min(s.data.research.longStart, asOf - STOCK_HISTORY_MS))) : b}
+        long={long}
+        opened={event.window.start}
       />
       <p className="text-xs text-ink-muted">{definitionText(event)} Each Research row reads E at its own hour; an interval whose open outcomes changed between its ends is left out.</p>
     </div>

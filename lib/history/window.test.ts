@@ -3,7 +3,17 @@ import { topOfHourCloses } from "@/lib/analytics/research";
 import type { KalshiMarket } from "@/lib/kalshi/types";
 import { sessionClosePoints } from "@/lib/market-data/session";
 import type { StockBar } from "@/lib/market-data/types";
-import { LIVE_WINDOW, parseWindowEnd, provenanceNote, researchStockPoints, windowFor } from "./window";
+import {
+  LIVE_WINDOW,
+  LONG_HISTORY_MS,
+  longHistoryStart,
+  parseWindowEnd,
+  provenanceNote,
+  researchStockPoints,
+  STOCK_HISTORY_MS,
+  stockHistoryStart,
+  windowFor,
+} from "./window";
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -11,12 +21,13 @@ const bar = (t: number, close: number): StockBar => ({ t, open: close, high: clo
 
 describe("windowFor", () => {
   const NOW = Date.UTC(2026, 9, 7, 16);
-  const market = (closeTime: string | null) => ({ closeTime }) as KalshiMarket;
+  const market = (closeTime: string | null, openTime: string | null = null) => ({ closeTime, openTime }) as KalshiMarket;
 
   it("ends Research at the market's close once that has passed", () => {
-    expect(windowFor({ market: market("2025-12-10T19:00:00Z"), archived: true }, NOW)).toEqual({
+    expect(windowFor({ market: market("2025-12-10T19:00:00Z", "2025-03-03T15:00:00Z"), archived: true }, NOW)).toEqual({
       end: Date.UTC(2025, 11, 10, 19),
       archived: true,
+      start: Date.UTC(2025, 2, 3, 15),
     });
     expect(windowFor({ market: market(new Date(NOW).toISOString()), archived: false }, NOW).end).toBe(NOW);
   });
@@ -25,6 +36,22 @@ describe("windowFor", () => {
     expect(windowFor({ market: market("2026-12-09T19:00:00Z"), archived: false }, NOW)).toEqual(LIVE_WINDOW);
     expect(windowFor({ market: market(null), archived: false }, NOW)).toEqual(LIVE_WINDOW);
     expect(windowFor({ market: market("soon"), archived: false }, NOW)).toEqual(LIVE_WINDOW);
+  });
+});
+
+describe("longHistoryStart and stockHistoryStart", () => {
+  const END = Date.UTC(2026, 9, 7);
+
+  it("start the longer windows at the market's open, but no more than 540 days before the end", () => {
+    expect(longHistoryStart(Date.UTC(2025, 8, 29), END)).toBe(Date.UTC(2025, 8, 29));
+    expect(longHistoryStart(Date.UTC(2023, 0, 1), END)).toBe(END - LONG_HISTORY_MS);
+    expect(longHistoryStart(null, END)).toBe(END - LONG_HISTORY_MS);
+  });
+
+  it("reach a stock's bars back at least 100 days, for the 90-day windows", () => {
+    expect(stockHistoryStart(Date.UTC(2025, 8, 29), END)).toBe(Date.UTC(2025, 8, 29));
+    expect(stockHistoryStart(END - 20 * DAY, END)).toBe(END - STOCK_HISTORY_MS);
+    expect(stockHistoryStart(null, END)).toBe(END - LONG_HISTORY_MS);
   });
 });
 

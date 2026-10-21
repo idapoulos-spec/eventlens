@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sessionClosePoints, sessionCloseTimes, toHourlyBars, tradingDayClose } from "./session";
+import { adjustIntradayForSplits, sessionClosePoints, sessionCloseTimes, toHourlyBars, tradingDayClose } from "./session";
 import type { StockBar } from "./types";
 
 const HALF_HOUR_MS = 30 * 60 * 1000;
@@ -77,3 +77,39 @@ describe("sessionClosePoints", () => {
     ]);
   });
 });
+
+describe("adjustIntradayForSplits", () => {
+  // Four December sessions (New York is UTC−5): 9:30 AM–4:00 PM is 14:30–21:00 UTC.
+  const days = [Date.UTC(2025, 11, 8), Date.UTC(2025, 11, 9), Date.UTC(2025, 11, 10), Date.UTC(2025, 11, 11)];
+  const session = (date: number, base: number) =>
+    Array.from({ length: 13 }, (_, i) => ({ t: date + 15 * 3_600_000 + i * 1_800_000, open: base + i, high: base + i, low: base + i, close: base + i, volume: 100 }));
+  const daily = (closes: number[]) => days.map((t, i) => ({ t, open: closes[i], high: closes[i], low: closes[i], close: closes[i], volume: 1000 }));
+
+  it("leaves bars alone when the daily closes agree with the last half hour's", () => {
+    const halfHourly = days.flatMap((d, i) => session(d, 100 + i));
+    // A closing auction a little off the last trade is not a split.
+    const bars = adjustIntradayForSplits(halfHourly, daily([112.3, 112.8, 114.1, 115.0]));
+    expect(bars).toBe(halfHourly);
+  });
+
+  it("scales the sessions before a 10-for-1 split onto the adjusted daily basis, keeping returns within each session", () => {
+    // As traded: about 1,000 before the split (the first two sessions), about 100 after.
+    const halfHourly = [...session(days[0], 1000), ...session(days[1], 1010), ...session(days[2], 101), ...session(days[3], 102)];
+    // Split-adjusted daily closes: the pre-split ones divided by 10 (with an auction a hair off).
+    const bars = adjustIntradayForSplits(halfHourly, daily([101.25, 102.18, 113, 114]));
+    expect(bars.slice(0, 13).map((b) => b.close)).toEqual(session(days[0], 1000).map((b) => expect.closeTo(b.close / 10, 10)));
+    expect(bars[13].volume).toBe(1000);
+    expect(bars.slice(26)).toEqual(halfHourly.slice(26));
+    expect(Math.log(bars[12].close / bars[0].close)).toBeCloseTo(Math.log(1012 / 1000), 12);
+  });
+
+  it("uses each split's own factor, as a simple fraction", () => {
+    // A 3-for-2 split after the first session, then a 2-for-1 after the third.
+    const halfHourly = [...session(days[0], 300), ...session(days[1], 200), ...session(days[2], 201), ...session(days[3], 100)];
+    const bars = adjustIntradayForSplits(halfHourly, daily([312 / 3, 212 / 2, 213 / 2, 112]));
+    expect(bars[0].close).toBeCloseTo(300 / 3, 10);
+    expect(bars[13].close).toBeCloseTo(200 / 2, 10);
+    expect(bars[39].close).toBe(100);
+  });
+});
+

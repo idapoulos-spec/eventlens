@@ -34,9 +34,16 @@ const NEAR_DUPLICATE_R2 = 0.95;
 const intervalNoun = (resolution: Resolution): [string, string] =>
   resolution === "hourly" ? ["hourly interval", "hourly intervals"] : ["daily interval", "daily intervals"];
 
-/** Where a market model comes from, e.g. "the full 90 days (n = 412 hourly intervals)". */
-export function modelSample(model: MarketModel, resolution: Resolution): string {
-  return `the full 90 days (n = ${plural(model.n, intervalNoun(resolution))})`;
+/**
+ * Where the market model comes from: the 90 days the page loads with, for windows up to 90 days
+ * (so it may reach beyond the window), or a longer window itself.
+ */
+export type ModelSample = { kind: "loaded"; days: number } | { kind: "window"; label: string };
+
+/** e.g. "the full 90 days (n = 412 hourly intervals)", or "the whole 1Y window (n = …)". */
+export function modelSample(model: MarketModel, resolution: Resolution, sample: ModelSample): string {
+  const where = sample.kind === "loaded" ? "the full 90 days" : `the whole ${sample.label} window`;
+  return `${where} (n = ${plural(model.n, intervalNoun(resolution))})`;
 }
 
 /** Alpha per interval in percent; hourly alphas are tiny, so they get more decimals. */
@@ -54,8 +61,8 @@ interface Props {
   /** Raw results, to compare with. */
   raw: { same: CorrelationStats; study: EventStudy };
   resolution: Resolution;
-  /** The selected window, in days. */
-  days: number;
+  /** Where the market model comes from. */
+  sample: ModelSample;
   unit: LagUnit;
   /** e.g. "Same-hour". */
   same: string;
@@ -69,7 +76,7 @@ interface Props {
  * beta-adjusted, and simple excess returns, and a regression of the stock on the benchmark
  * and Kalshi together.
  */
-export function MarketAdjustmentCard({ stockSymbol, benchmark, isSelf, market, raw, resolution, days, unit, same, noun, variable }: Props) {
+export function MarketAdjustmentCard({ stockSymbol, benchmark, isSelf, market, raw, resolution, sample, unit, same, noun, variable }: Props) {
   const changes = variable.kind === "probability" ? "Kalshi changes" : "ΔE";
   const bench = benchmark.active.symbol;
   const model = market?.model ?? null;
@@ -105,16 +112,16 @@ export function MarketAdjustmentCard({ stockSymbol, benchmark, isSelf, market, r
           <Notice
             tone="info"
             title="Not enough data to estimate beta"
-            message={`Fewer than 10 ${intervalNoun(resolution)[1]} in the last 90 days have prices for both ${stockSymbol} and ${bench}.`}
+            message={`Fewer than 10 ${intervalNoun(resolution)[1]} in ${sample.kind === "loaded" ? "the last 90 days" : "this window"} have prices for both ${stockSymbol} and ${bench}.`}
           />
         </div>
       )}
 
       {market && model && (
         <>
-          <ModelStats model={model} stockSymbol={stockSymbol} bench={bench} resolution={resolution} days={days} noun={noun} />
-          <Comparison market={market} raw={raw} stockSymbol={stockSymbol} bench={bench} resolution={resolution} unit={unit} same={same} changes={changes} />
-          <KalshiRegressionNote market={market} stockSymbol={stockSymbol} bench={bench} resolution={resolution} noun={noun} variable={variable} />
+          <ModelStats model={model} stockSymbol={stockSymbol} bench={bench} resolution={resolution} sample={sample} noun={noun} />
+          <Comparison market={market} raw={raw} stockSymbol={stockSymbol} bench={bench} resolution={resolution} sample={sample} unit={unit} same={same} changes={changes} />
+          <KalshiRegressionNote market={market} stockSymbol={stockSymbol} bench={bench} resolution={resolution} sample={sample} noun={noun} variable={variable} />
         </>
       )}
 
@@ -230,14 +237,14 @@ function ModelStats({
   stockSymbol,
   bench,
   resolution,
-  days,
+  sample,
   noun,
 }: {
   model: MarketModel;
   stockSymbol: string;
   bench: string;
   resolution: Resolution;
-  days: number;
+  sample: ModelSample;
   noun: [string, string];
 }) {
   return (
@@ -250,13 +257,16 @@ function ModelStats({
         />
         <Stat label="R²" value={model.r2.toFixed(2)} detail={`of ${stockSymbol}’s moves explained`} />
         <Stat label="Alpha" value={formatAlpha(model.alpha)} detail={`per ${noun[0]}`} />
-        <Stat label="n" value={model.n.toLocaleString("en-US")} detail={`${intervalNoun(resolution)[1]}, 90 days`} />
+        <Stat label="n" value={model.n.toLocaleString("en-US")} detail={`${intervalNoun(resolution)[1]}, ${sample.kind === "loaded" ? "90 days" : sample.label}`} />
       </dl>
       <p className="mt-3 text-xs text-ink-secondary">
-        <span className="font-medium text-ink">Beta and alpha are estimated from the full 90 days</span>
-        {days < 90 && <>, not only the selected {days}-day window</>}: {plural(model.n, intervalNoun(resolution))} where both{" "}
-        {stockSymbol} and {bench} have prices (Kalshi isn’t needed). Market-adjusted return = {stockSymbol}’s return − (alpha +
+        <span className="font-medium text-ink">
+          Beta and alpha are estimated from {sample.kind === "loaded" ? "the full 90 days" : `the whole ${sample.label} window`}
+        </span>
+        {sample.kind === "loaded" && sample.days < 90 && <>, not only the selected {sample.days}-day window</>}: {plural(model.n, intervalNoun(resolution))}{" "}
+        where both {stockSymbol} and {bench} have prices (Kalshi isn’t needed). Market-adjusted return = {stockSymbol}’s return − (alpha +
         beta × {bench}’s return), all log returns over the same interval.
+        {sample.kind === "window" && " Over a window this long, beta is assumed not to change; if the stock’s link to the market shifted, the adjustment is only approximate."}
       </p>
     </div>
   );
@@ -268,6 +278,7 @@ function Comparison({
   stockSymbol,
   bench,
   resolution,
+  sample,
   unit,
   same,
   changes,
@@ -277,6 +288,7 @@ function Comparison({
   stockSymbol: string;
   bench: string;
   resolution: Resolution;
+  sample: ModelSample;
   unit: LagUnit;
   same: string;
   /** "Kalshi changes" or "ΔE". */
@@ -309,7 +321,7 @@ function Comparison({
         r: correlation of {changes} with each kind of return. The last three columns are the event study’s average
         path by {end}. Simple excess subtracts {bench}’s return one for one (beta 1, no alpha).{" "}
         {eventModel
-          ? `The event study’s beta-adjusted paths use a separate beta, ${eventModel.beta.toFixed(2)}, also from ${modelSample(eventModel, resolution)} but leaving out every jump window, so the jumps don’t shape it.`
+          ? `The event study’s beta-adjusted paths use a separate beta, ${eventModel.beta.toFixed(2)}, also from ${modelSample(eventModel, resolution, sample)} but leaving out every jump window, so the jumps don’t shape it.`
           : "Too few intervals fall outside the jump windows to estimate the event study’s beta, so its beta-adjusted paths are missing."}
         {market.missingBenchmark > 0 &&
           ` ${plural(market.missingBenchmark, ["interval has", "intervals have"])} no ${bench} price at both ends and ${market.missingBenchmark === 1 ? "is" : "are"} left out of the adjusted rows.`}
@@ -323,6 +335,7 @@ function KalshiRegressionNote({
   stockSymbol,
   bench,
   resolution,
+  sample,
   noun,
   variable,
 }: {
@@ -330,6 +343,7 @@ function KalshiRegressionNote({
   stockSymbol: string;
   bench: string;
   resolution: Resolution;
+  sample: ModelSample;
   noun: [string, string];
   variable: KalshiVariable;
 }) {
@@ -351,7 +365,7 @@ function KalshiRegressionNote({
     );
     caveats = (
       <>
-        A cross-check of the primary test (which uses beta from the full 90 days), not a separate finding, so it isn’t
+        A cross-check of the primary test (which uses beta from {sample.kind === "loaded" ? "the full 90 days" : `the whole ${sample.label} window`}), not a separate finding, so it isn’t
         corrected. Regression of {stockSymbol}’s return on {bench}’s return and {variable.kind === "probability" ? "the Kalshi change" : "ΔE"} over this window’s{" "}
         {plural(fit.n, ["interval", "intervals"])} ({variable.text.subject} moved in {fit.kalshiMoves}); {bench}’s coefficient here is{" "}
         {fit.marketCoef.toFixed(2)}. {methodText(test)} The statistic is the coefficient’s t with Newey–West errors (

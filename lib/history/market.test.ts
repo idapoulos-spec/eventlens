@@ -77,16 +77,18 @@ describe("findKalshiMarket", () => {
 });
 
 describe("researchWindowOf", () => {
-  it("resolves at once to now without the store, never waiting for the market", async () => {
-    expect(await researchWindowOf(new Promise(() => {}))).toEqual(LIVE_WINDOW);
+  const OPEN = "2025-03-03T15:00:00Z";
+  const market = (closeTime: string, archivedMarket: boolean) =>
+    Promise.resolve({ ok: true as const, data: { market: { closeTime, openTime: OPEN } as never, archived: archivedMarket } });
+
+  it("without the store, ends now, with the longer windows starting at the market's open", async () => {
+    expect(await researchWindowOf(market(CLOSE, true))).toEqual({ ...LIVE_WINDOW, start: Date.parse(OPEN) });
   });
 
   it("with the store, ends at a closed market's close, or now", async () => {
     appSql.mockReturnValue(db.sql);
-    const market = (closeTime: string, archivedMarket: boolean) =>
-      Promise.resolve({ ok: true as const, data: { market: { closeTime } as never, archived: archivedMarket } });
-    expect(await researchWindowOf(market(CLOSE, true))).toEqual({ end: Date.parse(CLOSE), archived: true });
-    expect(await researchWindowOf(market("2099-01-01T00:00:00Z", false))).toEqual(LIVE_WINDOW);
+    expect(await researchWindowOf(market(CLOSE, true))).toEqual({ end: Date.parse(CLOSE), archived: true, start: Date.parse(OPEN) });
+    expect(await researchWindowOf(market("2099-01-01T00:00:00Z", false))).toEqual({ ...LIVE_WINDOW, start: Date.parse(OPEN) });
     expect(await researchWindowOf(Promise.resolve({ ok: false, error: { code: "timeout", message: "" } }))).toEqual(LIVE_WINDOW);
   });
 });

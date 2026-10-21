@@ -17,15 +17,17 @@ import { validateKalshiTicker, validateStockTicker } from "@/lib/validation";
 
 // Cap on how long Vercel lets this page's server function run. Worst cases, with every request
 // taking its whole timeout (6 s upstream, 2.5 s for a data store read):
-// - Without the store, about 12 s: every request starts at once, except Research's benchmark,
-//   which waits for the stock's requests.
+// - Without the store, about 21 s: the market lookup (6 s) says how far back the stock's bars and
+//   the longer windows' history reach; the stock's history and then Research's benchmark follow
+//   (12 s), and the longer windows' Kalshi history, streamed after the first render, gives up at 15 s.
 // - With it, about 32 s, for a market settled before Kalshi's archive cutoff: the market lookup
 //   (the live 404, the stored row, then the archive: 14.5 s) sets Research's window; the stock's
 //   history waits for it (stored bars, then requests: 8.5 s), and the benchmark for the stock
-//   (the same again: 8.5 s).
+//   (the same again: 8.5 s). The longer windows' history gives up 15 s after the lookup (29.5 s).
 // - For a whole event, about 29 s: the event (6 s) and, once archived, its outcome list from the
 //   archive (6 s) set the window; the stock and benchmark follow as above (17 s). The outcomes'
-//   history (stored 2.5 s, then live up to 10 s) runs alongside.
+//   history (stored 2.5 s, then live up to 10 s) runs alongside, and the longer windows' gives up
+//   15 s after the lookup (27 s).
 export const maxDuration = 40;
 
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);

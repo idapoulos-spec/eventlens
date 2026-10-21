@@ -5,23 +5,25 @@ import { LIVE } from "@/lib/fetch-cache";
 import { readStoredStockWindow } from "@/lib/history/stocks";
 import { readStore } from "@/lib/history/store";
 import type { ResearchBars, ResearchWindow } from "@/lib/history/types";
-import { LIVE_WINDOW, STOCK_HISTORY_MS } from "@/lib/history/window";
+import { LIVE_WINDOW, longHistoryStart, STOCK_HISTORY_MS, stockHistoryStart } from "@/lib/history/window";
 import { isTimeout, REQUEST_TIMEOUT_MS } from "@/lib/request-timeout";
 import { fail, ok, type Result } from "@/lib/result";
 import { memoryCache } from "./memory-cache";
-import { barCloseTime, sessionCloseTimes, toHourlyBars, tradingDayClose } from "./session";
+import { adjustIntradayForSplits, barCloseTime, sessionCloseTimes, toHourlyBars, tradingDayClose } from "./session";
 import type { RawError, RawQuote, RawTimeSeries, StockBar, StockOverview, StockQuote } from "./types";
 
 const TWELVE_DATA_BASE_URL = "https://api.twelvedata.com";
 const HALF_HOUR_MS = 30 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const VOL_WINDOW_DAYS = 30;
-// 900 half-hour bars is about 70 sessions (13 a day), enough for the 90-day research window.
-// A time series costs one API credit whatever its length.
-export const HALF_HOURLY_BARS = 900;
+// A time series costs one API credit whatever its length (up to MAX_BARS), so a stock's 30-minute
+// and daily bars reach back as far as Research's longer windows need (stockHistoryStart).
 // Hourly bars for the 7-day comparison chart: about 10 sessions, as before.
 const HOURLY_BARS = 70;
+/** Daily bars on the stock panel's chart. */
 export const DAILY_BARS = 90;
+/** The daily request reaches back at least this far, so the panel always has its DAILY_BARS. */
+const PANEL_DAILY_MS = 140 * DAY_MS;
 /** The most bars one time series request returns; still one credit. */
 export const MAX_BARS = 5000;
 /**
@@ -146,12 +148,15 @@ export interface SeriesDates {
 export const utcDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 /**
- * Dates around a research window ending at `end`: from STOCK_HISTORY_MS before it to the day
- * after, so whichever time zone Twelve Data reads them in, every bar up to `end` is included.
+ * Dates around a research window ending at `end` whose bars start at `from`: to the day after the
+ * end, so whichever time zone Twelve Data reads them in, every bar up to `end` is included.
  */
-export function windowDates(end: number): SeriesDates {
-  return { startDate: utcDate(end - STOCK_HISTORY_MS), endDate: utcDate(end + DAY_MS) };
+export function windowDates(end: number, from: number): SeriesDates {
+  return { startDate: utcDate(from), endDate: utcDate(end + DAY_MS) };
 }
+
+/** 00:00 UTC of the date `startDate` names. */
+const dateStart = (ms: number) => Date.parse(`${utcDate(ms)}T00:00:00Z`);
 
 /**
  * One symbol's bars, oldest first, intraday bars stamped at their close. One API credit
@@ -206,44 +211,56 @@ export function describeError(err: unknown, symbol: string, apiKey: string): Res
 
 interface StockHistory {
   halfHourly: Series;
-  /** The latest daily bars, or, for a window ending in the past, every one since the window's start. */
+  /** Every daily bar since the bars' start: the latest ones serve the panel. */
   daily: Series;
-  /** The daily bars Research reads when they aren't the panel's: a past window's. */
+  /** The daily bars the 7, 30, and 90-day windows read when they aren't the panel's: a past window's. */
   researchDaily: StockBar[] | null;
   /** When the bars were requested (ms): bars that hadn't closed by then may still have been forming. */
   fetchedAt: number;
+  /** Where the bars start (ms): they serve any request whose history starts no earlier. */
+  from: number;
 }
 
 const historyCache = memoryCache<StockHistory>(50);
 
+/** Intraday bars on the daily bars' split-adjusted basis (see adjustIntradayForSplits). */
+const splitAdjusted = (halfHourly: Series, daily: Series): Series => ({ ...halfHourly, bars: adjustIntradayForSplits(halfHourly.bars, daily.bars) });
+
 /**
- * A stock's 30-minute and daily bars: from memory if fetched within STOCK_HISTORY_TTL_MS,
- * otherwise 2 credits. For Research ending in the past (`end`, a closed market's close), the
- * 30-minute bars cover its window instead of the latest sessions, and the daily bars reach back
- * to its start, so the panel and Research still share 2 credits. Stored bars replace the
- * requests whose window the store covers completely.
+ * A stock's 30-minute and daily bars: from memory if fetched within STOCK_HISTORY_TTL_MS and
+ * reaching back far enough, otherwise 2 credits. They start where Research's longer windows need
+ * them (stockHistoryStart: the market's open, at most LONG_HISTORY_MS back, at least
+ * STOCK_HISTORY_MS); for Research ending in the past (`end`, a closed market's close), the
+ * 30-minute bars end there, and the daily bars reach today, so the panel and Research still share
+ * 2 credits. Stored bars replace the requests whose window the store covers completely.
  */
-function getStockHistory(symbol: string, apiKey: string, end: number | null): Promise<Result<StockHistory>> {
+function getStockHistory(symbol: string, apiKey: string, { end, start }: Pick<ResearchWindow, "end" | "start">): Promise<Result<StockHistory>> {
   const load =
     end === null
       ? async () => {
           const fetchedAt = Date.now();
+          const from = stockHistoryStart(start, fetchedAt);
           try {
             const [halfHourly, daily] = await Promise.all([
-              getTimeSeries(symbol, "30min", HALF_HOURLY_BARS, apiKey),
-              getTimeSeries(symbol, "1day", DAILY_BARS, apiKey),
+              getTimeSeries(symbol, "30min", MAX_BARS, apiKey, { startDate: utcDate(from) }),
+              getTimeSeries(symbol, "1day", MAX_BARS, apiKey, { startDate: utcDate(Math.min(from, fetchedAt - PANEL_DAILY_MS)) }),
             ]);
-            return ok({ halfHourly, daily, researchDaily: null, fetchedAt });
+            return ok({ halfHourly: splitAdjusted(halfHourly, daily), daily, researchDaily: null, fetchedAt, from });
           } catch (err) {
             return describeError(err, symbol, apiKey);
           }
         }
-      : () => getWindowHistory(symbol, apiKey, end);
-  return historyCache(end === null ? symbol : `${symbol}@${end}`, load, (history) => history.fetchedAt + STOCK_HISTORY_TTL_MS);
+      : () => getWindowHistory(symbol, apiKey, end, stockHistoryStart(start, end));
+  return historyCache(
+    end === null ? symbol : `${symbol}@${end}`,
+    load,
+    (history) => history.fetchedAt + STOCK_HISTORY_TTL_MS,
+    (history) => history.from <= stockHistoryStart(start, end ?? Date.now()),
+  );
 }
 
-async function getWindowHistory(symbol: string, apiKey: string, end: number): Promise<Result<StockHistory>> {
-  const range = { from: end - STOCK_HISTORY_MS, to: end + 1 };
+async function getWindowHistory(symbol: string, apiKey: string, end: number, from: number): Promise<Result<StockHistory>> {
+  const range = { from, to: end + 1 };
   const [storedHalfHourly, storedDaily] =
     (await readStore("stock bars", (sql) =>
       Promise.all([readStoredStockWindow(sql, symbol, "30min", range), readStoredStockWindow(sql, symbol, "1day", range)]),
@@ -251,12 +268,15 @@ async function getWindowHistory(symbol: string, apiKey: string, end: number): Pr
   const fetchedAt = Date.now();
   try {
     const [halfHourly, daily] = await Promise.all([
-      storedHalfHourly ?? getTimeSeries(symbol, "30min", MAX_BARS, apiKey, windowDates(end)),
+      storedHalfHourly ?? getTimeSeries(symbol, "30min", MAX_BARS, apiKey, windowDates(end, from)),
       storedDaily
         ? getTimeSeries(symbol, "1day", DAILY_BARS, apiKey)
-        : getTimeSeries(symbol, "1day", MAX_BARS, apiKey, { startDate: utcDate(range.from) }),
+        : getTimeSeries(symbol, "1day", MAX_BARS, apiKey, { startDate: utcDate(from) }),
     ]);
-    return ok({ halfHourly, daily, researchDaily: storedDaily?.bars ?? daily.bars, fetchedAt });
+    const allDaily = storedDaily ?? daily;
+    // The 7, 30, and 90-day windows read the daily bars from STOCK_HISTORY_MS before the end, as they always have.
+    const researchDaily = allDaily.bars.filter((b) => b.t >= dateStart(end - STOCK_HISTORY_MS));
+    return ok({ halfHourly: splitAdjusted(halfHourly, allDaily), daily, researchDaily, fetchedAt, from });
   } catch (err) {
     return describeError(err, symbol, apiKey);
   }
@@ -288,12 +308,12 @@ export async function getStockOverview(
     // Half-hour bars serve both the hourly comparison chart (combined into Twelve Data's
     // hourly bars) and research, whose top-of-hour closes line up with Kalshi's hourly
     // candles, so research costs no extra API credit. The quote is always fetched fresh.
-    const [rawQuote, { end, history }] = await Promise.all([
+    const [rawQuote, { end, start, history }] = await Promise.all([
       twelveGet<RawQuote>("/quote", { symbol }, apiKey, LIVE),
-      Promise.resolve(researchWindow).then(async ({ end }) => ({ end, history: await getStockHistory(symbol, apiKey, end) })),
+      Promise.resolve(researchWindow).then(async ({ end, start }) => ({ end, start, history: await getStockHistory(symbol, apiKey, { end, start }) })),
     ]);
     if (!history.ok) return history;
-    const { halfHourly, daily: allDaily, researchDaily, fetchedAt: historyFetchedAt } = history.data;
+    const { halfHourly, daily: allDaily, researchDaily, fetchedAt: historyFetchedAt, from } = history.data;
 
     const quote = normalizeQuote(rawQuote);
     // A day's bar is still forming until its session ends, and its close is just the latest
@@ -302,9 +322,8 @@ export async function getStockOverview(
     // when the bars were fetched (bars in memory from just before the close).
     const session = rawQuote.datetime ? parseDatetime(rawQuote.datetime) : null;
     const closes = sessionCloseTimes(halfHourly.bars);
-    const daily = allDaily.bars.slice(-DAILY_BARS).filter(
-      (b) => !(quote.isMarketOpen && b.t === session) && (closes.get(b.t) ?? tradingDayClose(b.t)) <= historyFetchedAt,
-    );
+    const completed = (b: StockBar) => !(quote.isMarketOpen && b.t === session) && (closes.get(b.t) ?? tradingDayClose(b.t)) <= historyFetchedAt;
+    const daily = allDaily.bars.slice(-DAILY_BARS).filter(completed);
     const volWindow = daily.slice(-(VOL_WINDOW_DAYS + 1)).map((b) => b.close);
 
     return ok({
@@ -317,7 +336,14 @@ export async function getStockOverview(
       relativeVolume: quote.isMarketOpen ? null : relativeVolume(quote.volume, quote.averageVolume),
       historyFetchedAt,
       fetchedAt: Date.now(),
-      research: { end, halfHourly: halfHourly.bars, daily: researchDaily ?? daily },
+      research: {
+        end,
+        halfHourly: halfHourly.bars,
+        daily: researchDaily ?? daily,
+        // A past window's bars after its end are left out later (researchStockPoints); a live one's forming session now.
+        longDaily: end === null ? allDaily.bars.filter((b) => b.t >= dateStart(from) && completed(b)) : allDaily.bars,
+        longStart: longHistoryStart(start, end ?? historyFetchedAt),
+      },
     });
   } catch (err) {
     return describeError(err, symbol, apiKey);

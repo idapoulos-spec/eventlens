@@ -51,3 +51,8 @@ export function benchmarkPoints(symbol: string, halfHourly: StockBar[], daily: S
 export function benchmarkExpiry(fetchedAt: number): number {
   return (Math.floor((fetchedAt - BENCHMARK_SETTLE_MS) / HALF_HOUR_MS) + 1) * HALF_HOUR_MS + BENCHMARK_SETTLE_MS;
 }
+
+/** The benchmark's closes from `from` (ms) on: what a page's Research reads, so a young market's page doesn't carry 540 days of them. */
+export function benchmarkFrom(series: BenchmarkSeries, from: number): BenchmarkSeries {
+  return { ...series, hourly: series.hourly.filter((p) => p.t >= from), daily: series.daily.filter((p) => p.t >= from) };
+}

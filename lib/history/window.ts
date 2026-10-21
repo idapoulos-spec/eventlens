@@ -11,20 +11,45 @@ import type { FoundMarket, Provenance, ResearchWindow } from "./types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Research's longest window. */
+/** The rows the page loads with (the 7, 30, and 90-day windows). */
 export const RESEARCH_WINDOW_MS = 90 * DAY_MS;
 /** Kalshi history reaches a week further back, to find the probability in effect when the window starts. */
 export const KALSHI_HISTORY_MS = RESEARCH_WINDOW_MS + 7 * DAY_MS;
 /** Stock bars for a window that ends in the past: the 90 days, plus a margin for the session before it. */
 export const STOCK_HISTORY_MS = 100 * DAY_MS;
+/**
+ * The longest history Research's longer windows (180 days, a year, and "All") can read: 540
+ * days of 30-minute bars is about 372 sessions of 13 bars, under the 5,000 one Twelve Data
+ * request returns for one credit (4,828 for SPY from 2025-04-22 to 2026-10-14).
+ */
+export const LONG_HISTORY_DAYS = 540;
+export const LONG_HISTORY_MS = LONG_HISTORY_DAYS * DAY_MS;
 
 /** Research ending now, as without the store. */
-export const LIVE_WINDOW: ResearchWindow = { end: null, archived: false };
+export const LIVE_WINDOW: ResearchWindow = { end: null, archived: false, start: null };
 
-/** Research ends at the market's close once that has passed, otherwise now. */
+const timeOf = (iso: string | null) => {
+  const ms = iso === null ? NaN : Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+};
+
+/** Research ends at the market's close once that has passed, otherwise now; its longer windows start no earlier than its open. */
 export function windowFor({ market, archived }: FoundMarket, now: number): ResearchWindow {
-  const close = market.closeTime === null ? NaN : Date.parse(market.closeTime);
-  return { end: Number.isFinite(close) && close <= now ? close : null, archived };
+  const close = timeOf(market.closeTime);
+  return { end: close !== null && close <= now ? close : null, archived, start: timeOf(market.openTime) };
+}
+
+/**
+ * Where the longer windows start for a window ending at `anchor` (ms): the market's open, but no
+ * more than LONG_HISTORY_MS before the end.
+ */
+export function longHistoryStart(start: number | null, anchor: number): number {
+  return Math.max(start ?? -Infinity, anchor - LONG_HISTORY_MS);
+}
+
+/** Where a stock's bars start: far enough back for the longer windows, and never less than STOCK_HISTORY_MS. */
+export function stockHistoryStart(start: number | null, anchor: number): number {
+  return Math.min(longHistoryStart(start, anchor), anchor - STOCK_HISTORY_MS);
 }
 
 /**

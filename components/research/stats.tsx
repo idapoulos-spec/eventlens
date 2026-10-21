@@ -48,7 +48,7 @@ export function methodText(test: TestResult): string {
       const count = plural(r.units, r.unit === "day_run" ? ["run", "runs"] : ["session", "sessions"]);
       const refit =
         r.refit === "market_model"
-          ? " Alpha and beta are refitted on the full 90 days in every draw (each of its sessions weighted too), so the uncertainty in beta is included."
+          ? " Alpha and beta are refitted on the market model’s whole sample in every draw (each of its sessions weighted too), so the uncertainty in beta is included."
           : r.refit === "regression"
             ? " Every coefficient, the benchmark’s included, is refitted in every draw."
             : "";

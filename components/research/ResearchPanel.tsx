@@ -1,19 +1,11 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ALPHA,
-  computeChanges,
-  crossCorrelation,
-  detectableCorrelation,
-  eventStudy,
-  eventStudyTests,
-  marketAdjustment,
   MIN_TEST_EVENTS,
   passes,
   researchCsv,
-  rollingCorrelation,
-  rowsSince,
   SMALL_EVENT_COUNT,
   type ChangePoint,
   type ChangeSeries,
@@ -25,21 +17,35 @@ import {
   type KalshiVariable,
   type LagCorrelation,
   type MarketModel,
-  type RefitSample,
   type Resolution,
   type ResearchRow,
   type RollingPoint,
   type TestResult,
+  rowsSince,
 } from "@/lib/analytics";
-import { formatDateTime, formatShortDate, formatSigned } from "@/lib/format";
+import { DESCRIPTIVE_MIN_SESSIONS, FRAGILE, fragileReasons, type Fragility, type FragileReason, type LeaveOneOut } from "@/lib/analytics/fragility";
+import {
+  COMPUTE_SETTINGS,
+  panelCore,
+  panelEvents,
+  panelResults,
+  type ComputeSettings,
+  type PanelInput,
+  type PanelResults,
+  type Returns,
+} from "@/lib/analytics/panel";
+import type { PanelJob, PanelMessage } from "@/lib/analytics/panel-jobs";
+import type { LongRows } from "@/lib/history/rows";
+import { formatDate, formatDateTime, formatShortDate, formatSigned, formatTime } from "@/lib/format";
 import type { BenchmarkSeries } from "@/lib/market-data/types";
-import type { Result } from "@/lib/result";
+import { fail, type Result } from "@/lib/result";
 import { EventStudyChart } from "../charts/EventStudyChart";
 import { formatLag, LeadLagChart, type LagUnit } from "../charts/LeadLagChart";
 import { RollingCorrelationChart } from "../charts/RollingCorrelationChart";
 import { Card, Notice } from "../ui";
-import { MarketAdjustmentCard, modelSample } from "./MarketAdjustmentCard";
-import { Caption, Flag, fmtR, plural, Segmented, ValuesTable } from "./parts";
+import { MarketAdjustmentCard, modelSample, type ModelSample } from "./MarketAdjustmentCard";
+import { partId, useDelayed, usePanelJobs } from "./panelJobs";
+import { Caption, Flag, fmtR, plural, Segmented, Table, ValuesTable } from "./parts";
 import {
   eventFamilyText,
   formatCi,
@@ -56,10 +62,15 @@ import {
 import { useBenchmark } from "./useBenchmark";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const WINDOWS = [7, 30, 90] as const;
-type WindowDays = (typeof WINDOWS)[number];
+/** What the page loads with: the 7, 30, and 90-day windows read these rows. */
+const LOADED_MS = 90 * DAY_MS;
+const WINDOWS = [7, 30, 90, 180, 365, "all"] as const;
+type WindowChoice = (typeof WINDOWS)[number];
+const WINDOW_LABEL: Record<WindowChoice, string> = { 7: "7D", 30: "30D", 90: "90D", 180: "180D", 365: "1Y", all: "All" };
+/** Windows past the 90 days the page loads with: their rows stream in after it, and they're computed in the background. */
+const isLongWindow = (w: WindowChoice) => w === "all" || w > 90;
 
-interface Settings {
+interface Settings extends ComputeSettings {
   unit: LagUnit;
   /** Singular and plural names of one interval. */
   noun: [string, string];
@@ -67,32 +78,25 @@ interface Settings {
   same: string;
   /** What an event-study bar spans. */
   barNote: string;
-  maxLag: number;
-  rollingWindow: number;
   rollingSpan: string;
-  eventBars: number;
 }
 
 const SETTINGS: Record<Resolution, Settings> = {
   hourly: {
+    ...COMPUTE_SETTINGS.hourly,
     unit: "h",
     noun: ["hour", "hours"],
     same: "Same-hour",
     barNote: "Bars are trading hours, so a window can span a night or weekend.",
-    maxLag: 3,
-    rollingWindow: 18,
     rollingSpan: "about 3 sessions",
-    eventBars: 6,
   },
   daily: {
+    ...COMPUTE_SETTINGS.daily,
     unit: "d",
     noun: ["trading day", "trading days"],
     same: "Same-day",
     barNote: "Bars are trading days.",
-    maxLag: 5,
-    rollingWindow: 20,
     rollingSpan: "about a month",
-    eventBars: 5,
   },
 };
 
@@ -125,20 +129,13 @@ interface Props {
   variable: KalshiVariable;
   /** The default benchmark as the server loaded it, or null if it wasn't requested (the stock is the benchmark). */
   initialBenchmark: Result<BenchmarkSeries> | null;
-}
-
-/** Raw: the stock's own returns. Adjusted: net of the benchmark (alpha + beta × its return). */
-type Returns = "raw" | "adjusted";
-
-/** What the lead-lag, rolling, and event-study cards show. */
-interface View {
-  changes: ChangePoint[];
-  lags: LagCorrelation[];
-  sameInterval: CorrelationStats;
-  rolling: RollingPoint[];
-  /** Null in market-adjusted mode when beta can't be estimated outside the jump windows. */
-  study: EventStudy | null;
-  events: EventStudyTests | null;
+  /**
+   * Rows for the 180-day, 1-year, and All windows, streamed after the page's first render: null when
+   * the market is no older than the 90 days above, so those windows are the 90-day one.
+   */
+  long: Promise<Result<LongRows | null>>;
+  /** When the market (an event's first outcome) opened, ms, if known: no window reaches further back. */
+  opened: number | null;
 }
 
 /** How the market-adjusted view was adjusted, for its captions. */
@@ -147,91 +144,132 @@ interface Adjustment {
   model: MarketModel;
   eventModel: MarketModel | null;
   missingBenchmark: number;
-  /** The selected window, in days. */
-  days: number;
+  /** Where the market model comes from: the last 90 days (for windows up to 90 days, so maybe not only this window), or the window itself. */
+  sample: ModelSample;
 }
 
-/**
- * Every result one set of changes gives. In market-adjusted mode (`refit` is the market
- * model's sample, refitted in every draw) lag 0 is the primary test, so it's left out of the
- * lead-lag family the other lags are corrected in.
- */
-function view(changes: ChangePoint[], study: EventStudy | null, settings: Settings, resolution: Resolution, refit: RefitSample | null): View {
-  const lags = crossCorrelation(changes, settings.maxLag, resolution, refit ? { primaryLag: 0, refit } : {});
-  return {
-    changes,
-    lags,
-    sameInterval: lags.find((l) => l.lag === 0)!,
-    rolling: rollingCorrelation(changes, settings.rollingWindow),
-    study,
-    events: study && eventStudyTests(study),
-  };
+/** How a window is computed: from the rows the page loaded with, in the background from the longer rows, or not yet. */
+type WindowPlan =
+  | { kind: "loaded"; days: number; /** A longer window that's no longer than 90 days for this market. */ sameAs90: boolean }
+  | { kind: "long"; rows: LongRows; from: number }
+  | { kind: "waiting" }
+  | { kind: "failed"; message: string };
+
+function windowPlan(choice: WindowChoice, long: Result<LongRows | null> | null, asOf: number): WindowPlan {
+  if (!isLongWindow(choice)) return { kind: "loaded", days: choice as number, sameAs90: false };
+  if (long === null) return { kind: "waiting" };
+  if (!long.ok) return { kind: "failed", message: long.error.message };
+  if (long.data === null) return { kind: "loaded", days: 90, sameAs90: true };
+  const from = choice === "all" ? -Infinity : asOf - choice * DAY_MS;
+  if (Math.max(from, long.data.start) >= asOf - LOADED_MS) return { kind: "loaded", days: 90, sameAs90: true };
+  return { kind: "long", rows: long.data, from };
 }
 
-export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kalshiTicker, variable, initialBenchmark }: Props) {
+/** The longer rows once they've streamed in (null until then). A promise that fails reads as a failure, never a crash. */
+function useLongRows(promise: Promise<Result<LongRows | null>>): Result<LongRows | null> | null {
+  const [state, setState] = useState<{ promise: Promise<Result<LongRows | null>>; value: Result<LongRows | null> } | null>(null);
+  useEffect(() => {
+    let live = true;
+    Promise.resolve(promise).then(
+      (value) => live && setState({ promise, value }),
+      () => live && setState({ promise, value: fail("unavailable", "The longer history couldn't be loaded.") }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [promise]);
+  return state?.promise === promise ? state.value : null;
+}
+
+/** Times a computation in the browser's performance timeline (DevTools → Performance), as `research:<name>`. */
+function timed<T>(name: string, compute: () => T): T {
+  const start = typeof performance === "undefined" ? 0 : performance.now();
+  const value = compute();
+  try {
+    performance.measure(`research:${name}`, { start, duration: performance.now() - start });
+  } catch {
+    // On the server, or an older browser: no timing marks.
+  }
+  return value;
+}
+
+export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kalshiTicker, variable, initialBenchmark, long: longRows, opened }: Props) {
   // 90 days by default: with 30 days of hourly data the power tests (correlation-test.test.ts)
   // miss a correlation of about 0.4 roughly half the time.
-  const [days, setDays] = useState<WindowDays>(90);
+  const [choice, setChoice] = useState<WindowChoice>(90);
   const [chosenResolution, setResolution] = useState<Resolution>("hourly");
   const [thresholds, setThresholds] = useState<Record<Resolution, number>>(variable.defaultThreshold);
   // Market-adjusted by default, since the primary test always is; raw when adjustment isn't possible.
   const [chosenReturns, setReturns] = useState<Returns>("adjusted");
   const benchmark = useBenchmark(initialBenchmark, windowEnd);
+  const long = useLongRows(longRows);
   // Seven days hold only about five daily closes, so that window is hourly only.
-  const resolution: Resolution = days === 7 ? "hourly" : chosenResolution;
+  const resolution: Resolution = choice === 7 ? "hourly" : chosenResolution;
   const settings = SETTINGS[resolution];
   const threshold = thresholds[resolution];
   const isSelf = benchmark.active.symbol === stockSymbol;
-
-  const analysis = useMemo(() => {
-    // Every loaded row (90 days): the market model is fitted on these, whatever the window.
-    const full = resolution === "hourly" ? hourly : daily;
-    const rows = rowsSince(full, asOf - days * DAY_MS);
-    const series = computeChanges(rows, variable.scale);
-    const event = { threshold, before: settings.eventBars, after: settings.eventBars };
-    return { full, rows, series, event, raw: view(series.changes, eventStudy(rows, series.changes, event), settings, resolution, null) };
-  }, [hourly, daily, asOf, days, resolution, settings, threshold, variable.scale]);
+  const plan = useMemo(() => windowPlan(choice, long, asOf), [choice, long, asOf]);
 
   const benchSeries = isSelf ? null : benchmark.series;
-  const closesByT = useMemo(
-    () => benchSeries && new Map((resolution === "hourly" ? benchSeries.hourly : benchSeries.daily).map((p) => [p.t, p.value])),
-    [benchSeries, resolution],
-  );
-  const market = useMemo(
+  const closes = benchSeries && (resolution === "hourly" ? benchSeries.hourly : benchSeries.daily);
+  // Up to 90 days, the market model is fitted on the 90 days loaded; beyond, on the window itself.
+  const syncInput = useMemo<PanelInput | null>(
     () =>
-      closesByT &&
-      marketAdjustment({
-        full: analysis.full,
-        rows: analysis.rows,
-        changes: analysis.series.changes,
-        scale: variable.scale,
-        closesByT,
-        event: analysis.event,
-        resolution,
-      }),
-    [analysis, closesByT, resolution, variable.scale],
-  );
-  const canAdjust = Boolean(market?.model && market.abnormal);
-  // Only computed while shown: the resampling isn't free.
-  const adjusted = useMemo(
-    () =>
-      chosenReturns === "adjusted" && market?.model && market.abnormal
-        ? view(market.abnormal, market.studies.abnormal, settings, resolution, market.model.sample)
+      plan.kind === "loaded"
+        ? { full: resolution === "hourly" ? hourly : daily, from: asOf - plan.days * DAY_MS, resolution, scale: variable.scale, closes, returns: chosenReturns }
         : null,
-    [chosenReturns, market, settings, resolution],
+    [plan, hourly, daily, asOf, resolution, variable.scale, closes, chosenReturns],
+  );
+  const longInput = useMemo<PanelInput | null>(
+    () =>
+      plan.kind === "long"
+        ? {
+            full: rowsSince(resolution === "hourly" ? plan.rows.hourly : plan.rows.daily, plan.from),
+            from: -Infinity,
+            resolution,
+            scale: variable.scale,
+            closes,
+            returns: chosenReturns,
+          }
+        : null,
+    [plan, resolution, variable.scale, closes, chosenReturns],
   );
 
-  const returns: Returns = adjusted ? chosenReturns : "raw";
-  // How large a correlation the primary test could have detected, for a result that isn't significant.
+  // The windows the page loaded with are computed here, as they always were (the jump size recomputes
+  // only the event study); the longer ones in the background (panelJobs.ts).
+  const core = useMemo(() => syncInput && timed("core", () => panelCore(syncInput)), [syncInput]);
+  const events = useMemo(() => syncInput && core && timed("events", () => panelEvents(syncInput, core, threshold)), [syncInput, core, threshold]);
+  const syncResults = useMemo(() => core && events && panelResults(core, events), [core, events]);
+
+  const benchKey = isSelf ? "self" : benchSeries ? benchSeries.symbol : "none";
+  const windowKey = plan.kind === "long" ? `long:${choice}` : plan.kind === "loaded" ? `loaded:${plan.days}` : null;
+  const secondaryKey = windowKey && `${windowKey}|${resolution}|${benchKey}`;
+  const coreKey = secondaryKey && `${secondaryKey}|${chosenReturns}`;
+  const mainKey = coreKey && `${coreKey}|${threshold}`;
+  const jobs: PanelJob[] = [];
+  if (longInput && coreKey && mainKey) jobs.push({ kind: "main", key: mainKey, coreKey, input: longInput, threshold });
+  // The detectable size and the leave-one-out check, for any window whose primary test has a p-value.
+  const secondaryInput = syncInput ?? longInput;
+  const hasP = plan.kind === "long" || core?.market?.primary?.p != null;
+  if (secondaryInput && secondaryKey && hasP) {
+    jobs.push({ kind: "secondary", key: secondaryKey, coreKey: plan.kind === "long" ? coreKey! : `${secondaryKey}|light`, input: secondaryInput });
+  }
+  const parts = usePanelJobs(jobs);
+  const part = <K extends PanelMessage["kind"]>(kind: K, key: string | null) =>
+    key === null ? undefined : (parts.get(partId(kind, key)) as Extract<PanelMessage, { kind: K }> | undefined);
+
+  const results: PanelResults | null = plan.kind === "loaded" ? syncResults : (part("main", mainKey)?.value ?? null);
+  const market = results?.market ?? null;
   const primary = market?.primary ?? null;
-  const detectable = useMemo(
-    () =>
-      primary?.p != null && primary.p >= ALPHA && market?.model && market.abnormal
-        ? detectableCorrelation(market.abnormal, resolution, { refit: market.model.sample })
-        : null,
-    [primary, market, resolution],
-  );
-  const shown = returns === "adjusted" ? adjusted! : analysis.raw;
+  const significant = primary?.p != null && primary.p < ALPHA;
+  const detectablePart = part("detectable", secondaryKey);
+  const looPart = part("leave_one_out", secondaryKey);
+  const secondaryPending = useDelayed(primary?.p != null && !looPart ? secondaryKey : null);
+  const longPending = useDelayed(plan.kind === "long" && !results ? mainKey : plan.kind === "waiting" ? "waiting" : null, 0);
+
+  const canAdjust = Boolean(market?.model && market.abnormal);
+  const returns: Returns = results?.shown ?? "raw";
+  const sample: ModelSample = plan.kind === "long" ? { kind: "window", label: WINDOW_LABEL[choice] } : { kind: "loaded", days: plan.kind === "loaded" ? plan.days : 90 };
   const adjustment: Adjustment | null =
     returns === "adjusted" && market?.model
       ? {
@@ -239,7 +277,7 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
           model: market.model,
           eventModel: market.eventModel,
           missingBenchmark: market.missingBenchmark,
-          days,
+          sample,
         }
       : null;
   const unavailable = isSelf
@@ -249,20 +287,20 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
       : !benchmark.series
         ? "Benchmark prices aren’t available"
         : "Too few prices to estimate beta";
+  const note = windowNote(choice, plan, long, opened, asOf, variable.kind === "probability" ? "This market" : "This event’s first outcome");
 
   function downloadCsv() {
+    if (!results) return;
+    const closesByT = closes && new Map(closes.map((p) => [p.t, p.value]));
     const csvBenchmark = closesByT && { symbol: benchmark.active.symbol, closesByT, model: market?.model ?? null };
-    const blob = new Blob([researchCsv(analysis.rows, resolution, csvBenchmark, variable)], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob([researchCsv(results.rows, resolution, csvBenchmark, variable)], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `eventlens_${stockSymbol}_${kalshiTicker}_${days}d_${resolution}_${new Date(asOf).toISOString().slice(0, 10)}.csv`;
+    a.download = `eventlens_${stockSymbol}_${kalshiTicker}_${choice === "all" ? "all" : `${choice}d`}_${resolution}_${new Date(asOf).toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
-
-  const { series } = analysis;
-  const { changes, sameInterval } = shown;
 
   return (
     <div className="grid gap-4 sm:gap-5">
@@ -275,16 +313,16 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
           <Segmented
             label="Window"
-            value={days}
-            options={WINDOWS.map((d) => ({ value: d, label: `${d}D` }))}
-            onChange={setDays}
+            value={choice}
+            options={WINDOWS.map((w) => ({ value: w, label: WINDOW_LABEL[w] }))}
+            onChange={setChoice}
           />
           <Segmented
             label="Resolution"
             value={resolution}
             options={[
               { value: "hourly" as const, label: "Hourly" },
-              { value: "daily" as const, label: "Daily", disabled: days === 7, title: "Seven days hold only about five daily closes" },
+              { value: "daily" as const, label: "Daily", disabled: choice === 7, title: "Seven days hold only about five daily closes" },
             ]}
             onChange={setResolution}
           />
@@ -314,95 +352,132 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
           <button
             type="button"
             onClick={downloadCsv}
-            className="h-10 rounded-lg border border-border px-3 text-sm text-ink-secondary transition hover:bg-surface-raised hover:text-ink sm:ml-auto sm:h-8 sm:text-xs"
+            disabled={!results}
+            className="h-10 disabled:cursor-not-allowed disabled:opacity-40 rounded-lg border border-border px-3 text-sm text-ink-secondary transition hover:bg-surface-raised hover:text-ink sm:ml-auto sm:h-8 sm:text-xs"
           >
             Download CSV
           </button>
         </div>
-        {chosenReturns === "adjusted" && returns === "raw" && (
+        {note && (
+          <p role="status" className="mt-2 text-xs text-ink-secondary">
+            {note}
+          </p>
+        )}
+        {results && chosenReturns === "adjusted" && returns === "raw" && (
           <p role="status" className="mt-2 text-xs text-ink-secondary">
             Showing raw returns: {lowerFirst(unavailable)}, so market-adjusted returns can’t be computed.
           </p>
         )}
 
-        <Summary
-          changes={changes}
-          excluded={series.excluded}
-          stats={sameInterval}
-          resolution={resolution}
-          settings={settings}
-          adjustment={adjustment}
-          rawR={analysis.raw.sameInterval.r}
-          variable={variable}
-        />
+        {!results ? (
+          <div className="mt-4" aria-busy={plan.kind !== "failed"}>
+            {plan.kind === "failed" ? (
+              <Notice tone="error" title="Longer windows couldn’t be loaded" message={`${plan.message} The 7, 30, and 90-day windows still work.`} />
+            ) : (
+              longPending && (
+                <Notice
+                  tone="info"
+                  title={plan.kind === "waiting" ? "Loading the longer history…" : `Computing the ${WINDOW_LABEL[choice]} window…`}
+                  message={
+                    plan.kind === "waiting"
+                      ? "It streams in after the page; the 7, 30, and 90-day windows are ready now."
+                      : "Longer windows are computed in the background so the page stays responsive; this usually takes under a second."
+                  }
+                />
+              )
+            )}
+          </div>
+        ) : (
+          <>
+            <Summary
+              changes={results.view.changes}
+              excluded={results.series.excluded}
+              stats={results.view.sameInterval}
+              resolution={resolution}
+              settings={settings}
+              adjustment={adjustment}
+              rawR={results.rawSame.r}
+              variable={variable}
+            />
 
-        <PrimaryTest
-          primary={primary}
-          detectable={detectable}
-          fewRuns={resolution === "daily" && days < 90}
-          unavailable={unavailable}
-          benchmark={benchmark.active.symbol}
-          stockSymbol={stockSymbol}
-          settings={settings}
-          variable={variable}
-        />
+            <PrimaryTest
+              primary={primary}
+              detectable={detectablePart?.value ?? null}
+              fragility={results.fragility}
+              leaveOneOut={looPart?.value ?? null}
+              pending={secondaryPending}
+              significant={significant}
+              fewRuns={resolution === "daily" && plan.kind === "loaded" && plan.days < 90}
+              longDaily={resolution === "daily" && plan.kind === "long"}
+              unavailable={unavailable}
+              benchmark={benchmark.active.symbol}
+              stockSymbol={stockSymbol}
+              settings={settings}
+              variable={variable}
+              resolution={resolution}
+            />
+          </>
+        )}
 
         <SignNote stockSymbol={stockSymbol} variable={variable} />
       </Card>
 
-      <MarketAdjustmentCard
-        stockSymbol={stockSymbol}
-        benchmark={benchmark}
-        isSelf={isSelf}
-        market={market}
-        raw={{ same: analysis.raw.sameInterval, study: analysis.raw.study! }}
-        resolution={resolution}
-        days={days}
-        unit={settings.unit}
-        same={settings.same}
-        noun={settings.noun}
-        variable={variable}
-      />
-
-      {changes.length === 0 ? (
-        <Notice
-          tone="info"
-          title="Nothing to analyze in this window"
-          message={`No intervals have a usable ${variable.kind === "probability" ? "Kalshi price" : "expected value"} and stock price at both ends. The CSV lists every row with the reason it was left out.`}
+      {results && (
+        <MarketAdjustmentCard
+          stockSymbol={stockSymbol}
+          benchmark={benchmark}
+          isSelf={isSelf}
+          market={market}
+          raw={{ same: results.rawSame, study: results.rawStudy }}
+          resolution={resolution}
+          sample={sample}
+          unit={settings.unit}
+          same={settings.same}
+          noun={settings.noun}
+          variable={variable}
         />
-      ) : (
-        <>
-          <div className="grid gap-4 sm:gap-5 lg:grid-cols-2">
-            <LeadLagCard
-              lags={shown.lags}
-              adjustedBy={returns === "adjusted" ? benchmark.active.symbol : null}
+      )}
+
+      {results &&
+        (results.view.changes.length === 0 ? (
+          <Notice
+            tone="info"
+            title="Nothing to analyze in this window"
+            message={`No intervals have a usable ${variable.kind === "probability" ? "Kalshi price" : "expected value"} and stock price at both ends. The CSV lists every row with the reason it was left out.`}
+          />
+        ) : (
+          <>
+            <div className="grid gap-4 sm:gap-5 lg:grid-cols-2">
+              <LeadLagCard
+                lags={results.view.lags}
+                adjustedBy={returns === "adjusted" ? benchmark.active.symbol : null}
+                settings={settings}
+                stockSymbol={stockSymbol}
+                variable={variable}
+                adjustment={adjustment}
+                resolution={resolution}
+              />
+              <RollingCard
+                points={results.view.rolling}
+                changes={results.view.changes.length}
+                settings={settings}
+                resolution={resolution}
+                adjustment={adjustment}
+                variable={variable}
+              />
+            </div>
+            <EventStudyCard
+              study={results.view.study}
+              tests={results.view.events}
               settings={settings}
               stockSymbol={stockSymbol}
+              threshold={threshold}
               variable={variable}
               adjustment={adjustment}
               resolution={resolution}
             />
-            <RollingCard
-              points={shown.rolling}
-              changes={changes.length}
-              settings={settings}
-              resolution={resolution}
-              adjustment={adjustment}
-              variable={variable}
-            />
-          </div>
-          <EventStudyCard
-            study={shown.study}
-            tests={shown.events}
-            settings={settings}
-            stockSymbol={stockSymbol}
-            threshold={threshold}
-            variable={variable}
-            adjustment={adjustment}
-            resolution={resolution}
-          />
-        </>
-      )}
+          </>
+        ))}
 
       <p className="text-xs text-ink-muted">
         Correlation, not causation: these figures describe how the two series moved together in this sample. They are
@@ -446,13 +521,40 @@ function sampleFlags(stats: CorrelationStats, variable: KalshiVariable): string[
 }
 
 /** e.g. "beta 1.18 from the full 90 days (n = 412 hourly intervals), not only this window". */
-function betaFrom(model: MarketModel, resolution: Resolution, days: number): string {
-  return `beta ${model.beta.toFixed(2)} from ${modelSample(model, resolution)}${days < 90 ? ", not only this window" : ""}`;
+function betaFrom(model: MarketModel, resolution: Resolution, sample: ModelSample): string {
+  return `beta ${model.beta.toFixed(2)} from ${modelSample(model, resolution, sample)}${sample.kind === "loaded" && sample.days < 90 ? ", not only this window" : ""}`;
 }
 
 /** The adjustment in one sentence, for a chart's small print. */
-function adjustmentNote({ benchmark, model, days }: Adjustment, stockSymbol: string, resolution: Resolution): string {
-  return `Market-adjusted: ${stockSymbol}’s return minus (alpha + beta × ${benchmark}’s return), with ${betaFrom(model, resolution, days)}.`;
+function adjustmentNote({ benchmark, model, sample }: Adjustment, stockSymbol: string, resolution: Resolution): string {
+  return `Market-adjusted: ${stockSymbol}’s return minus (alpha + beta × ${benchmark}’s return), with ${betaFrom(model, resolution, sample)}.`;
+}
+
+/**
+ * Says when a window is cut short by the market's life (no window reaches back before it opened),
+ * or All by the most stock history one request holds; null when the window covers its whole length.
+ */
+function windowNote(
+  choice: WindowChoice,
+  plan: WindowPlan,
+  long: Result<LongRows | null> | null,
+  opened: number | null,
+  asOf: number,
+  subject: string,
+): string | null {
+  const days = (from: number) => Math.round((asOf - from) / DAY_MS);
+  const same = plan.kind === "loaded" && plan.sameAs90 ? ", the same as 90D" : "";
+  if (choice === "all") {
+    const start = long?.ok && long.data ? long.data.start : null;
+    if (opened !== null && start !== null && start > opened + DAY_MS) {
+      return `All reaches back ${days(start)} days, to ${formatDate(start)}: the most history one request of stock bars holds. ${subject} opened ${formatDate(opened)}.`;
+    }
+    return opened === null ? null : `All covers the whole life since ${lowerFirst(subject)} opened on ${formatDate(opened)}: ${days(opened)} days${same}.`;
+  }
+  if (opened !== null && opened > asOf - choice * DAY_MS) {
+    return `${subject} opened on ${formatDate(opened)}, so the ${WINDOW_LABEL[choice]} window covers only ${days(opened)} days${choice > 90 ? same : ""}.`;
+  }
+  return null;
 }
 
 function Summary({
@@ -499,7 +601,7 @@ function Summary({
       </p>
       {adjustment && (
         <p className="mt-1 text-xs text-ink-secondary">
-          Market-adjusted returns use {betaFrom(adjustment.model, resolution, adjustment.days)}.
+          Market-adjusted returns use {betaFrom(adjustment.model, resolution, adjustment.sample)}.
         </p>
       )}
       {left.length > 0 && <p className="mt-1 text-xs text-ink-muted">Left out: {left.join(" · ")}.</p>}
@@ -529,24 +631,38 @@ function Summary({
 function PrimaryTest({
   primary,
   detectable,
+  fragility,
+  leaveOneOut,
+  pending,
+  significant,
   fewRuns,
+  longDaily,
   unavailable,
   benchmark,
   stockSymbol,
   settings,
   variable,
+  resolution,
 }: {
   primary: TestResult | null;
   /** For a result that isn't significant: the smallest correlation this sample could detect. */
   detectable: DetectableCorrelation | null;
+  fragility: Fragility | null;
+  leaveOneOut: LeaveOneOut | null;
+  /** The detectable size and leave-one-out check are still computing (shown after a moment). */
+  pending: boolean;
+  significant: boolean;
   /** About 10 runs of days (30 days daily), where the detectable size was validated as unreliable. */
   fewRuns: boolean;
+  /** Daily data over a window past 90 days, where the intervals covered less than 95% in validation. */
+  longDaily: boolean;
   /** Why market adjustment isn't available, when it isn't. */
   unavailable: string;
   benchmark: string;
   stockSymbol: string;
   settings: Settings;
   variable: KalshiVariable;
+  resolution: Resolution;
 }) {
   const missing = primary === null ? null : unavailableText(primary);
   return (
@@ -574,18 +690,196 @@ function PrimaryTest({
             )}
             .
           </p>
-          {detectable && <DetectableLine detectable={detectable} fewRuns={fewRuns} />}
+          {detectable ? (
+            <DetectableLine detectable={detectable} fewRuns={fewRuns} />
+          ) : (
+            !significant &&
+            pending && (
+              <p role="status" className="mt-1 text-sm text-ink-muted">
+                Working out the smallest correlation this sample could detect…
+              </p>
+            )
+          )}
           <p className="mt-1 text-xs text-ink-muted">
             {missing ?? methodText(primary)} This is the question the page is set up to answer, chosen before looking at the data,
             so it’s judged on its own p-value. Everything else on the page is exploratory: corrected for the other tests in its
             chart, and best treated as leads to check, not findings. Switching window, resolution, or benchmark until something
             looks significant isn’t corrected for.
+            {longDaily && primary.p !== null && (
+              <>
+                {" "}
+                <strong className="font-medium text-ink-secondary">Daily data over a long window runs a little liberal:</strong> in
+                simulations with a year of trading days, these 95% intervals covered the true value only {LONG_DAILY_COVERAGE} of the time,
+                and with no link {LONG_DAILY_FALSE_POSITIVES} came out below 0.05. Read the interval as somewhat too narrow.
+              </>
+            )}
           </p>
+          {fragility && (
+            <FragilityBlock fragility={fragility} leaveOneOut={leaveOneOut} pending={pending} primary={primary} variable={variable} resolution={resolution} />
+          )}
         </>
       )}
     </div>
   );
 }
+
+const pct = (share: number) => `${Math.round(share * 100)}%`;
+const REASON_TEXT: Record<FragileReason, string> = {
+  movement: "a few intervals carry most of the movement",
+  leave_one_out: "leaving out one session changes the decision",
+};
+
+// From fragility-rates.sim.test.ts: how often the warning (F1 or F3) came on in hourly simulations with
+// no real relationship, 200 data sets per window.
+const WARNING_BY_CHANCE =
+  "11.5% of data sets over a year and 13.0% over 180 days, but 22.5% over 90 days and 75.0% over 30 days, where few intervals carry Kalshi's movement";
+// The same runs, for the pre-set F2 check taken out of the warning on 2026-10-19.
+const F2_BY_CHANCE = "98.5% of data sets at 90 days and 61% at a year";
+
+/** When an interval ran: its New York date and hours (hourly), or the session it closed (daily). */
+function intervalText(t: number, resolution: Resolution): string {
+  if (resolution === "daily") return `${formatDate(t)} (close to close)`;
+  return `${formatDate(t)}, ${formatTime(t - 60 * 60 * 1000)}–${formatTime(t)}`;
+}
+
+/** When a session or run of days was. */
+function sessionText(from: number, to: number, resolution: Resolution): string {
+  if (resolution === "hourly") return formatDate(from);
+  return formatShortDate(from) === formatShortDate(to) ? formatDate(to) : `${formatShortDate(from)} – ${formatDate(to)}`;
+}
+
+/**
+ * How much the primary result rests on a few intervals and sessions (lib/analytics/fragility.ts),
+ * with a warning at thresholds fixed before any result was seen.
+ */
+function FragilityBlock({
+  fragility: f,
+  leaveOneOut: loo,
+  pending,
+  primary,
+  variable,
+  resolution,
+}: {
+  fragility: Fragility;
+  leaveOneOut: LeaveOneOut | null;
+  pending: boolean;
+  primary: TestResult;
+  variable: KalshiVariable;
+  resolution: Resolution;
+}) {
+  const reasons = fragileReasons(f, loo);
+  const blocks: [string, string] = f.unit === "day_run" ? ["run of days", "runs of days"] : ["session", "sessions"];
+  const intervals: [string, string] = resolution === "hourly" ? ["hour", "hours"] : ["day", "days"];
+  const mover = variable.kind === "probability" ? "Kalshi’s probability" : "E";
+  const decision = (t: TestResult) => (t.p === null ? "no p-value" : t.p < ALPHA ? "p < 0.05" : "p ≥ 0.05");
+  const runText = (t: TestResult) => (t.p === null ? "no p-value (too few left)" : `r = ${fmtR(t.estimate)}, p = ${formatP(t.p)}`);
+  return (
+    <div className="mt-3 border-t border-border pt-3 text-sm text-ink-secondary">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-ink">How much it rests on a few {intervals[1]}</span>
+        {reasons.length > 0 ? (
+          <Flag>Fragile: {reasons.map((r) => REASON_TEXT[r]).join("; ")}</Flag>
+        ) : (
+          loo && <span className="text-xs text-ink-muted">No fragility warning</span>
+        )}
+      </div>
+      <ul className="mt-1.5 list-disc space-y-1 pl-5">
+        <li>
+          {mover}’s movement: the largest {intervals[0]} carries {pct(f.movement.top1)} of its variation in this window, and the largest 5
+          carry {pct(f.movement.top5)}, as concentrated as {f.movement.effective.toFixed(1)} equal {intervals[1]} (of{" "}
+          {f.movement.intervals.toLocaleString("en-US")}; it moved in {f.movement.moves.toLocaleString("en-US")}).
+        </li>
+        <li>
+          The test: the most influential {blocks[0]} carries {pct(f.sessions.top1)} of the bootstrap’s score, the top 5 carry{" "}
+          {pct(f.sessions.top5)}, and the top 10 {pct(f.sessions.top10)}, as concentrated as {f.sessions.effective.toFixed(1)} equal{" "}
+          {blocks[1]} (of {f.sessions.count}). Shown as a description, not part of the warning (see below).
+        </li>
+        <li>
+          {loo ? (
+            <>
+              Leaving out each of the {loo.runs.length} most influential {blocks[1]} in turn: r from {fmtR(loo.estimate?.[0] ?? null)} to{" "}
+              {fmtR(loo.estimate?.[1] ?? null)}
+              {loo.p && (
+                <>
+                  , p from {formatP(loo.p[0])} to {formatP(loo.p[1])}
+                </>
+              )}
+              ;{" "}
+              {loo.flips === 0 ? (
+                "the decision at 5% never changes"
+              ) : (
+                <span className="font-medium text-ink">
+                  the decision at 5% changes in {loo.flips} of {loo.runs.length}
+                </span>
+              )}
+              {loo.unavailable > 0 && ` (${loo.unavailable} left too few ${blocks[1]} for a p-value)`}. Without all {loo.runs.length} at once:{" "}
+              {runText(loo.together)}.
+            </>
+          ) : pending ? (
+            <span role="status" className="text-ink-muted">
+              Leaving out each of the most influential {blocks[1]} in turn…
+            </span>
+          ) : (
+            <span className="text-ink-muted">Leaving out each of the most influential {blocks[1]} in turn…</span>
+          )}
+        </li>
+      </ul>
+      <details className="mt-2 text-xs">
+        <summary className="cursor-pointer text-ink-secondary hover:text-ink">The most influential {blocks[1]} and {intervals[1]}, with times to look up the news</summary>
+        <div className="mt-2 grid gap-3">
+          <Table
+            head={["#", blocks[0].charAt(0).toUpperCase() + blocks[0].slice(1), "Share of score", "Pushes r", `Without it`, "Decision"]}
+            rows={f.sessions.ranked.map((s, i) => {
+              const run = loo?.runs[i];
+              return [
+                String(i + 1),
+                sessionText(s.from, s.to, resolution),
+                pct(s.share),
+                s.score > 0 ? "up" : "down",
+                run ? runText(run.test) : "…",
+                run ? `${decision(run.test)}${run.flips ? " (changes)" : ""}` : "…",
+              ];
+            })}
+          />
+          <Table
+            head={[resolution === "hourly" ? "Hour (New York)" : "Day", variable.kind === "probability" ? "Kalshi change" : "ΔE", "Abnormal return", "Share", "Pushes r", `${blocks[0].charAt(0).toUpperCase() + blocks[0].slice(1)} rank`]}
+            rows={f.hours.map((h) => [
+              intervalText(h.t, resolution),
+              formatSigned(h.kalshiChange, 2, ` ${variable.unit}`),
+              formatSigned(h.abnormal * 100, 2, "%"),
+              pct(h.share),
+              h.contribution > 0 ? "up" : "down",
+              `#${h.sessionRank}`,
+            ])}
+          />
+        </div>
+      </details>
+      <p className="mt-2 text-xs text-ink-muted">
+        Diagnostics, not tests: they say how much this result rests on a few {intervals[1]}, not whether it’s right. An {intervals[0]}’s share
+        is its part of {mover}’s variation (its weight in the correlation); a {blocks[0]}’s is its part of the variance of the
+        bootstrap’s score under the null. “As concentrated as” counts are Kish’s effective numbers, (Σw)² / Σw². The warning uses
+        thresholds fixed before any results were seen: fewer than {FRAGILE.minEffectiveMoves} equal {intervals[1]} of movement (where
+        the page already says a few moves decide), or a decision at 5% that changes when one of the {FRAGILE.leaveOut} most influential{" "}
+        {blocks[1]} is left out (alpha and beta refitted without it). A p-value near 0.05 can also cross it from Monte Carlo error
+        alone (about ±0.007 with {(primary.resampling?.draws ?? 999).toLocaleString("en-US")} draws).{" "}
+        <span className="font-medium text-ink-secondary">It comes on by chance too:</span> in hourly simulations with no real
+        relationship, it came on in {WARNING_BY_CHANCE}.
+      </p>
+      <p className="mt-1 text-xs text-ink-muted">
+        <span className="font-medium text-ink-secondary">Changed on Oct 19, 2026, from the pre-set thresholds:</span> the warning no
+        longer counts fewer than {DESCRIPTIVE_MIN_SESSIONS} equal {blocks[1]}, which is still shown above as a description. In simulations
+        with no real relationship it came on in {F2_BY_CHANCE}, because most {blocks[1]} have no Kalshi movement, so as a warning it
+        carried no information. The change was based only on simulated data, not on any real result.
+      </p>
+    </div>
+  );
+}
+
+// From long-windows.sim.test.ts, daily with 252 trading days: the primary test's interval covered the
+// true effect in 180 of 200 data sets (below the 92% bar set beforehand, so shown here), and with no
+// link 28 of 400 had p < 0.05 (within the 7.5% bar, but above 5%).
+const LONG_DAILY_COVERAGE = "90% (180 of 200, 95% range 85–93%)";
+const LONG_DAILY_FALSE_POSITIVES = "7.0% (28 of 400, 95% range 4.9–9.9%)";
 
 /** The smallest correlation the primary test could detect with 80% power in this sample. */
 // From power.test.ts, on validation seeds: with 20 daily intervals (about 10 runs of days), effects of the
@@ -772,7 +1066,7 @@ function RollingCard({
             primary test and the lead-lag chart.
             {points.some((p) => p.r === null) && " Gaps: one series didn't move in that window."}{" "}
             {variable.kind === "probability" ? "The sign depends on what YES means (see above)." : variable.text.sign}
-            {adjustment && ` Every window uses the same ${betaFrom(adjustment.model, resolution, adjustment.days)}.`}
+            {adjustment && ` Every window uses the same ${betaFrom(adjustment.model, resolution, adjustment.sample)}.`}
           </>
         }
       />
@@ -824,7 +1118,7 @@ function EventStudyCard({
       <Notice
         tone="info"
         title="Not enough data for a market-adjusted event study"
-        message={`Fewer than 10 ${resolution} intervals in the last 90 days fall outside the jump windows, so beta can’t be estimated without the jumps shaping it. Try a larger jump size, or Raw.`}
+        message={`Fewer than 10 ${resolution} intervals in the market model’s sample fall outside the jump windows, so beta can’t be estimated without the jumps shaping it. Try a larger jump size, or Raw.`}
       />,
     );
   }
@@ -887,7 +1181,7 @@ function EventStudyCard({
                 study.skippedMissing > 0 && adjustment ? `, or missing a ${adjustment.benchmark} price` : ""
               }).`}
             {adjustment?.eventModel &&
-              ` Market-adjusted with beta ${adjustment.eventModel.beta.toFixed(2)} and alpha from ${modelSample(adjustment.eventModel, resolution)} outside every jump window, so the jumps don’t shape beta; the baseline is adjusted the same way.`}
+              ` Market-adjusted with beta ${adjustment.eventModel.beta.toFixed(2)} and alpha from ${modelSample(adjustment.eventModel, resolution, adjustment.sample)} outside every jump window, so the jumps don’t shape beta; the baseline is adjusted the same way.`}
           </>
         }
       />

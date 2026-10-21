@@ -8,7 +8,7 @@ Pick a stock or ETF (search by ticker or name, e.g. `NVDA` or "nvidia") and a Ka
 - **Stock:** current price, daily change, volume (compared with average volume once the market has closed), and 30-day realized volatility (via [Twelve Data](https://twelvedata.com))
 - **Charts:** Kalshi probability vs. stock return over the last 7 days, aligned on timestamps, plus the probability history and ~3 months of daily closes
 - **Whole events:** for a Fed decision event ticker (`KXFEDDECISION-26OCT`), the expected rate change across every outcome instead of one market's probability; see [Event analysis](#event-analysis)
-- **Research:** how Kalshi probability changes relate to stock returns over 7, 30, or 90 days (hourly or daily; 90 days hourly by default): lead-lag correlation, rolling correlation, and an event study around Kalshi jumps, on raw or market-adjusted returns (net of SPY or another benchmark), with significance tests built for this data (one primary test; p-values and 95% intervals for every lag and event-study bar; Holm and Benjamini–Hochberg corrections), sample sizes, caveats, and a CSV export of the aligned data
+- **Research:** how Kalshi probability changes relate to stock returns over 7, 30, 90, or 180 days, a year, or the market's whole life (up to 540 days; hourly or daily; 90 days hourly by default): lead-lag correlation, rolling correlation, and an event study around Kalshi jumps, on raw or market-adjusted returns (net of SPY or another benchmark), with significance tests built for this data (one primary test, with diagnostics of how much it rests on a few hours or sessions; p-values and 95% intervals for every lag and event-study bar; Holm and Benjamini–Hochberg corrections), sample sizes, caveats, and a CSV export of the aligned data
 
 > Experimental market-research tool. Metrics are informational and are not investment recommendations.
 
@@ -77,7 +77,8 @@ The dev server only listens on `127.0.0.1`, so other devices on your network can
 
 ```bash
 pnpm lint    # ESLint
-pnpm test    # unit tests (Vitest)
+pnpm test    # unit tests (Vitest), without the slow simulations
+pnpm test:sim  # the slow simulations: calibration at the longer windows and the fragile warning's rates (several minutes)
 pnpm build   # production build (includes type checking)
 pnpm start   # serve the production build (needs ACCESS_PASSWORD and AUTH_SECRET)
 ```
@@ -163,23 +164,48 @@ Left out, and counted on the page:
 ### Data limitations
 
 - **Most Kalshi hourly changes are zero, and moves come in 0.5 pp steps** (1¢ ticks, midpoint). In one check of the Fed October market, 104 of 384 intraday hours over 90 days moved at all. Correlations can rest on a few moves, and event studies often have fewer than 10 jumps.
-- **Typical sample sizes:** 7 days hourly ≈ 30 intervals, 30 days hourly ≈ 120, 90 days hourly ≈ 370, 30 days daily ≈ 20, 90 days daily ≈ 60. The daily view isn't offered for 7 days (about 5 closes).
-- **Market lifetime:** a market younger than the window covers less of it (the page shows the actual date range). Without the [data store](#data-store), stock data covers the last ~90 days, so a market that closed before then won't overlap; with it, a closed market's windows end at its close.
-- **History depth:** Kalshi returns at most 10,000 candles per request (5,000 from its archive of settled markets), so 90 days (plus a week before, to know the probability in effect when the window starts) is one request of hourly candles. The Twelve Data free plan returns up to 900 30-minute bars (about 70 sessions) of regular-hours data.
+- **Typical sample sizes:** 7 days hourly ≈ 30 intervals, 30 days hourly ≈ 120, 90 days hourly ≈ 370, 180 days ≈ 740, a year ≈ 1,500, and All at its 540-day cap ≈ 2,200; daily, 30 days ≈ 20, 90 days ≈ 60, 180 days ≈ 124, a year ≈ 252, 540 days ≈ 372. The daily view isn't offered for 7 days (about 5 closes).
+- **Market lifetime:** no window reaches back before the market opened (for an event, its first outcome): a younger market's window covers only its life, and the page says so (*"This market opened on Mar 3, 2026, so the 1Y window covers only 225 days"*). A longer window that's no longer than 90 days for this market is the 90-day one, and the page says that too. **All** is the market's whole life, up to 540 days, the most one Twelve Data request of 30-minute bars holds; the page says when it's capped. Without the [data store](#data-store), a market that closed before Kalshi's archive cutoff can't be found; with it, a closed market's windows end at its close.
+- **History depth:** a Twelve Data request returns up to 5,000 bars for 1 credit, and the free plan serves that much: 4,828 30-minute bars for SPY over the 540 days to 2026-10-14 (checked live, 1 credit). So the stock's and the benchmark's bars for every window come in the same 4 requests as before. Kalshi's history for the longer windows comes from the store; without it, from live or archive requests of at most 4,800 hourly candles each (the archive allows 5,000, the live endpoint 10,000).
+
+### Longer windows
+
+**7D, 30D, and 90D** read the 90 days the page loads with, exactly as before (`lib/history/research-golden.test.ts` pins their rows and results end to end, through the loaders, as they were before the longer windows were added). **180D, 1Y, and All** read a longer history that streams in after the page's first render, so they never slow it down:
+
+- **Credits.** Every window costs the same: 5 Twelve Data credits per analysis (1 if the same stock was analyzed in the last minute and SPY is cached), plus 2 per other benchmark. The stock's 30-minute and daily requests already reach back to the market's open (at most 540 days, at least 100), and the benchmark's to 540 days, so one SPY download serves every analysis; a request costs 1 credit whatever its length up to 5,000 bars.
+- **Kalshi** comes from the store first (a market's 540 days is about 6,500 stored candles, read in about 0.25 s; a whole event's about 26,000 in 0.6 s, measured on the production store), with a live tail after it; without the store, from live or archive requests of at most 4,800 hours. It gives up after 15 seconds, and the page then says the longer windows couldn't be loaded; 7–90D still work.
+- **The market model** is fitted on the window itself (up to about 2,200 hourly intervals), not the 90 days, and the page says so.
+- **Splits.** Twelve Data's daily bars are split-adjusted and its intraday bars aren't, so a split in the loaded range would put a jump in hourly event-study paths that span a night. Sessions whose last 30-minute close is more than 25% off the day's daily close are scaled onto the daily bars' basis (`adjustIntradayForSplits`); without a split nothing changes.
+
+**Keeping the page responsive** (`scripts/bench-research.ts`; Node on an Apple-silicon Mac, median of 5, simulated rows at each length). The 7, 30, and 90-day windows are computed as a toggle happens; the rest runs after the main results render, a slice at a time, so clicks and scrolling are handled in between.
+
+| Window | Window, benchmark, or returns toggle | Jump size | Longer window, total (slices up to) | Detectable size | Leave-one-out, total (slices up to) |
+| --- | --- | --- | --- | --- | --- |
+| 30D hourly | 66 ms | 1 ms | — | 24 ms | 93 ms (9) |
+| 90D hourly | 120 ms | 9 ms | — | 38 ms | 154 ms (14) |
+| 180D hourly | — | — | 246 ms (25) | 58 ms | 315 ms (29) |
+| 1Y hourly | — | — | 500 ms (54) | 104 ms | 657 ms (60) |
+| All hourly (540 days) | — | — | 730 ms (79) | 145 ms | 971 ms (89) |
+| 90D daily | 36 ms | 0 ms | — | 23 ms | 27 ms (3) |
+| All daily (540 days) | — | — | 204 ms (14) | 41 ms | 147 ms (14) |
+
+So the page never goes more than about 145 ms without the main thread. Measured in the browser too (a production build in headless Chrome on the same Mac, TLT against KXFEDDECISION-26DEC, 2026-10-19), from a click to the results on screen: 65–225 ms for the 7, 30, and 90-day windows; 0.40, 0.74, and 0.78 s for 180D, 1Y, and All, with the detectable size and leave-one-out check done by 0.70, 1.32, and 1.37 s; a new jump size in 66 ms at 90D and 0.50 s at 1Y. The longest single main-thread task was 145 ms (switching to 90D, computed in one go), and the longest slice 108 ms. A Web Worker was tried first, but Next.js 16.3's Turbopack emits a `new Worker(new URL(…, import.meta.url))` target as a static file rather than a bundle, so the worker can't load its imports. The slices come from writing the lead-lag tests, the market model's tests, and the leave-one-out check as steps; run to the end, they give exactly the plain results.
+
+**90 days stays the default.** The rule was fixed before measuring (feat/long-windows plan): switch to the shortest of 180D and 1Y that (a) at least half of the open KXFEDDECISION markets and events have in full, (b) raises the median effective number of hourly Kalshi moves to at least 1.5× the 90-day one, (c) passes its simulations, and (d) keeps every toggle under 300 ms. `scripts/measure-windows.ts` measured (a) and (b) on the store on 2026-10-19, Kalshi only (no stock data, no results): all 11 open events and all 55 open markets have a full year (they opened in Sep–Oct 2025), but the median effective number of moves barely grows: 16.8 at 90 days, 20.1 at 180 (×1.20), and 21.2 at a year (×1.26) for events; 10.3, 9.8 (×0.95), and 11.6 (×1.12) for single markets. A few large moves dominate whatever the length, so older months add little information about Kalshi's side while adding stock noise and assuming a stable beta for longer. (c) passes for 180D but not for 1Y, whose daily intervals under-covered (below), and (d) passes for both. The simulations' gain in power (below) assumes Kalshi keeps moving as much in older months as recently, which these markets don't.
 
 ### Market-adjusted returns
 
 A Kalshi move and a stock move in the same hour can both be the whole market moving. **Returns: Market-adjusted** takes out what a benchmark explains, so what's left is how the stock moved differently from the market. It applies to the same-interval correlation, lead-lag, rolling correlation, and the event study. **Market-adjusted is the default**, since the primary test always uses market-adjusted returns. When adjustment isn't possible (the stock is the benchmark, the benchmark didn't load, or there are too few prices to estimate beta), the page shows raw returns and says why under the toggles; picking Raw shows the stock's own returns.
 
 - **Benchmark:** SPY by default; any US stock or ETF can be picked in the Research section with the same search field as the form (e.g. QQQ, or a sector ETF such as XLK or XLF). It resets to SPY for each analysis and isn't part of the shareable link. Its bars are read at exactly the stock's observation times (top-of-hour closes, and session closes stamped the same way as the stock's); an interval without a benchmark price at both ends is left out of the adjusted results and counted. Only benchmark bars that had closed at least 5 minutes before they were fetched are used.
-- **Market model:** OLS of the stock's log return on the benchmark's, *r = α + β·r_benchmark*, over **every interval in the loaded 90 days** at the chosen resolution where both have prices (Kalshi isn't needed): about 380 hourly or 62 daily intervals. The page shows β (with a 95% interval), α, R², and n, and says that they come from the full 90 days whatever window is selected. The **abnormal return** is *r − α − β·r_benchmark*.
-- **Event study:** its β and α are fitted the same way but leaving out every interval within the event window (6 bars hourly, 5 sessions daily, each side) of every jump at or above the chosen size anywhere in the 90 days, so the jumps being studied don't shape β. Paths are the cumulative abnormal log return, *ln(S/S₀) − β·ln(B/B₀) − α·bars*; the baseline is adjusted the same way. With large or frequent jumps (e.g. daily, 3 pp) too few intervals may be left, and the page says so.
+- **Market model:** OLS of the stock's log return on the benchmark's, *r = α + β·r_benchmark*, over **every interval in the loaded 90 days** for the 7, 30, and 90-day windows, and **every interval of the window itself** for the longer ones, at the chosen resolution where both have prices (Kalshi isn't needed): about 380 hourly or 62 daily intervals for 90 days, up to about 2,200 or 372 for All. The page shows β (with a 95% interval), α, R², and n, and says where they come from. The **abnormal return** is *r − α − β·r_benchmark*.
+- **Event study:** its β and α are fitted the same way but leaving out every interval within the event window (6 bars hourly, 5 sessions daily, each side) of every jump at or above the chosen size anywhere in the market model's sample, so the jumps being studied don't shape β. Paths are the cumulative abnormal log return, *ln(S/S₀) − β·ln(B/B₀) − α·bars*; the baseline is adjusted the same way. With large or frequent jumps (e.g. daily, 3 pp) too few intervals may be left, and the page says so.
 - **Simple excess return**, *r − r_benchmark* (β = 1, α = 0), is shown next to the beta-adjusted and raw results for the same-interval correlation and the event study's end values.
 - **Kalshi with the market held fixed:** OLS of the stock's return (%) on the benchmark's return (%) and the Kalshi change (pp) over the selected window, reporting the Kalshi coefficient (stock return per 1 pp), a 95% interval, and a p-value. The p-value and interval come from **the same wild cluster bootstrap as the primary test** (see [Statistical tests](#statistical-tests)), with every coefficient, the benchmark's included, refitted in every draw. Its statistic is the coefficient's t with Newey–West standard errors (Bartlett weights, ⌊4(n/100)^{2/9}⌋ lags, 3–5 here) and an HC3-style leverage correction:
   - Stock moves are larger in the hours news moves Kalshi, so ordinary standard errors (which assume constant variance) are too small.
   - Kalshi often reprices over several hours, and the Newey–West sum covers that autocorrelation. Lags pair intervals exactly that many grid slots apart, so no lag reaches across a night or a missing session.
   - Kalshi doesn't move in most hours, so the coefficient rests on the few intervals where it did. OLS fits those high-leverage points closely, which makes their residuals understate the noise; dividing each residual by (1 − leverage), as HC3 does, corrects for that.
-  - It's a cross-check of the primary test (which uses β from the full 90 days), shown with an uncorrected p-value. With fewer than 8 sessions (or runs of days) there's no p-value or interval, as for the correlations.
+  - It's a cross-check of the primary test (which uses β from the market model's sample), shown with an uncorrected p-value. With fewer than 8 sessions (or runs of days) there's no p-value or interval, as for the correlations.
   - **Newey–West cross-check:** the same t read from a t distribution with n − 3 degrees of freedom is shown next to it (not when Kalshi moved in fewer than 10 intervals, or when the bootstrap gives no p-value). That large-sample approximation rejects too often when the stock is more volatile in the hours Kalshi moves: in the test suite's simulations with 21 hourly sessions and no relationship, 8.0% of data sets (32 of 400, ± 1.4), against 4.5% for the bootstrap on the same data sets (see [Statistical tests](#statistical-tests)).
 
 Caveats shown on the page:
@@ -187,7 +213,7 @@ Caveats shown on the page:
 - If the event moves the whole market (an index level, the Fed, a recession), adjusting removes the part of the move the stock shares with the market, which may be the very effect being studied. The page flags when Kalshi changes correlate with the benchmark's returns (wild bootstrap p < 0.05, uncorrected).
 - A benchmark that holds the stock (NVDA is in SPY and QQQ, and a large weight in tech sector ETFs) absorbs part of the stock's own move. A benchmark that explains almost all of it (R² ≥ 0.95, e.g. VOO for SPY) leaves mostly noise, and the page says so. When the stock is the benchmark, adjustment is unavailable.
 - Hourly β is intraday (trading hours only) and daily β includes overnight moves, so they differ. For thinly traded stocks the last trade in an hour can be stale, which pulls hourly β toward 0.
-- β is assumed stable over the 90 days. Event-study windows span nights and weekends, and β and α apply per bar there too.
+- β is assumed stable over the market model's sample: the 90 days, or up to 540 days for the longer windows, where the page adds that caveat. Event-study windows span nights and weekends, and β and α apply per bar there too.
 
 ### Statistical tests
 
@@ -210,7 +236,7 @@ The data is hard on textbook statistics: Kalshi's hourly change is zero most of 
 - The statistic is the slope's t with the same Newey–West + HC3 standard errors as the regression above. The p-value is the share of 999 draws at least as extreme as the data; the page shows the number of sessions (or runs) and the smallest possible p (0.001).
 - The interval is every slope the same bootstrap wouldn't reject at 5%, so it excludes zero exactly when p < 0.05. Each draw's t is a closed-form function of the slope being tested, so the interval costs no extra draws. It's shown as a correlation (slope × *s_x*/*s_y*), clamped to ±1. An interval that reaches ±1 means Kalshi's moves at that lag fall in too few sessions to pin it down.
 - **With fewer than 8 sessions (or runs of days), no p-value or interval is shown**, and the page says how many there were: the 7-day window has about 5 sessions. The cutoff of 8 was chosen in development runs, which aren't part of the test suite. The tested power figures under Validation show that detection is already weak with 10 sessions.
-- **On market-adjusted returns, β and α are refitted in every draw** (`lib/analytics/wild-bootstrap.ts`), for the primary test and every lag of the market-adjusted lead-lag chart. Each draw rebuilds the stock's returns over the whole market model sample (every interval of the loaded 90 days, each of its sessions with its own weight), refits the market model, recomputes the abnormal returns, and recomputes the correlation's t. Under "slope = θ₀" the rebuilt returns carry an effect θ₀/κ along Kalshi's changes, where κ is the share of Kalshi's variation the market model leaves in place: when Kalshi moves with the benchmark, the market model absorbs part of any effect, so the abnormal returns show only κ of it. Everything stays a closed-form function of the slope being tested, so this costs a few milliseconds. `wild-bootstrap.test.ts` checks the closed form against refitting both regressions with `ols` draw by draw, and checks that raw-returns results are exactly as before. The regression above uses the same engine with the benchmark's return as a second regressor.
+- **On market-adjusted returns, β and α are refitted in every draw** (`lib/analytics/wild-bootstrap.ts`), for the primary test and every lag of the market-adjusted lead-lag chart. Each draw rebuilds the stock's returns over the whole market model sample (every interval of the loaded 90 days, or of a longer window, each of its sessions with its own weight), refits the market model, recomputes the abnormal returns, and recomputes the correlation's t. Under "slope = θ₀" the rebuilt returns carry an effect θ₀/κ along Kalshi's changes, where κ is the share of Kalshi's variation the market model leaves in place: when Kalshi moves with the benchmark, the market model absorbs part of any effect, so the abnormal returns show only κ of it. Everything stays a closed-form function of the slope being tested, so this costs a few milliseconds. `wild-bootstrap.test.ts` checks the closed form against refitting both regressions with `ols` draw by draw, and checks that raw-returns results are exactly as before. The regression above uses the same engine with the benchmark's return as a second regressor.
 - Treating β as known was conservative, not optimistic: β is fitted on 90 days that include the window, so its error partly cancels the noise the test sees. In the simulations below, the fixed-β version came out below 0.05 in only 1.7% of data sets over 90 hourly days when Kalshi tracks the benchmark; refitting brings that to 4.7%.
 - Effective n is Bartlett's *n* / (1 + 2 Σ ρₓ(j) ρᵧ(j)) over the Newey–West lags, autocorrelations pairing slots exactly *j* apart. It's for reading the sample size; the tests don't use it.
 
@@ -220,6 +246,16 @@ The data is hard on textbook statistics: Kalshi's hourly change is zero most of 
 - **One sample's volatility is itself uncertain**: with heavy-tailed returns, the volatility in the few hours Kalshi moved is estimated from a handful of intervals. Taking it as known was optimistic: in development runs (not in the test suite), effects of the size it reported were detected only about 71–77% of the time in fresh samples. So the power is averaged over that uncertainty: the statistic's score variance is resampled by session (200 resamples), and since the test is scale-free, noise *k* times larger is the same as an effect *k* times smaller. Few sessions or a few dominant hours then widen the spread and raise the detectable size.
 - The figure is the smallest |r| reaching 80% in both directions, on the scale *r* = θ·*s_x* / √(θ²*s_x*² + *s_y*²). It's a rough guide, and the page says so. **Above ±0.8 it isn't given as a number**: there the power curve flattens and the simulation stops being reliable, so the page says only correlations stronger than about ±0.8 could be detected. With 30 days of daily data that's the usual case, and **when a 30-day daily window does get a number, the page says it's unreliable**, with the measured rate below.
 - It's computed only when the primary result isn't significant, from data already on the page.
+
+**How much the primary result rests on a few hours** (`lib/analytics/fragility.ts`). Next to the primary test, and computed from its own bootstrap, so they describe exactly what the test used. They're diagnostics, not tests: they say how much the result rests on a few intervals or sessions, not whether it's right.
+
+- **Kalshi's movement:** the share of the Kalshi variable's variation (Σx̌², x̌ the change net of its mean) in the largest interval and the largest 5, and how many equal intervals that's as concentrated as. The correlation's slope is a weighted mean of each interval's slope with weights x̌²/Σx̌², so Kish's effective number, (Σw)²/Σw², is how many intervals it effectively rests on.
+- **Sessions:** each session's (or run of days') score s = Σ q·a over its intervals, where a is the abnormal return and q the Kalshi change net of what the market model absorbs; Σs is the estimate's numerator, and under "no link" the bootstrap's numerator is Σ s·w with one Webb weight w per session, so its variance is Σs². The page shows the shares of Σs² in the top 1, 5, and 10 sessions and their effective number, as a description; it isn't part of the warning (below).
+- **The most influential sessions and hours,** with their New York times (to look up the news), Kalshi changes, abnormal returns, and which way each pushed the estimate.
+- **Leave one out:** the primary test rerun from scratch without each of the 10 most influential sessions in turn (ranked by score share before any rerun; α and β refitted without it), with the range of estimates and p-values and whether the decision at 5% ever changes; then without all 10 at once, for information. Reruns left with fewer than 8 sessions get no p-value.
+- **The fragile warning** uses thresholds fixed before any result was seen: fewer than 10 effective intervals of movement (F1; where the page already says a few moves decide), or a decision at 5% that changes when one of the 10 most influential sessions is left out (F3; p crossing 0.05 either way, or a significant estimate changing sign). The warning names which tripped. A p-value near 0.05 can also cross from Monte Carlo error alone (about ±0.007 with 999 draws).
+- **It also comes on by chance,** and the page says how often: in hourly simulations with no real relationship it came on in 11.5% of data sets over a year and 13.0% over 180 days, but 22.5% over 90 days and 75.0% over 30 days, where few intervals carry Kalshi's movement (table below).
+- **Changed on 2026-10-19 from the pre-set thresholds:** a third check, fewer than 8 effective sessions (F2; below which the page shows no p-value at all), was dropped from the warning; the effective number of sessions is still shown as a description. In simulations with no real relationship F2 fired in 98.5% of data sets at 90 days and 61.0% at a year, because most sessions have no Kalshi movement, so the score always sits in a few of them and as a warning it carried no information. The decision was based only on simulated data, not on any real result, and the page notes it.
 
 **Event study: sign flips and bootstrap-t** (`lib/analytics/event-tests.ts`).
 
@@ -311,6 +347,56 @@ Event study (62 sessions, shared volatility, jumps of at least 1.5 pp; 300 data 
 
 **The whole-path test is also slightly above 5% (5.3%)**, 0.2 standard errors away, so it's well within Monte Carlo error.
 
+**Longer windows** (`lib/analytics/long-windows.sim.test.ts`, run with `pnpm test:sim`): the same simulated data and the same checks at 124, 252, and 372 sessions (or trading days), the market model fitted on the window itself as the page now does. Every seed was fresh (300,000 and up; designs 210,000–215,019 for the detectable size, their fresh samples 1,000,000 + 100 × design + j), and each setting ran once, with its bar and what to do outside it set beforehand.
+
+False positives, Kalshi tracking the benchmark (0.1% per pp hourly, 0.3% daily), shared volatility, 400 data sets each:
+
+| Setting | Primary, β refitted | β treated as known | Regression, bootstrap | Regression, Newey–West t |
+| --- | --- | --- | --- | --- |
+| Hourly, 124 sessions (180 days) | 4.0% (16) ± 1.0, range 2.5–6.4% | 1.0% (4) | 4.0% (16) ± 1.0, range 2.5–6.4% | 4.2% (17) |
+| Hourly, 252 sessions (a year) | 4.5% (18) ± 1.0, range 2.9–7.0% | 1.0% (4) | 4.5% (18) ± 1.0, range 2.9–7.0% | 5.8% (23) |
+| Hourly, 372 sessions (540 days) | 4.5% (18) ± 1.0, range 2.9–7.0% | 1.5% (6) | 4.5% (18) ± 1.0, range 2.9–7.0% | 5.2% (21) |
+| Daily, 124 trading days | 4.8% (19) ± 1.1, range 3.1–7.3% | 2.0% (8) | 5.0% (20) ± 1.1, range 3.3–7.6% | 6.2% (25) |
+| Daily, 252 trading days | **7.0% (28)** ± 1.3, range 4.9–9.9% | 3.2% (13) | **6.8% (27)** ± 1.3, range 4.7–9.6% | 6.0% (24) |
+| Daily, 372 trading days | 4.0% (16) ± 1.0, range 2.5–6.4% | 1.2% (5) | 4.5% (18) ± 1.0, range 2.9–7.0% | 5.0% (20) |
+
+Raw same-interval correlations with no link, 300 data sets each: 3.3% (10) ± 1.0 (range 1.8–6.0%) hourly with 252 sessions, 4.3% (13) ± 1.2 (2.5–7.3%) daily with 252 trading days. The tests fail at 7.5% (and, hourly, below 2% for the primary test and the regression).
+
+Interval coverage, a same-interval effect of 0.3% per pp, Kalshi unrelated to the benchmark, 200 data sets each (the test fails outside 92–98.5%): hourly, 94.0% (188) ± 1.7 (range 89.8–96.5%) with 124 sessions, 93.0% (186) ± 1.8 (88.6–95.8%) with 252, and 94.5% (189) ± 1.6 (90.4–96.9%) with 372, the same counts for the primary test and the regression.
+
+- **Daily data over a year runs a little liberal.** With 252 trading days the 95% intervals covered the true effect in only **90.0% (180 of 200) ± 2.1, range 85.1–93.4%** for the primary test and 89.5% (179) for the regression, below the 92% bar; the false-positive rate in that setting was 7.0%, within the 7.5% bar but above 5% (with 124 and 372 trading days it was 4.8% and 4.0%). As decided beforehand, the method is unchanged, the page shows these rates whenever a daily window is longer than 90 days, and that test's bar is loosened to 85% with this disclosure. Why isn't established; one untested possibility is the simulated volatility persisting longer than the bootstrap's runs of 4 trading days (see Limitations). The hourly settings don't show it.
+
+Smallest detectable correlation at the longer windows, 20 designs × 20 fresh samples each, every design with a number (the test fails outside 72–88%):
+
+| Setting | Median detectable r | Fresh samples detected | ± SE | 95% range |
+| --- | --- | --- | --- | --- |
+| Hourly, 124 sessions | 0.27 | 83.0% (332 of 400) | 1.9 | 79.0–86.4% |
+| Hourly, 252 sessions | 0.18 | 80.0% (320 of 400) | 2.0 | 75.8–83.6% |
+| Hourly, 372 sessions | 0.16 | 83.5% (334 of 400) | 1.9 | 79.5–86.8% |
+| Daily, 124 trading days | 0.34 | 74.2% (297 of 400) | 2.2 | 69.7–78.3% |
+| Daily, 252 trading days | 0.28 | 83.2% (333 of 400) | 1.9 | 79.3–86.6% |
+| Daily, 372 trading days | 0.20 | 84.8% (339 of 400) | 1.8 | 80.9–87.9% |
+
+On these simulated data, the detectable correlation falls from 0.35 at 62 hourly sessions (above) to 0.18 at a year, but that assumes Kalshi moves as much in older months as in recent ones; on the open Fed markets it doesn't (see [Longer windows](#longer-windows)).
+
+Event study over a year (252 sessions, shared volatility, jumps of at least 1.5 pp, 300 data sets): bar +3 had p < 0.05 in 2.7% (8) ± 0.9 (range 1.4–5.2%), the whole path in 3.3% (10) ± 1.0 (1.8–6.0%), and the bar's 95% interval covered zero in 93.0% (279) ± 1.5 (89.5–95.4%). The test fails at 6% for the bar, 7.5% for the path, or below 92% coverage.
+
+How often the fragile warning fires (`lib/analytics/fragility-rates.sim.test.ts`, run with `pnpm test:sim`): hourly, Kalshi tracking the benchmark, shared volatility, 200 data sets per row, leave-one-out with 199 draws. These report, not calibrate. F1 and F3 are the thresholds fixed before any of these runs; F2 is the check dropped from the warning on 2026-10-19 because of the F2 column below, still counted to show why. The warning is F1 or F3.
+
+| Window | Effect | F1: < 10 effective moves | F3: a leave-one-out flips the decision | Warning (F1 or F3) | F2, dropped: < 8 effective sessions |
+| --- | --- | --- | --- | --- | --- |
+| 21 sessions (30 days) | none | 69.0% (138) | 13.0% (26) | **75.0% (150)** ± 3.1, range 68.6–80.5% | 99.0% (198) |
+| 21 sessions (30 days) | 0.3% per pp | 62.0% (124) | 54.0% (108) | 81.5% (163) | 100% (200) |
+| 62 sessions (90 days) | none | 10.5% (21) | 15.0% (30) | **22.5% (45)** ± 3.0, range 17.3–28.8% | 98.5% (197) |
+| 62 sessions (90 days) | 0.3% per pp | 9.0% (18) | 29.0% (58) | 36.0% (72) | 94.5% (189) |
+| 124 sessions (180 days) | none | 1.0% (2) | 12.0% (24) | **13.0% (26)** ± 2.4, range 9.0–18.4% | 85.5% (171) |
+| 124 sessions (180 days) | 0.3% per pp | 0% (0) | 9.0% (18) | 9.0% (18) | 72.5% (145) |
+| 252 sessions (a year) | none | 0% (0) | 11.5% (23) | **11.5% (23)** ± 2.3, range 7.8–16.7% | 61.0% (122) |
+| 252 sessions (a year) | 0.3% per pp | 0% (0) | 2.0% (4) | 2.0% (4) | 43.0% (86) |
+
+- **With no real relationship, the warning comes on by chance in 11.5–13.0% of data sets at 180 days and a year, 22.5% at 90 days, and 75.0% at 30 days**, where F1 dominates: 30 days hold too few Kalshi moves for the estimate to rest on many. F3 alone is 11.5–15.0% with no link, which includes p-values near 0.05 crossing it by Monte Carlo error. The page quotes these rates under the warning.
+- **F2 fired in nearly every data set with no link (99.0% at 30 days, 98.5% at 90, 61.0% at a year), though the bootstrap stays calibrated there** (false positives 4.4–4.7% in the same design, above): most sessions have no Kalshi movement, so the score always sits in a few of them. That's why it was dropped from the warning; the same runs, with the same seeds, give every column here, and the warning's counts were recomputed on them after the change.
+
 Not in the test suite: comparisons with the methods tried and dropped (the old ±1.96/√n band, shuffling Kalshi between sessions, a placebo-window event test, and plain percentile event intervals). Those ran during development: the tests over-rejected, mostly when volatility was shared, and the percentile intervals under-covered. They aren't reproducible from the repository, so no figures are given here. An independent Python reimplementation (numpy and statsmodels, refitting every bootstrap draw instead of using the closed form) reproduced the p-values, intervals, Holm and BH adjustments, effective n, and random-number stream exactly. That check predates refitting β in every draw; raw-returns results are unchanged since (pinned in `wild-bootstrap.test.ts`), and the new closed form is checked in the test suite against refitting draw by draw.
 
 **Limitations.**
@@ -323,6 +409,9 @@ Not in the test suite: comparisons with the methods tried and dropped (the old �
 - Holm is conservative because neighboring lags and bars share data; BH assumes they're positively dependent, which is plausible but not guaranteed.
 - Corrections apply within each chart's family, not across the page or across the settings tried.
 - Small samples can't show much: 30 days of daily data has about 10 runs of days, and most of its intervals span nearly everything.
+- Daily data over a year runs a little liberal in simulation (intervals covering 90%, 7.0% false positives); the page says so for daily windows longer than 90 days.
+- Longer windows assume β, and the link being tested, are the same throughout up to 540 days; a Fed market a year before its meeting is a different instrument from one a week before.
+- The fragility diagnostics were added after the fed-history study's result (where one hour held 46% of ΔE's variation) and describe the data, not the hypothesis; the warning's thresholds were fixed before any of this branch's results, and one of the three (F2) was dropped on 2026-10-19 on simulated evidence alone. The warning comes on by chance in 11.5–75% of analyses with no relationship, depending on the window.
 
 ### CSV export
 
@@ -365,7 +454,7 @@ A single outcome market of a multi-outcome event has an ambiguous sign: a rising
 - **Probabilities p** come from each hour's closing book: the bid/ask midpoint, half the ask without a bid, or halfway from the bid to $1 without an ask (a bid of 0 or an ask of $1 is no quote). An outcome with no usable quote in the last 7 days counts as 0 if it was last at most 5¢.
 - **E is missing**, never carried over, when Σp is outside 0.80–1.20, when an outcome's quote is stale, when the collected history has a gap, and from the first outcome's close on.
 - **The page** shows E now (from the live books), its 1h and 24h change, each outcome's value, probability, and weight, E over 90 days, and the outcome probabilities behind it. Research is the same as for one market, with ΔE in bp as the Kalshi variable: an interval whose open outcomes changed is left out, and the event study's jump sizes are 0.25–5 bp (0.5 bp hourly and 2 bp daily by default). For a closed event, Research ends at its first close. The CSV has the same columns with `kalshi_expected_bp` and `expected_change_bp` in place of the probability columns, `expected_missing:<reason>` in `kalshi_exclusion`, and `sum_p` and `open_outcomes` appended.
-- **Requests:** the event (`/events/{ticker}`), each outcome's 97 days of hourly candles from the store first (batched live requests, or Kalshi's archive, for the rest), and the same 3 or 5 Twelve Data credits as one market.
+- **Requests:** the event (`/events/{ticker}`), each outcome's 97 days of hourly candles from the store first (batched live requests, or Kalshi's archive, for the rest), the same for the longer windows from a week before the first outcome opened, and the same 3 or 5 Twelve Data credits as one market.
 
 ## Data store
 
@@ -387,7 +476,7 @@ Each window of candles is stored with the time range it covers, in one transacti
 
 - Research's Kalshi history comes from stored candles first, with a live request for anything after them. If the store doesn't cover the window, or a read fails or takes longer than 2.5 seconds, it's fetched live as before. The Sources note says how far stored history reaches.
 - A market that settled before Kalshi's archive cutoff (the live API answers 404 for it) opens from its stored row or from Kalshi's archive.
-- For a closed market, Research's 7, 30, and 90-day windows end at its close instead of now, the stock's bars and the benchmark cover that window, and the Research card says so. An analysis still uses 3 or 5 Twelve Data requests.
+- For a closed market, Research's windows end at its close instead of now, the stock's bars and the benchmark cover them, and the Research card says so. An analysis still uses 3 or 5 Twelve Data requests.
 
 ## Project structure
 

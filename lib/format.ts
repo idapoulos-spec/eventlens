@@ -59,3 +59,13 @@ export function formatDateTime(ms: number, { withYear = false } = {}): string {
     timeZoneName: "short",
   }).format(ms);
 }
+
+/** A New York calendar date with its year, e.g. "Sep 27, 2026". */
+export function formatDate(ms: number): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone: DISPLAY_TIME_ZONE, year: "numeric", month: "short", day: "numeric" }).format(ms);
+}
+
+/** A New York time of day, e.g. "1:00 PM". */
+export function formatTime(ms: number): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone: DISPLAY_TIME_ZONE, hour: "numeric", minute: "2-digit" }).format(ms);
+}
