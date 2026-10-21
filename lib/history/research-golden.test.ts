@@ -18,6 +18,10 @@ import { eventLongRows, eventResearchRows, lastRows, marketLongRows, marketResea
 import { seedCandles, seedCoverage, seedMarket, seedRun } from "./test-fixtures";
 import { HOUR_MS, stubWorld, worldEvent, worldMarket, type WorldMarket } from "./test-world";
 
+// Each test runs the loaders and every window's statistics twice (3–5 s on a laptop), so a slower CI
+// runner can pass Vitest's default 5 s limit.
+vi.setConfig({ testTimeout: 60_000 });
+
 vi.mock("server-only", () => ({}));
 const appSql = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/store/db", () => ({ getAppSql: appSql }));
