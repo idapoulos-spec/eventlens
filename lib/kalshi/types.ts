@@ -71,6 +71,9 @@ export interface RawMarket {
   yes_ask_dollars?: string | null;
   last_price_dollars?: string | null;
   volume_24h_fp?: string | null;
+  /** Lifetime volume (contracts, fixed-point), and the older integer field it replaced. */
+  volume_fp?: string | null;
+  volume?: number | null;
   open_interest_fp?: string | null;
   close_time?: string | null;
   open_time?: string | null;
