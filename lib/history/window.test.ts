@@ -13,7 +13,10 @@ import {
   STOCK_HISTORY_MS,
   stockHistoryStart,
   windowFor,
+  windowPlan,
 } from "./window";
+import { fail, ok } from "@/lib/result";
+import type { LongRows } from "./rows";
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -118,5 +121,32 @@ describe("provenanceNote", () => {
     expect(provenanceNote({ storedThrough: through, liveFrom: null, liveFailed: true })).toBe(
       "Kalshi research history stored through Oct 7, 2026, 12:00 PM EDT; later candles couldn't be loaded.",
     );
+  });
+});
+
+describe("windowPlan", () => {
+  const AS_OF = Date.UTC(2026, 9, 7, 20);
+  const long = (start: number): LongRows => ({ hourly: [], daily: [], start });
+
+  it("reads the loaded 90 days for 7, 30, and 90 days, whatever the longer rows are doing", () => {
+    for (const days of [7, 30, 90] as const) {
+      expect(windowPlan(days, null, AS_OF)).toEqual({ kind: "loaded", days, sameAs90: false });
+    }
+  });
+
+  it("waits for the longer rows, and passes on their failure", () => {
+    expect(windowPlan(180, null, AS_OF)).toEqual({ kind: "waiting" });
+    expect(windowPlan("all", fail("unavailable", "No luck."), AS_OF)).toEqual({ kind: "failed", message: "No luck." });
+  });
+
+  it("is the 90-day window when the market is no older than that", () => {
+    expect(windowPlan(365, ok(null), AS_OF)).toEqual({ kind: "loaded", days: 90, sameAs90: true });
+    expect(windowPlan("all", ok(long(AS_OF - 60 * DAY)), AS_OF)).toEqual({ kind: "loaded", days: 90, sameAs90: true });
+  });
+
+  it("reads the longer rows from the window's start, or from the beginning for All", () => {
+    const rows = long(AS_OF - 400 * DAY);
+    expect(windowPlan(180, ok(rows), AS_OF)).toEqual({ kind: "long", rows, from: AS_OF - 180 * DAY });
+    expect(windowPlan("all", ok(rows), AS_OF)).toEqual({ kind: "long", rows, from: -Infinity });
   });
 });

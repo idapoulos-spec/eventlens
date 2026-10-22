@@ -7,6 +7,7 @@ import { formatDateTime } from "@/lib/format";
 import { sessionClosePoints } from "@/lib/market-data/session";
 import type { StockBar } from "@/lib/market-data/types";
 import { fail, ok, type Result } from "@/lib/result";
+import type { LongRows } from "./rows";
 import type { FoundMarket, Provenance, ResearchWindow } from "./types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -77,6 +78,31 @@ export function researchStockPoints({
   const closes = sessionClosePoints(daily, halfHourly);
   if (end === null) return { hourly, daily: closes };
   return { hourly: hourly.filter((p) => p.t <= end), daily: closes.filter((p) => p.t <= end) };
+}
+
+// ---- Research's windows: which rows each one reads (the panel and the scan share this) ----
+
+export const WINDOWS = [7, 30, 90, 180, 365, "all"] as const;
+export type WindowChoice = (typeof WINDOWS)[number];
+export const WINDOW_LABEL: Record<WindowChoice, string> = { 7: "7D", 30: "30D", 90: "90D", 180: "180D", 365: "1Y", all: "All" };
+/** Windows past the 90 days the page loads with: their rows stream in after it, and they're computed in the background. */
+export const isLongWindow = (w: WindowChoice) => w === "all" || w > 90;
+
+/** How a window is computed: from the rows the page loaded with, in the background from the longer rows, or not yet. */
+export type WindowPlan =
+  | { kind: "loaded"; days: number; /** A longer window that's no longer than 90 days for this market. */ sameAs90: boolean }
+  | { kind: "long"; rows: LongRows; from: number }
+  | { kind: "waiting" }
+  | { kind: "failed"; message: string };
+
+export function windowPlan(choice: WindowChoice, long: Result<LongRows | null> | null, asOf: number): WindowPlan {
+  if (!isLongWindow(choice)) return { kind: "loaded", days: choice as number, sameAs90: false };
+  if (long === null) return { kind: "waiting" };
+  if (!long.ok) return { kind: "failed", message: long.error.message };
+  if (long.data === null) return { kind: "loaded", days: 90, sameAs90: true };
+  const from = choice === "all" ? -Infinity : asOf - choice * DAY_MS;
+  if (Math.max(from, long.data.start) >= asOf - RESEARCH_WINDOW_MS) return { kind: "loaded", days: 90, sameAs90: true };
+  return { kind: "long", rows: long.data, from };
 }
 
 // ---- /api/benchmark?symbol=QQQ&end=… : a benchmark for a window that ends in the past ----
