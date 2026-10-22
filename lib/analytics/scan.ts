@@ -87,19 +87,34 @@ function prepare({ full, from, scale, closes }: ScanInput): Prepared {
   return { closesByT, changes, model, abnormal };
 }
 
-/** One candidate's test, a bootstrap at a time; drained, it's the same as scanCandidate. */
-export function* scanCandidateSteps(input: ScanInput, options: RefineOptions = {}): Generator<void, ScanTest> {
+/** The first stage: the primary test exactly as the candidate's page computes it, and the frame to refine it with when due. */
+export interface FirstStage {
+  primary: TestResult | null;
+  fragility: Fragility | null;
+  /** The primary test's frame, when its p is under SCAN_REFINE_BELOW. */
+  refine: Frame | null;
+}
+
+/** The first stage for one candidate (one bootstrap). Simulations skip the fragility diagnostics, which no decision uses. */
+export function scanFirstStage(input: ScanInput, { withFragility = true }: { withFragility?: boolean } = {}): FirstStage {
   const { model, abnormal } = prepare(input);
   const primary = model && abnormal ? primaryTest(abnormal, model, input.resolution) : null;
-  if (primary?.p == null || !model || !abnormal) return { primary, fragility: null, refined: null, p: null };
-  const frag = fragility(abnormal, model, input.resolution);
+  if (primary?.p == null || !model || !abnormal) return { primary, fragility: null, refine: null };
+  return {
+    primary,
+    fragility: withFragility ? fragility(abnormal, model, input.resolution) : null,
+    refine: primary.p < SCAN_REFINE_BELOW ? (primaryFrame(abnormal, input.resolution, model.sample)?.f ?? null) : null,
+  };
+}
+
+/** One candidate's test, a bootstrap (or a chunk of the finer p's draws) at a time. */
+export function* scanCandidateSteps(input: ScanInput, options: RefineOptions = {}): Generator<void, ScanTest> {
+  const { primary, fragility: frag, refine } = scanFirstStage(input);
+  if (primary?.p == null) return { primary, fragility: null, refined: null, p: null };
   let refined: RefinedP | null = null;
-  if (primary.p < SCAN_REFINE_BELOW) {
-    const pf = primaryFrame(abnormal, input.resolution, model.sample);
-    if (pf) {
-      yield;
-      refined = yield* refineSteps(pf.f, options);
-    }
+  if (refine) {
+    yield;
+    refined = yield* refineSteps(refine, options);
   }
   return { primary, fragility: frag, refined, p: refined ? refined.p : primary.p };
 }
