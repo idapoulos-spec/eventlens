@@ -36,7 +36,7 @@ import {
 } from "@/lib/analytics/panel";
 import type { PanelJob, PanelMessage } from "@/lib/analytics/panel-jobs";
 import type { LongRows } from "@/lib/history/rows";
-import { WINDOW_LABEL, WINDOWS, windowPlan, type WindowChoice, type WindowPlan } from "@/lib/history/window";
+import { WINDOW_LABEL, WINDOWS, windowPlan, type ResearchView, type WindowChoice, type WindowPlan } from "@/lib/history/window";
 import { formatDate, formatDateTime, formatShortDate, formatSigned, formatTime } from "@/lib/format";
 import type { BenchmarkSeries } from "@/lib/market-data/types";
 import { fail, type Result } from "@/lib/result";
@@ -130,6 +130,8 @@ interface Props {
   long: Promise<Result<LongRows | null>>;
   /** When the market (an event's first outcome) opened, ms, if known: no window reaches further back. */
   opened: number | null;
+  /** Where the panel opens when the link says (a scan result's window and resolution); otherwise 90D, hourly. */
+  initialView?: ResearchView;
 }
 
 /** How the market-adjusted view was adjusted, for its captions. */
@@ -170,11 +172,11 @@ function timed<T>(name: string, compute: () => T): T {
   return value;
 }
 
-export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kalshiTicker, variable, initialBenchmark, long: longRows, opened }: Props) {
+export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kalshiTicker, variable, initialBenchmark, long: longRows, opened, initialView }: Props) {
   // 90 days by default: with 30 days of hourly data the power tests (correlation-test.test.ts)
   // miss a correlation of about 0.4 roughly half the time.
-  const [choice, setChoice] = useState<WindowChoice>(90);
-  const [chosenResolution, setResolution] = useState<Resolution>("hourly");
+  const [choice, setChoice] = useState<WindowChoice>(initialView?.window ?? 90);
+  const [chosenResolution, setResolution] = useState<Resolution>(initialView?.resolution ?? "hourly");
   const [thresholds, setThresholds] = useState<Record<Resolution, number>>(variable.defaultThreshold);
   // Market-adjusted by default, since the primary test always is; raw when adjustment isn't possible.
   const [chosenReturns, setReturns] = useState<Returns>("adjusted");

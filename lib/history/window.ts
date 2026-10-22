@@ -88,6 +88,21 @@ export const WINDOW_LABEL: Record<WindowChoice, string> = { 7: "7D", 30: "30D", 
 /** Windows past the 90 days the page loads with: their rows stream in after it, and they're computed in the background. */
 export const isLongWindow = (w: WindowChoice) => w === "all" || w > 90;
 
+/** The window and resolution Research opens at, from a link (a scan result's): null for the default (90D, hourly). */
+export interface ResearchView {
+  window: WindowChoice | null;
+  resolution: "hourly" | "daily" | null;
+}
+
+export const WINDOW_PARAM = "window";
+export const RESOLUTION_PARAM = "res";
+
+/** A link's `window` (7, 30, 90, 180, 365, or all) and `res` (hourly or daily); anything else is the default. */
+export function parseResearchView(window: string | null | undefined, resolution: string | null | undefined): ResearchView {
+  const choice = WINDOWS.find((w) => String(w) === window) ?? null;
+  return { window: choice, resolution: resolution === "hourly" || resolution === "daily" ? resolution : null };
+}
+
 /** How a window is computed: from the rows the page loaded with, in the background from the longer rows, or not yet. */
 export type WindowPlan =
   | { kind: "loaded"; days: number; /** A longer window that's no longer than 90 days for this market. */ sameAs90: boolean }

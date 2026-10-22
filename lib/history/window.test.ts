@@ -12,6 +12,7 @@ import {
   researchStockPoints,
   STOCK_HISTORY_MS,
   stockHistoryStart,
+  parseResearchView,
   windowFor,
   windowPlan,
 } from "./window";
@@ -148,5 +149,19 @@ describe("windowPlan", () => {
     const rows = long(AS_OF - 400 * DAY);
     expect(windowPlan(180, ok(rows), AS_OF)).toEqual({ kind: "long", rows, from: AS_OF - 180 * DAY });
     expect(windowPlan("all", ok(rows), AS_OF)).toEqual({ kind: "long", rows, from: -Infinity });
+  });
+});
+
+describe("parseResearchView", () => {
+  it("reads a link's window and resolution", () => {
+    expect(parseResearchView("365", "daily")).toEqual({ window: 365, resolution: "daily" });
+    expect(parseResearchView("all", "hourly")).toEqual({ window: "all", resolution: "hourly" });
+    expect(parseResearchView("7", undefined)).toEqual({ window: 7, resolution: null });
+  });
+
+  it("leaves anything else to the defaults, so a page without them opens as it always has", () => {
+    expect(parseResearchView(undefined, undefined)).toEqual({ window: null, resolution: null });
+    expect(parseResearchView("45", "weekly")).toEqual({ window: null, resolution: null });
+    expect(parseResearchView("90 ", "Daily")).toEqual({ window: null, resolution: null });
   });
 });

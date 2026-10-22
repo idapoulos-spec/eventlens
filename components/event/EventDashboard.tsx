@@ -4,7 +4,7 @@ import { loadEventAnalysis } from "@/lib/expected/load";
 import type { EventAnalysis } from "@/lib/expected/types";
 import { formatDateTime } from "@/lib/format";
 import { eventLongRows, eventResearchRows, lastRows, rowsOverlap, type LongRows } from "@/lib/history/rows";
-import { provenanceNote, STOCK_HISTORY_MS } from "@/lib/history/window";
+import { provenanceNote, STOCK_HISTORY_MS, type ResearchView } from "@/lib/history/window";
 import type { LongMarks } from "@/lib/expected/load";
 import { benchmarkFrom } from "@/lib/market-data/benchmark-series";
 import type { StockAnalysis } from "@/lib/market-data";
@@ -33,7 +33,7 @@ const upperFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
  * single-market Dashboard; each section waits only for the data it needs. Research and the stock's
  * history end at the event's first close once it has passed.
  */
-export function EventDashboard({ stock, kalshi }: { stock: string; kalshi: string }) {
+export function EventDashboard({ stock, kalshi, view }: { stock: string; kalshi: string; view?: ResearchView }) {
   const { event, stockData, benchmarkData, long } = loadEventAnalysis(stock, kalshi);
 
   return (
@@ -67,7 +67,7 @@ export function EventDashboard({ stock, kalshi }: { stock: string; kalshi: strin
           </ResearchCard>
         }
       >
-        <EventResearch eventData={event} stockData={stockData} benchmarkData={benchmarkData} longData={long} stock={stock} kalshi={kalshi} />
+        <EventResearch eventData={event} stockData={stockData} benchmarkData={benchmarkData} longData={long} stock={stock} kalshi={kalshi} view={view} />
       </Suspense>
 
       <Suspense fallback={null}>
@@ -220,6 +220,7 @@ async function EventResearch({
   longData,
   stock,
   kalshi,
+  view,
 }: {
   eventData: EventResult;
   stockData: StockResult;
@@ -228,6 +229,8 @@ async function EventResearch({
   longData: Promise<Result<LongMarks | null>>;
   stock: string;
   kalshi: string;
+  /** Where the panel opens, from the link. */
+  view?: ResearchView;
 }) {
   const [e, s, b] = await Promise.all([eventData, stockData, benchmarkData]);
   const end = s.ok ? s.data.research.end : null;
@@ -265,6 +268,7 @@ async function EventResearch({
         initialBenchmark={b?.ok ? ok(benchmarkFrom(b.data, Math.min(s.data.research.longStart, asOf - STOCK_HISTORY_MS))) : b}
         long={long}
         opened={event.window.start}
+        initialView={view}
       />
       <p className="text-xs text-ink-muted">{definitionText(event)} Each Research row reads E at its own hour; an interval whose open outcomes changed between its ends is left out.</p>
     </div>

@@ -1,13 +1,18 @@
 // URLs of an analysis (a stock compared with a Kalshi market) and what submitting one does.
 
+import { RESOLUTION_PARAM, WINDOW_PARAM, type ResearchView } from "@/lib/history/window";
+
 export interface Analysis {
   stock: string;
   kalshi: string;
 }
 
-/** The home page URL that loads an analysis; tickers must already be validated. */
-export function analysisHref({ stock, kalshi }: Analysis): string {
-  return `/?${new URLSearchParams({ stock, kalshi })}`;
+/** The home page URL that loads an analysis; tickers must already be validated. With `view`, Research opens at that window and resolution. */
+export function analysisHref({ stock, kalshi }: Analysis, view?: Partial<ResearchView>): string {
+  const params = new URLSearchParams({ stock, kalshi });
+  if (view?.window != null) params.set(WINDOW_PARAM, String(view.window));
+  if (view?.resolution != null) params.set(RESOLUTION_PARAM, view.resolution);
+  return `/?${params}`;
 }
 
 export function sameAnalysis(a: Analysis, b: Analysis): boolean {

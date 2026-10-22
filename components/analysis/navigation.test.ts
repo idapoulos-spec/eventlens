@@ -12,6 +12,12 @@ describe("analysisHref", () => {
   it("encodes characters that are special in a query string", () => {
     expect(analysisHref({ stock: "BRK.B", kalshi: "KXA&B=C" })).toBe("/?stock=BRK.B&kalshi=KXA%26B%3DC");
   });
+
+  it("adds where Research opens only when given (a scan result's link)", () => {
+    expect(analysisHref(NVDA, { window: 365, resolution: "daily" })).toBe("/?stock=NVDA&kalshi=KXFEDDECISION-26OCT-H25&window=365&res=daily");
+    expect(analysisHref(NVDA, { window: "all", resolution: null })).toBe("/?stock=NVDA&kalshi=KXFEDDECISION-26OCT-H25&window=all");
+    expect(analysisHref(NVDA, { window: null, resolution: null })).toBe(analysisHref(NVDA));
+  });
 });
 
 describe("sameAnalysis", () => {

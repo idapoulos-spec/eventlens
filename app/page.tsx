@@ -12,6 +12,7 @@ import { Notice } from "@/components/ui";
 import { ANALYSIS_LIMIT_SUMMARY, checkAnalysisRateLimit } from "@/lib/analysis-rate-limit";
 import { isAccessGateOn, requirePageSession } from "@/lib/auth/server";
 import { supportedEvent } from "@/lib/expected/series";
+import { parseResearchView, RESOLUTION_PARAM, WINDOW_PARAM } from "@/lib/history/window";
 import { formatWait } from "@/lib/format";
 import { validateKalshiTicker, validateStockTicker } from "@/lib/validation";
 
@@ -42,6 +43,8 @@ function readQuery(params: Awaited<PageProps<"/">["searchParams"]>) {
     hasQuery: rawStock !== undefined || rawKalshi !== undefined,
     stock: validateStockTicker(rawStock),
     kalshi: validateKalshiTicker(rawKalshi),
+    // Optional: where Research opens (a scan result links to its window and resolution).
+    view: parseResearchView(first(params[WINDOW_PARAM]), first(params[RESOLUTION_PARAM])),
   };
 }
 
@@ -59,7 +62,7 @@ export async function generateMetadata({ searchParams }: PageProps<"/">): Promis
 
 export default async function Home({ searchParams }: PageProps<"/">) {
   await requirePageSession();
-  const { rawStock, rawKalshi, hasQuery, stock, kalshi } = readQuery(await searchParams);
+  const { rawStock, rawKalshi, hasQuery, stock, kalshi, view: researchView } = readQuery(await searchParams);
   // Only valid analyses reach the upstream APIs, so only they count against the limit.
   const rateLimit = stock.ok && kalshi.ok ? await checkAnalysisRateLimit() : { ok: true as const };
   const analysis = stock.ok && kalshi.ok && rateLimit.ok ? { stock: stock.value, kalshi: kalshi.value } : null;
@@ -108,9 +111,9 @@ export default async function Home({ searchParams }: PageProps<"/">) {
             >
               <ResultsBar stock={stock.value} kalshi={kalshi.value} />
               {supportedEvent(kalshi.value) ? (
-                <EventDashboard stock={stock.value} kalshi={kalshi.value} />
+                <EventDashboard stock={stock.value} kalshi={kalshi.value} view={researchView} />
               ) : (
-                <Dashboard stock={stock.value} kalshi={kalshi.value} />
+                <Dashboard stock={stock.value} kalshi={kalshi.value} view={researchView} />
               )}
             </div>
           )}
