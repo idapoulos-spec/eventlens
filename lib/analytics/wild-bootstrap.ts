@@ -269,8 +269,8 @@ export function wildDraws(f: Frame, weights: Float64Array[]): Float64Array {
   return out;
 }
 
-/** Wild bootstrap p-value for θ = θ₀: the share of draws at least as extreme as the data. */
-export function wildP(f: Frame, draws: Float64Array, theta0: number): number {
+/** Of the draws whose t is defined (`valid`), how many are at least as extreme as the data at θ = θ₀ (`exceed`). */
+export function wildExceedances(f: Frame, draws: Float64Array, theta0: number): { exceed: number; valid: number } {
   const observed = (Math.abs(f.slope - theta0) * f.sxx) / Math.sqrt(f.s);
   const g = theta0 / f.kappa;
   let exceed = 0;
@@ -282,6 +282,12 @@ export function wildP(f: Frame, draws: Float64Array, theta0: number): number {
     // A hair of tolerance, so a draw that reproduces the data counts as at least as extreme.
     if (Math.abs(draws[d] - g * draws[d + 1]) / Math.sqrt(v) >= observed * (1 - 1e-12)) exceed++;
   }
+  return { exceed, valid };
+}
+
+/** Wild bootstrap p-value for θ = θ₀: the share of draws at least as extreme as the data. */
+export function wildP(f: Frame, draws: Float64Array, theta0: number): number {
+  const { exceed, valid } = wildExceedances(f, draws, theta0);
   return (1 + exceed) / (1 + valid);
 }
 
