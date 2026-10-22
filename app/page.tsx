@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { AnalysisFlow, AnalysisResults } from "@/components/analysis/AnalysisFlow";
 import { CopyLinkButton } from "@/components/analysis/CopyLinkButton";
 import { analysisHref, type Analysis } from "@/components/analysis/navigation";
@@ -81,7 +82,12 @@ export default async function Home({ searchParams }: PageProps<"/">) {
               Compare Kalshi prediction-market probabilities with stock-market data.
             </p>
           </div>
-          {isAccessGateOn() && <SignOutButton />}
+          <div className="flex shrink-0 items-center gap-3">
+            <Link href={analysis ? `/scan?${new URLSearchParams({ stock: analysis.stock })}` : "/scan"} className="text-sm text-ink-secondary hover:text-ink">
+              Scan many events
+            </Link>
+            {isAccessGateOn() && <SignOutButton />}
+          </div>
         </header>
 
         <div className="mb-5 rounded-xl border border-border bg-surface p-4 sm:mb-6 sm:p-5">

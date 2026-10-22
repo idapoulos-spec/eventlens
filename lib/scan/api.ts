@@ -35,6 +35,16 @@ export function upstreamError({ code, message }: { code: string; message: string
   return scanError(status, code, message, status === 503 ? { "Retry-After": "2" } : undefined);
 }
 
+/**
+ * Twelve Data's free plan allows 8 requests a minute (the calendar minute) for every user of the
+ * key together, and requests it turns away count toward it too, so trying again sooner only wastes
+ * them: 429, to retry 2 s into the next minute.
+ */
+export function perMinuteLimit(message: string, now: number): Response {
+  const wait = Math.ceil((60_000 - (now % 60_000)) / 1000) + 2;
+  return scanError(429, "upstream_rate_limited", message, { "Retry-After": String(wait) });
+}
+
 /** Statuses the page tries again (after a pause): the upstream API was busy or slow. */
 export const RETRY_STATUSES = new Set([429, 503, 504]);
 

@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { checkAnalysisRateLimit, ANALYSIS_LIMIT_SUMMARY } from "@/lib/analysis-rate-limit";
 import { rejectUnlessSignedIn } from "@/lib/auth/session";
 import { DEFAULT_BENCHMARK } from "@/lib/market-data/benchmark-series";
-import { parseSpan, scanError, upstreamError } from "@/lib/scan/api";
+import { parseSpan, perMinuteLimit, scanError, upstreamError } from "@/lib/scan/api";
 import { getScanPrices } from "@/lib/scan/prices";
 import { validateStockTicker } from "@/lib/validation";
 
@@ -34,6 +34,7 @@ export async function GET(request: NextRequest) {
   }
 
   const prices = await getScanPrices(stock.value, span.value);
+  if (!prices.ok && prices.error.code === "rate_limited") return perMinuteLimit(prices.error.message, Date.now());
   if (!prices.ok) return upstreamError(prices.error);
   return Response.json(prices.data);
 }
