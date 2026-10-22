@@ -23,10 +23,12 @@ export interface ScanCandidate {
   /** For a market: its outcome label (e.g. "Above 3.5%"). */
   label: string | null;
   /**
-   * The market stands in for an event with several outcomes and no expected value: the outcome
-   * with the highest lifetime volume, picked from the listing before any stock data loads.
+   * The market stands in for an event with several outcomes and no expected value, picked from the
+   * listing before any stock data loads: while the event is open, its open outcome with the highest
+   * lifetime volume (`open` is how many open outcomes there were); once all have closed, its outcome
+   * with the highest lifetime volume (`open` is null). `outcomes` counts every outcome listed.
    */
-  picked: { outcomes: number } | null;
+  picked: { outcomes: number; open: number | null } | null;
   /** Research ends here (ms): its close, once that has passed; null while it's open (Research ends now). */
   end: number | null;
   /** When it opened (ms; an event's first outcome), or null if unknown: no window reaches further back. */

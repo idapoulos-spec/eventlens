@@ -209,7 +209,7 @@ function CandidatePreview({ list }: { list: CandidateList }) {
     <div className="text-sm text-ink-secondary">
       <p>
         {list.candidates.length} {list.candidates.length === 1 ? "candidate" : "candidates"}: {list.candidates.filter((c) => c.kind === "event").length} whole events (expected value),{" "}
-        {list.candidates.filter((c) => c.kind === "market").length} markets{picked > 0 ? ` (${picked} standing in for an event with several outcomes: its outcome with the highest lifetime volume, picked from the listing before any stock data loads)` : ""}.
+        {list.candidates.filter((c) => c.kind === "market").length} markets{picked > 0 ? ` (${picked} standing in for an event with several outcomes: its outcome with the highest lifetime volume, among its open outcomes while the event is open, picked from the listing before any stock data loads)` : ""}.
         {list.truncated && ` Only the first ${MAX_SCAN_CANDIDATES} are kept.`}
       </p>
       <details className="mt-2 text-xs">
@@ -347,7 +347,7 @@ function ScanTable({ snap, candidates, stock, choice, resolution, order }: { sna
                   <span className="block font-mono text-[0.7rem] text-ink-muted">
                     {c.ticker}
                     {c.kind === "event" ? " · expected value" : c.label ? ` · ${c.label}` : ""}
-                    {c.picked ? ` · most-traded of ${c.picked.outcomes}` : ""}
+                    {c.picked ? (c.picked.open !== null ? ` · most-traded of ${c.picked.open} open (${c.picked.outcomes} in all)` : ` · most-traded of ${c.picked.outcomes}`) : ""}
                     {c.end !== null ? ` · ended ${formatDate(c.end)}` : ""}
                     {state.sameAs90 ? " · same as 90D" : ""}
                   </span>

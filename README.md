@@ -468,7 +468,16 @@ A single outcome market of a multi-outcome event has an ambiguous sign: a rising
 - **every stored event**, settled ones included (from the data store);
 - **a custom list**: tickers pasted, or added from search; events or markets, settled ones too.
 
-There's **one test per event**, since the outcomes of one event are near-duplicates. A Fed decision event is tested on its expected value E(t), and an event with a single market on that market. Any other event with several outcomes is tested on its outcome with the highest lifetime volume. That outcome is picked from the listing before any stock data loads, and the page names it. A custom list can still name specific outcome markets; the page then groups them and says they're correlated. A scan holds at most 200 candidates.
+There's **one test per event**, since the outcomes of one event are near-duplicates. A Fed decision event is tested on its expected value E(t), and an event with a single market on that market.
+
+Any other event with several outcomes is tested on one of them:
+
+- **While the event is open:** its open outcome with the highest lifetime volume. An open outcome is one listed as trading whose close hasn't passed.
+- **Once every outcome has closed:** its outcome with the highest lifetime volume.
+
+The outcome is picked from the listing before any stock data loads, and the page names it ("most-traded of 2 open (5 in all)"). A custom list can still name specific outcome markets; the page then groups them and says they're correlated. A scan holds at most 200 candidates.
+
+Changed on 2026-10-22: picking among every outcome could test an open event on an outcome that had already closed. In the live check, an NVIDIA release-date event was tested on its "before Oct 2026" outcome, closed on Sep 30.
 
 **The test.** Each candidate gets exactly the primary test its own page runs:
 
@@ -578,6 +587,7 @@ Live, on the production build in headless Chrome (2026-10-22), with TLT, the dat
 | 100 open Economics and Financials events, 90D daily | 100 (37 tested) | 4 | 1.1 s | 31.4 s | 32 ms | 0 |
 
 - **Kalshi dominates the time.** Loads averaged 0.5 s per stored candidate and 0.8–1.0 s per live one; one took 8.2 s.
+- **The 100-event runs predate the change to picking.** Both ran on 2026-10-22 under the earlier rule (highest volume among every outcome), so a few open events were tested on outcomes that had already closed.
 - **Many short-lived markets can't be tested.** The 100 events were chosen by a rule fixed before any result: open, in those two categories, earliest close first. Their reasons, on a rerun that listed 95: too few intervals with both prices (31), no Kalshi history in the window (21), no overlap (3), fewer than 8 sessions (2), unstable (1).
 - **Listing a custom list of 100 tickers took 14 s.** Each ticker is looked up on Kalshi.
 

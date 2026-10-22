@@ -7,14 +7,18 @@ import { LIVE } from "@/lib/fetch-cache";
 import { findKalshiMarket } from "@/lib/history/market";
 import { readStore, storeOn } from "@/lib/history/store";
 import { describeKalshiError, kalshiGet, toNumber } from "@/lib/kalshi/client";
+import { marketPhase } from "@/lib/kalshi/status";
 import type { RawEvent, RawEventsPage, RawMarket } from "@/lib/kalshi/types";
 import { fail, ok, type Result } from "@/lib/result";
 import { readStoredMarkets, readStoredTickers } from "./store";
 import type { ScanCandidate } from "./types";
 
 // A scan's candidates: one per event. A Fed decision event is tested on its expected value; an
-// event with one market on that market; any other event with several outcomes on the outcome with
-// the highest lifetime volume, picked here from the listing, before any stock data is loaded.
+// event with one market on that market; any other event with several outcomes on one of them,
+// picked here from the listing, before any stock data is loaded: while the event is still open,
+// the open outcome with the highest lifetime volume; once every outcome has closed, the outcome
+// with the highest lifetime volume (changed 2026-10-22: an open event's most-traded outcome could
+// be one that had already closed).
 
 /** Pages of open events read for one series: 200 events each. */
 const MAX_EVENT_PAGES = 5;
@@ -44,6 +48,22 @@ export function pickOutcome(markets: RawMarket[]): RawMarket {
   return [...markets].sort((a, b) => lifetimeVolume(b) - lifetimeVolume(a) || (a.ticker < b.ticker ? -1 : 1))[0];
 }
 
+/** Still trading, as listed: an open status (marketPhase) and a close that hasn't passed. */
+export function isOpenOutcome(m: RawMarket, now: number): boolean {
+  const close = time(m.close_time);
+  return marketPhase(m.status ?? "") === "open" && (close === null || close > now);
+}
+
+/**
+ * The outcome a multi-outcome event without an expected value is tested on: while any outcome is
+ * open, the open one with the highest lifetime volume; once all have closed, the one with the
+ * highest lifetime volume. `open` is how many open outcomes it was picked from, or null once all had closed.
+ */
+export function pickEventOutcome(markets: RawMarket[], now: number): { market: RawMarket; open: number | null } {
+  const open = markets.filter((m) => isOpenOutcome(m, now));
+  return open.length > 0 ? { market: pickOutcome(open), open: open.length } : { market: pickOutcome(markets), open: null };
+}
+
 /**
  * One event's candidate, from its markets as listed. Windows end where its page's would: an
  * event's at its first close, a market's at its close (with the store on; without it, now), once passed.
@@ -68,8 +88,9 @@ export function eventCandidate(event: { ticker: string; series: string | null; t
       stored,
     });
   }
-  const market = markets.length === 1 ? markets[0] : pickOutcome(markets);
-  return ok(marketCandidate(market, { series, title: event.title, picked: markets.length > 1 ? { outcomes: markets.length } : null, stored }, now, store));
+  if (markets.length === 1) return ok(marketCandidate(markets[0], { series, title: event.title, picked: null, stored }, now, store));
+  const { market, open } = pickEventOutcome(markets, now);
+  return ok(marketCandidate(market, { series, title: event.title, picked: { outcomes: markets.length, open }, stored }, now, store));
 }
 
 function marketCandidate(m: RawMarket, extra: Pick<ScanCandidate, "series" | "title" | "picked" | "stored">, now: number, store: boolean): ScanCandidate {
