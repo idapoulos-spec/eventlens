@@ -18,7 +18,7 @@ import { lastSessions, simulateDaily, simulateHourly, simulateMarketRows, simula
 // Figures quoted in the README come from these runs.
 
 // Simulations run hundreds of analyses; allow for slow CI machines.
-const SIMULATION_TIMEOUT = 600_000;
+const SIMULATION_TIMEOUT = 1_800_000;
 const DRAWS = 199;
 const LENGTHS = [124, 252, 372] as const;
 

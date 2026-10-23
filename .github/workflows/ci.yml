@@ -48,12 +48,13 @@ jobs:
       - run: pnpm build
 
   # The slow simulations (pnpm test:sim, files named *.sim.test.ts): calibration at Research's longer
-  # windows and how often the fragile warning fires. Several minutes, so they run alongside the job
-  # above rather than in it, with their own limit.
+  # windows, how often the fragile warning fires, and the scan's validation. Two files at a time
+  # (vitest.sim.config.mts) for about half an hour, so they run alongside the job above rather than
+  # in it, with their own limit and room to spare.
   simulations:
     name: Simulations
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 

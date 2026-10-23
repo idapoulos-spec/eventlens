@@ -80,7 +80,7 @@ The dev server only listens on `127.0.0.1`, so other devices on your network can
 ```bash
 pnpm lint    # ESLint
 pnpm test    # unit tests (Vitest), without the slow simulations
-pnpm test:sim  # the slow simulations: calibration at the longer windows, the fragile warning's rates, and scans (about 15 minutes)
+pnpm test:sim  # the slow simulations: calibration at the longer windows, the fragile warning's rates, and scans (two files at a time; about half an hour)
 pnpm build   # production build (includes type checking)
 pnpm start   # serve the production build (needs ACCESS_PASSWORD and AUTH_SECRET)
 ```
@@ -559,7 +559,9 @@ Each figure has its count in brackets, ± one Monte Carlo standard error, and a 
 
 - **Every setting passed.** With independent candidates, both corrections keep false leads near 5% (3.0–5.2%). With correlated ones they are conservative (1.0–2.8%), as Holm and BH are under positive dependence. That's why the correlated settings have no lower bar.
 - **Read one by one, a scan almost always shows something by chance.** Without correction, scans with at least one p under 0.05 run to 43%, 73%, and 99% for 10, 30, and 100 independent candidates.
-- **Each candidate's own test stays calibrated in these designs.** Its first p was under 0.05 for 4.1–5.6% of candidates. The highest was 10 independent: 5.6% (223 of 4,000) ± 0.4. The test fails at 7.5%.
+- **Each candidate's own test stays calibrated in these designs.** Its first p was under 0.05 for 4.6% of all candidates (4,253 of 92,000), and 4.1–5.6% per setting. The highest was 10 independent: 5.6% (223 of 4,000). The test fails at 7.5%.
+  - No standard error or range is given for these rates. The usual ones (about ± 0.4 for 223 of 4,000) treat every candidate as independent. They aren't: candidates in a scan share the stock, and correlated ones also move together. So those ranges would understate the uncertainty.
+  - The scan-level rates in the table don't have this problem: each scan counts once.
 - **The price of scanning (descriptive, no bar).** One candidate of 30 moves the stock, by 0.3% per pp in the same hour; 200 scans.
   - Its own page finds it (p < 0.05) in 99.0% (198).
   - The scan ranks it first in 98.5% (197). It survives Holm and BH in 95.5% (191) ± 1.5, range 91.7–97.6%.

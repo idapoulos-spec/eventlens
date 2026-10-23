@@ -8,7 +8,7 @@ import { lastSessions, simulateMarketRows, type MarketSimOptions } from "./test-
 // alongside long-windows.sim.test.ts; both run with `pnpm test:sim`). Seeds 600,000–689,199, fresh when first run; figures in the README.
 
 // Simulations run hundreds of analyses; allow for slow CI machines.
-const SIMULATION_TIMEOUT = 600_000;
+const SIMULATION_TIMEOUT = 1_800_000;
 const DRAWS = 199;
 const seeds = (first: number, count: number) => Array.from({ length: count }, (_, i) => first + i);
 const hourly = { resolution: "hourly", sharedVolatility: true, kalshiInMarket: 0.1 } as const;
