@@ -10,6 +10,8 @@ Pick a stock or ETF (search by ticker or name, e.g. `NVDA` or "nvidia") and a Ka
 - **Whole events:** for a Fed decision event ticker (`KXFEDDECISION-26OCT`), the expected rate change across every outcome instead of one market's probability; see [Event analysis](#event-analysis)
 - **Research:** how Kalshi probability changes relate to stock returns over 7, 30, 90, or 180 days, a year, or the market's whole life (up to 540 days; hourly or daily; 90 days hourly by default): lead-lag correlation, rolling correlation, and an event study around Kalshi jumps, on raw or market-adjusted returns (net of SPY or another benchmark), with significance tests built for this data (one primary test, with diagnostics of how much it rests on a few hours or sessions; p-values and 95% intervals for every lag and event-study bar; Holm and Benjamini–Hochberg corrections), sample sizes, caveats, and a CSV export of the aligned data
 
+- **Scan:** one stock against many Kalshi events at once (a series, every stored event, or a list), the same primary test on each, ranked with Holm and Benjamini–Hochberg corrections across the whole scan, as exploratory leads; see [Scan](#scan)
+
 > Experimental market-research tool. Metrics are informational and are not investment recommendations.
 
 The site is private: visitors sign in with an access password (see [Access](#access)).
@@ -78,7 +80,7 @@ The dev server only listens on `127.0.0.1`, so other devices on your network can
 ```bash
 pnpm lint    # ESLint
 pnpm test    # unit tests (Vitest), without the slow simulations
-pnpm test:sim  # the slow simulations: calibration at the longer windows and the fragile warning's rates (several minutes)
+pnpm test:sim  # the slow simulations: calibration at the longer windows, the fragile warning's rates, and scans (two files at a time; about half an hour)
 pnpm build   # production build (includes type checking)
 pnpm start   # serve the production build (needs ACCESS_PASSWORD and AUTH_SECRET)
 ```
@@ -407,7 +409,7 @@ Not in the test suite: comparisons with the methods tried and dropped (the old �
 - Intervals on the correlation scale use the sample standard deviations, ignoring their own uncertainty.
 - The sign-flip test assumes deviations from the baseline would be symmetric if jumps were unrelated to the stock; skewed returns weaken that. The baseline is treated as fixed.
 - Holm is conservative because neighboring lags and bars share data; BH assumes they're positively dependent, which is plausible but not guaranteed.
-- Corrections apply within each chart's family, not across the page or across the settings tried.
+- Corrections apply within each chart's family, not across the page or across the settings tried. A [scan](#scan) corrects across its candidates, but not across scans.
 - Small samples can't show much: 30 days of daily data has about 10 runs of days, and most of its intervals span nearly everything.
 - Daily data over a year runs a little liberal in simulation (intervals covering 90%, 7.0% false positives); the page says so for daily windows longer than 90 days.
 - Longer windows assume β, and the link being tested, are the same throughout up to 540 days; a Fed market a year before its meeting is a different instrument from one a week before.
@@ -456,6 +458,141 @@ A single outcome market of a multi-outcome event has an ambiguous sign: a rising
 - **The page** shows E now (from the live books), its 1h and 24h change, each outcome's value, probability, and weight, E over 90 days, and the outcome probabilities behind it. Research is the same as for one market, with ΔE in bp as the Kalshi variable: an interval whose open outcomes changed is left out, and the event study's jump sizes are 0.25–5 bp (0.5 bp hourly and 2 bp daily by default). For a closed event, Research ends at its first close. The CSV has the same columns with `kalshi_expected_bp` and `expected_change_bp` in place of the probability columns, `expected_missing:<reason>` in `kalshi_exclusion`, and `sum_p` and `open_outcomes` appended.
 - **Requests:** the event (`/events/{ticker}`), each outcome's 97 days of hourly candles from the store first (batched live requests, or Kalshi's archive, for the rest), the same for the longer windows from a week before the first outcome opened, and the same 3 or 5 Twelve Data credits as one market.
 
+## Scan
+
+**Scan** (`/scan`, linked from the header) tests one stock against many Kalshi candidates at once and ranks the results, corrected for testing them all. It's for finding **leads**, and the page says so: a ranked list of exploratory results, each linked to its full single analysis, never a finding on its own.
+
+**Candidates.** Pick the stock, then one of:
+
+- **a series' open events** (e.g. `KXFEDDECISION`), optionally with its stored settled events;
+- **every stored event**, settled ones included (from the data store);
+- **a custom list**: tickers pasted, or added from search; events or markets, settled ones too.
+
+There's **one test per event**, since the outcomes of one event are near-duplicates. A Fed decision event is tested on its expected value E(t), and an event with a single market on that market.
+
+Any other event with several outcomes is tested on one of them:
+
+- **While the event is open:** its open outcome with the highest lifetime volume. An open outcome is one listed as trading whose close hasn't passed.
+- **Once every outcome has closed:** its outcome with the highest lifetime volume.
+
+The outcome is picked from the listing before any stock data loads, and the page names it ("most-traded of 2 open (5 in all)"). A custom list can still name specific outcome markets; the page then groups them and says they're correlated. A scan holds at most 200 candidates.
+
+Changed on 2026-10-22: picking among every outcome could test an open event on an outcome that had already closed. In the live check, an NVIDIA release-date event was tested on its "before Oct 2026" outcome, closed on Sep 30.
+
+**The test.** Each candidate gets exactly the primary test its own page runs:
+
+- the same-interval correlation of the Kalshi change with the stock's market-adjusted return (against SPY);
+- at the chosen window (7D to All) and resolution;
+- with the market model refitted in every one of 999 wild bootstrap draws.
+
+Its r, interval, and p therefore match its page. `lib/scan/parity.test.ts` checks this through the loaders for a live and a settled market and a live and a settled event at eight window and resolution choices. Each candidate's window ends where its page's does: at its close if it has closed, otherwise now.
+
+There are two differences, both by design:
+
+- **No quote.** The scan doesn't spend a credit on the quote, so today's session counts as complete at its scheduled 4 PM close. On an early-close day, between the early close and 4 PM, the page already counts today's bar and the scan doesn't.
+- **Splits.** A split inside the scan's span can rescale 30-minute bars over more split sessions than one page sees.
+
+**Finer p-values.** With 999 draws the smallest p is 0.001, and Holm needs p < 0.05/m, so in a scan of 50 or more nothing could ever pass. So:
+
+- A candidate whose p is under 0.10 gets a fresh p from **19,999 draws** of its own random stream, and the corrections use that p.
+- The smallest possible p is then 1/20,000, a tenth of 0.05/m at m = 100.
+- The combination is a valid p-value without any independence between the stages. For u below 0.10, p ≤ u needs the fresh p ≤ u; at or above 0.10, it needs the first p ≤ u. Each of those has probability at most u.
+
+**Corrections and ranking.**
+
+- Holm and Benjamini–Hochberg run over every candidate that could be tested.
+- Candidates that couldn't be tested (too few sessions, no overlap, failed to load) are listed with their reason and left out of m, since why they couldn't be tested doesn't depend on the stock.
+- Results are ranked by adjusted p. Ties go to the first p, then the ticker, never the effect's size.
+- While a scan runs, candidates still to come count as p = 1. That makes every adjusted p shown an upper bound on its final value, so a result marked as surviving never stops surviving.
+
+**Honesty on the page.** Above the results, always:
+
+- "Exploratory leads, not findings."
+- How many first-stage p-values are under 0.05, against the 5% of candidates chance alone would give.
+- The survivor counts, and what Holm and BH each promise.
+- The winner's curse: the top-ranked effects are likely overstated. The median |r| across the scan is shown as a baseline.
+- Which series and events hold several candidates, whose results are correlated.
+- That the corrections cover this scan only, not lists chosen after seeing results or several scans with the best kept.
+
+Each row shows:
+
+- r, its interval, and p as on the candidate's page, then the scan's p, Holm, BH, and which corrections it survives;
+- **F1**, the effective number of Kalshi moves (fragile under 10), for every result;
+- **F3**, leave-one-out over the 10 most influential sessions, as on the page, for the top 5 and any other survivor (at most 10), once every candidate is in;
+- a link to the full analysis at the same window and resolution (`/?stock=…&kalshi=…&window=…&res=…`; without these, a page opens at 90D hourly as always).
+
+**Cost.** The stock's and SPY's bars are fetched once for the whole scan. Per symbol, that's one 30-minute request per 540 days the candidates' windows span, plus one daily request. There's no quote.
+
+| Scan | Twelve Data credits |
+| --- | --- |
+| Windows within 540 days (every open-event scan, at any window) | **4** (a single analysis: 5); SPY free when the server has it in memory |
+| Spanning 541–1,080 days | 6 |
+| Spanning 1,081–1,620 days (every stored Fed event, back to 2023, at 90D) | 8 |
+| More | refused (the free plan allows 8 requests a minute); the page asks for a shorter list or window |
+
+The page shows the cost before a scan runs.
+
+The free plan's 8 requests a minute are shared by every user of the key, and Twelve Data counts requests it turns away against the minute too. So when the minute's requests are used up, the prices route answers with the time the next minute starts, and the page waits until then (at most twice) instead of retrying. Bars already fetched aren't requested again.
+
+Kalshi data comes from the store first and live otherwise, 3 candidates at a time, retried after 2 s and 5 s when Kalshi is busy. The prices count as one analysis against the visitor's limit.
+
+**Validation.** `lib/analytics/scan-*.sim.test.ts` (run with `pnpm test:sim`) simulates scans in which no candidate is related to the stock, and counts how often a scan shows any surviving result anyway. The settings and pass bars were fixed before the first run, and each setting ran once on fresh seeds (5,000,000–5,600,199).
+
+The simulated scans:
+
+- One stock and K candidates share the same 62 hourly sessions (the default 90D window and market-model sample).
+- Each scan is computed as the page computes it: 999 draws, then 19,999 for a first p under 0.10, then Holm and BH at 5%.
+- **Independent** candidates share only news days.
+- **Correlated** candidates come in groups of five, like the meetings of one series: about 0.9 correlated within a group and 0.3 across.
+- In the correlated setting, the shared part also moves the benchmark and the stock's volatility.
+
+Each figure has its count in brackets, ± one Monte Carlo standard error, and a 95% Wilson range.
+
+| Candidates | Scans | Survives Holm | Survives BH | Any p < 0.05, uncorrected | Test fails if |
+| --- | --- | --- | --- | --- | --- |
+| 10 independent | 400 | 5.2% (21) ± 1.1, 3.5–7.9% | 5.2% (21) ± 1.1, 3.5–7.9% | 43.0% (172) | Holm or BH ≥ 7.5% or < 2% |
+| 30 independent | 400 | 3.0% (12) ± 0.9, 1.7–5.2% | 3.0% (12) ± 0.9, 1.7–5.2% | 72.8% (291) | Holm or BH ≥ 7.5% or < 2% |
+| 100 independent | 300 | 3.3% (10) ± 1.0, 1.8–6.0% | 4.0% (12) ± 1.1, 2.3–6.9% | 98.7% (296) | Holm or BH ≥ 7.5% or < 2% |
+| 10 correlated | 400 | 1.2% (5) ± 0.6, 0.5–2.9% | 2.8% (11) ± 0.8, 1.5–4.9% | 19.2% (77) | Holm or BH ≥ 7.5% |
+| 30 correlated | 400 | 2.0% (8) ± 0.7, 1.0–3.9% | 2.5% (10) ± 0.8, 1.4–4.5% | 32.5% (130) | Holm or BH ≥ 7.5% |
+| 100 correlated | 300 | 1.0% (3) ± 0.6, 0.3–2.9% | 2.3% (7) ± 0.9, 1.1–4.7% | 63.0% (189) | Holm or BH ≥ 7.5% |
+
+- **Every setting passed.** With independent candidates, both corrections keep false leads near 5% (3.0–5.2%). With correlated ones they are conservative (1.0–2.8%), as Holm and BH are under positive dependence. That's why the correlated settings have no lower bar.
+- **Read one by one, a scan almost always shows something by chance.** Without correction, scans with at least one p under 0.05 run to 43%, 73%, and 99% for 10, 30, and 100 independent candidates.
+- **Each candidate's own test stays calibrated in these designs.** Its first p was under 0.05 for 4.6% of all candidates (4,253 of 92,000), and 4.1–5.6% per setting. The highest was 10 independent: 5.6% (223 of 4,000). The test fails at 7.5%.
+  - No standard error or range is given for these rates. The usual ones (about ± 0.4 for 223 of 4,000) treat every candidate as independent. They aren't: candidates in a scan share the stock, and correlated ones also move together. So those ranges would understate the uncertainty.
+  - The scan-level rates in the table don't have this problem: each scan counts once.
+- **The price of scanning (descriptive, no bar).** One candidate of 30 moves the stock, by 0.3% per pp in the same hour; 200 scans.
+  - Its own page finds it (p < 0.05) in 99.0% (198).
+  - The scan ranks it first in 98.5% (197). It survives Holm and BH in 95.5% (191) ± 1.5, range 91.7–97.6%.
+  - An unrelated candidate survives alongside it in 4.0% (8) of scans by Holm and 7.5% (15) by BH. BH bounds the expected share of false leads, not the chance of any.
+  - This effect is clear in 62 sessions, so the price is small here. Weaker effects lose more.
+- **Disclosed: how the figures were read.** The first run's bars all passed, but Vitest's reporter hid the figures logged by passing tests. The same seeds were run again to read them; that's the same data sets, not new ones.
+- **Disclosed: a shortcut in the simulations only.** The simulations stop a finer p once it is sure to end above R·α/m (R = candidates refined), which can't change either correction's decision. The proof is in `scan-sim.ts`, and `scan-sim.test.ts` checks it against every draw. The page always computes every draw.
+- **Not simulated:** daily resolution and the longer windows in a scan. Each candidate's test there is the single analysis's, validated in its own tables above, and the corrections don't depend on the window.
+
+**Speed.** Compute (`scripts/bench-scan.ts`; Node on an Apple-silicon Mac, one run each, simulated candidates):
+
+| Setting | 10 candidates | 30 | 100 | Longest step | Leave-one-out, top 5 |
+| --- | --- | --- | --- | --- | --- |
+| 90D hourly | 0.4 s | 1.1 s | 4.5 s | 19–35 ms | 0.8 s (steps ≤ 16 ms) |
+| 30D hourly | 0.4 s | 0.8 s | 3.2 s | 12 ms | 0.5 s |
+| 1Y hourly | 1.6 s | 3.0 s | 12.0 s | 77–79 ms | 3.3 s (steps ≤ 63 ms) |
+| 90D daily | 0.08 s | 0.13 s | 0.6 s | 3 ms | 0.13 s |
+
+Live, on the production build in headless Chrome (2026-10-22), with TLT, the data store, and the live APIs:
+
+| Scan | Candidates | Twelve Data requests | First result | All done | Longest slice | Tasks over 50 ms |
+| --- | --- | --- | --- | --- | --- | --- |
+| Open Fed events, 90D hourly | 11 (all tested) | 4 expected (output of the first run lost), 0 on a rerun | 1.3 s | 4.7 s | 44 ms | 0 |
+| Every stored Fed event, 90D hourly, back to 2023 | 40 (39 tested) | 8 | 1.8 s | 7.1 s | 44 ms | 0 |
+| 100 open Economics and Financials events, 90D daily | 100 (37 tested) | 4 | 1.1 s | 31.4 s | 32 ms | 0 |
+
+- **Kalshi dominates the time.** Loads averaged 0.5 s per stored candidate and 0.8–1.0 s per live one; one took 8.2 s.
+- **The 100-event runs predate the change to picking.** Both ran on 2026-10-22 under the earlier rule (highest volume among every outcome), so a few open events were tested on outcomes that had already closed.
+- **Many short-lived markets can't be tested.** The 100 events were chosen by a rule fixed before any result: open, in those two categories, earliest close first. Their reasons, on a rerun that listed 95: too few intervals with both prices (31), no Kalshi history in the window (21), no overlap (3), fewer than 8 sessions (2), unstable (1).
+- **Listing a custom list of 100 tickers took 14 s.** Each ticker is looked up on Kalshi.
+
 ## Data store
 
 An optional Postgres database (Neon, free plan) keeps Kalshi's history, so Research can study markets that settled before Kalshi's archive cutoff and end a closed market's windows at its close. It's off unless `DATABASE_URL` is set: without it, every request is live, exactly as before. Setup, roles, the watchlist, and the collector's details are in [`db/README.md`](db/README.md).
@@ -485,6 +622,7 @@ app/                  Next.js routes (page.tsx renders the dashboard server-side
   login/              Sign-in page, and the sign-in and sign-out actions
   api/search/         Search API routes: stocks/ and kalshi/ (GET ?q=…)
   api/benchmark/      Research benchmark prices (GET ?symbol=…, and &end=… for a window ending in the past)
+  scan/               The scan page; api/scan/ lists candidates, loads a scan's prices once, and each candidate's Kalshi side
 components/           UI components (cards, form, panels)
   auth/               Sign-in form and Sign out button
   analysis/           Loading analyses, shareable links, Copy link, recent analyses
@@ -492,6 +630,7 @@ components/           UI components (cards, form, panels)
   event/              A whole event's dashboard: its panel, E over time, outcome probabilities, Research with ΔE
   research/           Research panel (window, resolution, raw or market-adjusted returns, benchmark, analyses, CSV download)
   search/             Stock and Kalshi search fields (comboboxes)
+  scan/               The scan page and its runner (results as they finish, computed in slices)
 lib/
   auth/               Access gate: sessions, password check, page and API route guards
   kalshi/             Kalshi API client, market search index, normalized types (server-only)
@@ -500,12 +639,13 @@ lib/
   expected/           Whole events: supported series, outcome values, the E(t) engine, and its read path
   store/              Data store: connections per role, migrations, runs and coverage, the watchlist
   collect/kalshi/     Kalshi collector: market discovery, candle windows, coverage, gap repair
+  scan/               A scan's candidates (one per event), prices over its span, and each candidate's rows as its page builds them
   analytics/          Pure metric, alignment, research, regression, and significance-test functions (and the CSV export)
   search/             Search contract: result types, query validation, error responses
   validation.ts       Ticker input validation
   format.ts           Number and date formatting
 db/                   Data store migrations and setup (db/README.md)
-scripts/              collect-kalshi, migrate, and watchlist (pnpm collect:kalshi, db:migrate, db:watchlist); check-expected-value
+scripts/              collect-kalshi, migrate, and watchlist (pnpm collect:kalshi, db:migrate, db:watchlist); check-expected-value; bench-research and bench-scan
 proxy.ts              Sends requests without a session to /login (API routes get a 401)
 ```
 

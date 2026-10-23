@@ -3,7 +3,7 @@ import { alignSeries } from "@/lib/analytics";
 import { formatDateTime } from "@/lib/format";
 import { loadAnalysis } from "@/lib/history/analysis";
 import type { ResearchHistory } from "@/lib/history/types";
-import { provenanceNote } from "@/lib/history/window";
+import { provenanceNote, type ResearchView } from "@/lib/history/window";
 import type { KalshiOverview } from "@/lib/kalshi";
 import type { StockAnalysis } from "@/lib/market-data";
 import type { Result } from "@/lib/result";
@@ -26,7 +26,7 @@ type StockResult = Promise<Result<StockAnalysis>>;
  * the size of its content, so the page doesn't jump as sections arrive; each
  * section then fades in over its placeholder.
  */
-export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) {
+export function Dashboard({ stock, kalshi, view }: { stock: string; kalshi: string; view?: ResearchView }) {
   const { kalshiData, stockData, researchHistory, benchmarkData, longHistory } = loadAnalysis(stock, kalshi);
 
   return (
@@ -97,6 +97,7 @@ export function Dashboard({ stock, kalshi }: { stock: string; kalshi: string }) 
             benchmarkData={benchmarkData}
             stock={stock}
             kalshi={kalshi}
+            view={view}
           />
         </Reveal>
       </Suspense>

@@ -3,7 +3,7 @@ import { probabilityVariable } from "@/lib/analytics";
 import { formatDateTime } from "@/lib/format";
 import type { LongHistory, ResearchHistory } from "@/lib/history/types";
 import { lastRows, marketLongRows, marketResearchRows, rowsOverlap, type LongRows } from "@/lib/history/rows";
-import { STOCK_HISTORY_MS } from "@/lib/history/window";
+import { STOCK_HISTORY_MS, type ResearchView } from "@/lib/history/window";
 import { benchmarkFrom } from "@/lib/market-data/benchmark-series";
 import type { KalshiOverview } from "@/lib/kalshi";
 import type { BenchmarkSeries, StockAnalysis } from "@/lib/market-data";
@@ -39,6 +39,7 @@ export async function Research({
   benchmarkData,
   stock,
   kalshi,
+  view,
 }: {
   kalshiData: Promise<Result<KalshiOverview>>;
   stockData: Promise<Result<StockAnalysis>>;
@@ -49,6 +50,8 @@ export async function Research({
   benchmarkData: Promise<Result<BenchmarkSeries> | null>;
   stock: string;
   kalshi: string;
+  /** Where the panel opens, from the link; the default (90D, hourly) without one. */
+  view?: ResearchView;
 }) {
   const [k, s, h, b] = await Promise.all([kalshiData, stockData, historyData, benchmarkData]);
   const end = s.ok ? s.data.research.end : null;
@@ -99,6 +102,7 @@ export async function Research({
       initialBenchmark={b?.ok ? ok(benchmarkFrom(b.data, Math.min(s.data.research.longStart, asOf - STOCK_HISTORY_MS))) : b}
       long={long}
       opened={Number.isFinite(opened) ? opened : null}
+      initialView={view}
     />
   );
 }

@@ -36,6 +36,7 @@ import {
 } from "@/lib/analytics/panel";
 import type { PanelJob, PanelMessage } from "@/lib/analytics/panel-jobs";
 import type { LongRows } from "@/lib/history/rows";
+import { WINDOW_LABEL, WINDOWS, windowPlan, type ResearchView, type WindowChoice, type WindowPlan } from "@/lib/history/window";
 import { formatDate, formatDateTime, formatShortDate, formatSigned, formatTime } from "@/lib/format";
 import type { BenchmarkSeries } from "@/lib/market-data/types";
 import { fail, type Result } from "@/lib/result";
@@ -62,13 +63,6 @@ import {
 import { useBenchmark } from "./useBenchmark";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** What the page loads with: the 7, 30, and 90-day windows read these rows. */
-const LOADED_MS = 90 * DAY_MS;
-const WINDOWS = [7, 30, 90, 180, 365, "all"] as const;
-type WindowChoice = (typeof WINDOWS)[number];
-const WINDOW_LABEL: Record<WindowChoice, string> = { 7: "7D", 30: "30D", 90: "90D", 180: "180D", 365: "1Y", all: "All" };
-/** Windows past the 90 days the page loads with: their rows stream in after it, and they're computed in the background. */
-const isLongWindow = (w: WindowChoice) => w === "all" || w > 90;
 
 interface Settings extends ComputeSettings {
   unit: LagUnit;
@@ -136,6 +130,8 @@ interface Props {
   long: Promise<Result<LongRows | null>>;
   /** When the market (an event's first outcome) opened, ms, if known: no window reaches further back. */
   opened: number | null;
+  /** Where the panel opens when the link says (a scan result's window and resolution); otherwise 90D, hourly. */
+  initialView?: ResearchView;
 }
 
 /** How the market-adjusted view was adjusted, for its captions. */
@@ -146,23 +142,6 @@ interface Adjustment {
   missingBenchmark: number;
   /** Where the market model comes from: the last 90 days (for windows up to 90 days, so maybe not only this window), or the window itself. */
   sample: ModelSample;
-}
-
-/** How a window is computed: from the rows the page loaded with, in the background from the longer rows, or not yet. */
-type WindowPlan =
-  | { kind: "loaded"; days: number; /** A longer window that's no longer than 90 days for this market. */ sameAs90: boolean }
-  | { kind: "long"; rows: LongRows; from: number }
-  | { kind: "waiting" }
-  | { kind: "failed"; message: string };
-
-function windowPlan(choice: WindowChoice, long: Result<LongRows | null> | null, asOf: number): WindowPlan {
-  if (!isLongWindow(choice)) return { kind: "loaded", days: choice as number, sameAs90: false };
-  if (long === null) return { kind: "waiting" };
-  if (!long.ok) return { kind: "failed", message: long.error.message };
-  if (long.data === null) return { kind: "loaded", days: 90, sameAs90: true };
-  const from = choice === "all" ? -Infinity : asOf - choice * DAY_MS;
-  if (Math.max(from, long.data.start) >= asOf - LOADED_MS) return { kind: "loaded", days: 90, sameAs90: true };
-  return { kind: "long", rows: long.data, from };
 }
 
 /** The longer rows once they've streamed in (null until then). A promise that fails reads as a failure, never a crash. */
@@ -193,11 +172,11 @@ function timed<T>(name: string, compute: () => T): T {
   return value;
 }
 
-export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kalshiTicker, variable, initialBenchmark, long: longRows, opened }: Props) {
+export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kalshiTicker, variable, initialBenchmark, long: longRows, opened, initialView }: Props) {
   // 90 days by default: with 30 days of hourly data the power tests (correlation-test.test.ts)
   // miss a correlation of about 0.4 roughly half the time.
-  const [choice, setChoice] = useState<WindowChoice>(90);
-  const [chosenResolution, setResolution] = useState<Resolution>("hourly");
+  const [choice, setChoice] = useState<WindowChoice>(initialView?.window ?? 90);
+  const [chosenResolution, setResolution] = useState<Resolution>(initialView?.resolution ?? "hourly");
   const [thresholds, setThresholds] = useState<Record<Resolution, number>>(variable.defaultThreshold);
   // Market-adjusted by default, since the primary test always is; raw when adjustment isn't possible.
   const [chosenReturns, setReturns] = useState<Returns>("adjusted");
