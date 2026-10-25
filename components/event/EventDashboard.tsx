@@ -34,7 +34,10 @@ const upperFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
  * history end at the event's first close once it has passed.
  */
 export function EventDashboard({ stock, kalshi, view }: { stock: string; kalshi: string; view?: ResearchView }) {
-  const { event, stockData, benchmarkData, long } = loadEventAnalysis(stock, kalshi);
+  const { event, stockData, benchmarkData, long } = loadEventAnalysis(stock, kalshi, {
+    asOf: view?.asOf ?? null,
+    ...(view?.benchmark && { benchmark: view.benchmark }),
+  });
 
   return (
     <div className="grid gap-4 sm:gap-5">
@@ -234,8 +237,9 @@ export async function EventResearch({
 }) {
   const [e, s, b] = await Promise.all([eventData, stockData, benchmarkData]);
   const end = s.ok ? s.data.research.end : null;
+  const frozen = s.ok && s.data.research.frozen === true;
   const notice = (title: string, message: string, tone: "info" | "error" = "info") => (
-    <ResearchCard end={end}>
+    <ResearchCard end={end} frozen={frozen}>
       <Notice tone={tone} title={title} message={message} />
     </ResearchCard>
   );
@@ -269,6 +273,7 @@ export async function EventResearch({
         long={long}
         opened={event.window.start}
         initialView={view}
+        {...(frozen && { windowFrozen: true })}
       />
       <p className="text-xs text-ink-muted">{definitionText(event)} Each Research row reads E at its own hour; an interval whose open outcomes changed between its ends is left out.</p>
     </div>

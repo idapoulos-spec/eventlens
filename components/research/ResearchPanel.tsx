@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ALPHA,
   MIN_TEST_EVENTS,
@@ -36,10 +36,12 @@ import {
 } from "@/lib/analytics/panel";
 import type { PanelJob, PanelMessage } from "@/lib/analytics/panel-jobs";
 import type { LongRows } from "@/lib/history/rows";
-import { WINDOW_LABEL, WINDOWS, windowPlan, type ResearchView, type WindowChoice, type WindowPlan } from "@/lib/history/window";
+import { fromNewYorkInput, newYorkInput, WINDOW_LABEL, WINDOWS, windowPlan, type ResearchView, type WindowChoice, type WindowPlan } from "@/lib/history/window";
+import { DEFAULT_BENCHMARK } from "@/lib/market-data/benchmark-series";
 import { formatDate, formatDateTime, formatShortDate, formatSigned, formatTime } from "@/lib/format";
 import type { BenchmarkSeries } from "@/lib/market-data/types";
 import { fail, type Result } from "@/lib/result";
+import { analysisFromSearch, analysisHref } from "../analysis/navigation";
 import { EventStudyChart } from "../charts/EventStudyChart";
 import { formatLag, LeadLagChart, type LagUnit } from "../charts/LeadLagChart";
 import { RollingCorrelationChart } from "../charts/RollingCorrelationChart";
@@ -60,7 +62,7 @@ import {
   unavailableText,
   verdict,
 } from "./stats";
-import { useBenchmark } from "./useBenchmark";
+import { useBenchmark, type BenchmarkChoice } from "./useBenchmark";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -130,8 +132,15 @@ interface Props {
   long: Promise<Result<LongRows | null>>;
   /** When the market (an event's first outcome) opened, ms, if known: no window reaches further back. */
   opened: number | null;
-  /** Where the panel opens when the link says (a scan result's window and resolution); otherwise 90D, hourly. */
+  /** Where the panel opens when the link says (every setting, and its as-of time); otherwise 90D, hourly, adjusted, SPY. */
   initialView?: ResearchView;
+  /** Research ends at a frozen link's as-of time (windowEnd), rather than a close. */
+  windowFrozen?: boolean;
+  /**
+   * The market's close, when it has passed but the windows still end now (without the data store):
+   * a frozen link's windows end at the close instead, so its numbers can differ from these.
+   */
+  closedAt?: number | null;
 }
 
 /** How the market-adjusted view was adjusted, for its captions. */
@@ -172,15 +181,31 @@ function timed<T>(name: string, compute: () => T): T {
   return value;
 }
 
-export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kalshiTicker, variable, initialBenchmark, long: longRows, opened, initialView }: Props) {
+export function ResearchPanel({
+  hourly,
+  daily,
+  asOf,
+  windowEnd,
+  stockSymbol,
+  kalshiTicker,
+  variable,
+  initialBenchmark,
+  long: longRows,
+  opened,
+  initialView,
+  windowFrozen = false,
+  closedAt = null,
+}: Props) {
   // 90 days by default: with 30 days of hourly data the power tests (correlation-test.test.ts)
   // miss a correlation of about 0.4 roughly half the time.
   const [choice, setChoice] = useState<WindowChoice>(initialView?.window ?? 90);
   const [chosenResolution, setResolution] = useState<Resolution>(initialView?.resolution ?? "hourly");
-  const [thresholds, setThresholds] = useState<Record<Resolution, number>>(variable.defaultThreshold);
+  const [thresholds, setThresholds] = useState<Record<Resolution, number>>(() => linkedThresholds(variable, initialView));
   // Market-adjusted by default, since the primary test always is; raw when adjustment isn't possible.
-  const [chosenReturns, setReturns] = useState<Returns>("adjusted");
-  const benchmark = useBenchmark(initialBenchmark, windowEnd);
+  const [chosenReturns, setReturns] = useState<Returns>(initialView?.returns === "raw" ? "raw" : "adjusted");
+  const benchmark = useBenchmark(initialBenchmark, windowEnd, { first: linkedBenchmark(initialView), frozen: windowFrozen });
+  // Where the link freezes the windows: its as-of time, or this view's once frozen; null while live.
+  const [frozenAt, setFrozenAt] = useState<number | null>(initialView?.asOf ?? null);
   const long = useLongRows(longRows);
   // Seven days hold only about five daily closes, so that window is hourly only.
   const resolution: Resolution = choice === 7 ? "hourly" : chosenResolution;
@@ -268,6 +293,17 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
         : "Too few prices to estimate beta";
   const note = windowNote(choice, plan, long, opened, asOf, variable.kind === "probability" ? "This market" : "This event’s first outcome");
 
+  // Every setting in the URL (defaults left out), so the address and Copy link reproduce this view.
+  const linkView: ResearchView = {
+    window: choice === 90 ? null : choice,
+    resolution: chosenResolution === "hourly" ? null : chosenResolution,
+    returns: chosenReturns === "raw" ? "raw" : null,
+    benchmark: benchmark.active.symbol === DEFAULT_BENCHMARK.symbol ? null : benchmark.active.symbol,
+    jump: threshold === variable.defaultThreshold[resolution] ? null : threshold,
+    asOf: frozenAt,
+  };
+  useLinkSync(linkView);
+
   function downloadCsv() {
     if (!results) return;
     const closesByT = closes && new Map(closes.map((p) => [p.t, p.value]));
@@ -286,7 +322,11 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
       <Card
         title="Research"
         subtitle={`${variable.kind === "probability" ? "Kalshi probability changes" : variable.text.changes} vs. ${stockSymbol} returns, compared only where both have a real observation${
-          windowEnd === null ? "" : `, in windows ending at the ${variable.kind === "probability" ? "market's" : "event's first"} close (${formatDateTime(windowEnd, { withYear: true })})`
+          windowEnd === null
+            ? ""
+            : windowFrozen
+              ? `, in windows ending at the link’s as-of time (${formatDateTime(windowEnd, { withYear: true })})`
+              : `, in windows ending at the ${variable.kind === "probability" ? "market's" : "event's first"} close (${formatDateTime(windowEnd, { withYear: true })})`
         }`}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
@@ -337,6 +377,19 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
             Download CSV
           </button>
         </div>
+        <section data-report-controls="" className="mt-3 border-t border-border pt-3 text-xs text-ink-secondary">
+          <FreezeControls
+            asOf={asOf}
+            windowEnd={windowEnd}
+            windowFrozen={windowFrozen}
+            frozenAt={frozenAt}
+            closedAt={closedAt}
+            onFreeze={() => setFrozenAt(asOf)}
+            onLive={() => (windowFrozen ? goTo({ ...linkView, asOf: null }) : setFrozenAt(null))}
+            onLoad={(t) => goTo({ ...linkView, asOf: t })}
+            subject={variable.kind === "probability" ? "market’s" : "event’s first"}
+          />
+        </section>
         {note && (
           <p role="status" className="mt-2 text-xs text-ink-secondary">
             {note}
@@ -462,6 +515,138 @@ export function ResearchPanel({ hourly, daily, asOf, windowEnd, stockSymbol, kal
         Correlation, not causation: these figures describe how the two series moved together in this sample. They are
         not predictions or trading signals. Other news can move both at once.
       </p>
+    </div>
+  );
+}
+
+// ---- The link: every setting, and where the windows end ----
+
+/** The jump sizes the panel opens with: the link's at the resolution it opens at, if it's one the variable offers. */
+function linkedThresholds(variable: KalshiVariable, view: ResearchView | undefined): Record<Resolution, number> {
+  const resolution: Resolution = view?.window === 7 ? "hourly" : (view?.resolution ?? "hourly");
+  const jump = view?.jump ?? null;
+  return jump !== null && variable.thresholds.includes(jump) ? { ...variable.defaultThreshold, [resolution]: jump } : variable.defaultThreshold;
+}
+
+/** The benchmark the panel opens with: the link's, or the default. */
+function linkedBenchmark(view: ResearchView | undefined): BenchmarkChoice {
+  return view?.benchmark && view.benchmark !== DEFAULT_BENCHMARK.symbol ? { symbol: view.benchmark, name: null } : DEFAULT_BENCHMARK;
+}
+
+/**
+ * Keeps the address bar's link at the panel's settings, so it reproduces the view. Nothing is
+ * rewritten on load: only after a setting changes (replaceState, so Back still leaves the analysis).
+ */
+function useLinkSync(view: ResearchView) {
+  const key = JSON.stringify(view);
+  const synced = useRef<string | null>(null);
+  useEffect(() => {
+    if (synced.current === null || synced.current === key) {
+      synced.current = key;
+      return;
+    }
+    synced.current = key;
+    const analysis = analysisFromSearch(window.location.search);
+    if (!analysis) return;
+    const href = analysisHref(analysis, JSON.parse(key) as ResearchView);
+    if (href !== window.location.pathname + window.location.search) window.history.replaceState(null, "", href);
+  }, [key]);
+}
+
+/** Loads the analysis in the URL with these settings (a different as-of time loads its own data). */
+function goTo(view: ResearchView) {
+  const analysis = analysisFromSearch(window.location.search);
+  if (analysis) window.location.assign(analysisHref(analysis, view));
+}
+
+/** Where the windows end, and the controls that freeze them there or load another as-of time. */
+function FreezeControls({
+  asOf,
+  windowEnd,
+  windowFrozen,
+  frozenAt,
+  closedAt,
+  onFreeze,
+  onLive,
+  onLoad,
+  subject,
+}: {
+  asOf: number;
+  windowEnd: number | null;
+  windowFrozen: boolean;
+  frozenAt: number | null;
+  closedAt: number | null;
+  onFreeze: () => void;
+  onLive: () => void;
+  onLoad: (asOf: number) => void;
+  /** "market’s" or "event’s first", for its close. */
+  subject: string;
+}) {
+  const [picking, setPicking] = useState(false);
+  const [input, setInput] = useState(() => newYorkInput(asOf));
+  const [error, setError] = useState<string | null>(null);
+  const when = (t: number) => formatDateTime(t, { withYear: true });
+  const status =
+    frozenAt !== null
+      ? windowFrozen || windowEnd === null || frozenAt === windowEnd
+        ? `Frozen as of ${when(asOf)}: this page’s link gives the same numbers later.`
+        : `Frozen: the ${subject} close (${when(windowEnd)}) came before the link’s as-of time (${when(frozenAt)}), so the windows end at the close.`
+      : windowEnd !== null
+        ? `Windows end at the ${subject} close (${when(windowEnd)}).`
+        : `Windows end now (${when(asOf)}), so the numbers change as new data arrives.`;
+
+  function load() {
+    const t = fromNewYorkInput(input);
+    if (t === null) return setError("Enter a date and time.");
+    if (t > Date.now()) return setError("Pick a time in the past.");
+    if (t < Date.UTC(2015, 0, 1)) return setError("Pick a time in 2015 or later.");
+    setError(null);
+    onLoad(t);
+  }
+
+  const button =
+    "inline-flex h-9 items-center rounded-md border border-border px-2.5 font-medium text-ink-secondary transition hover:bg-surface-raised hover:text-ink sm:h-7";
+  return (
+    <div className="grid gap-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span role="status">{status}</span>
+        {frozenAt === null ? (
+          <button type="button" onClick={onFreeze} className={button} title="Puts this view’s time in the link: no reload, no data requests">
+            Freeze at this view’s time
+          </button>
+        ) : (
+          <button type="button" onClick={onLive} className={button}>
+            Go live
+          </button>
+        )}
+        <button type="button" onClick={() => setPicking((p) => !p)} className={button} aria-expanded={picking}>
+          As of another time…
+        </button>
+      </div>
+      {frozenAt === null && closedAt !== null && (
+        <p>
+          This market closed on {formatDate(closedAt)}: a frozen link’s windows end at its close, so its numbers can differ from
+          these, which end now.
+        </p>
+      )}
+      {picking && (
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="grid gap-1">
+            <span>As of (New York time)</span>
+            <input
+              type="datetime-local"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              className="h-10 rounded-lg border border-border bg-surface-raised px-2 text-base text-ink sm:h-8 sm:text-xs"
+            />
+          </label>
+          <button type="button" onClick={load} className={button}>
+            Load as of then
+          </button>
+          <span className="text-ink-muted">Reloads the analysis with the windows ending then: about 5 Twelve Data credits, like any analysis.</span>
+          {error && <span className="text-down">{error}</span>}
+        </div>
+      )}
     </div>
   );
 }

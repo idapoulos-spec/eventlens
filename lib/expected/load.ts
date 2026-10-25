@@ -423,7 +423,7 @@ export async function loadEventLong(found: FoundEvent, fetchedAt = Date.now(), a
  * which says whether Research ends now or at the event's first close; its default benchmark waits
  * for the stock, so the stock gets the shared Twelve Data quota first.
  */
-export function loadEventAnalysis(stock: string, ticker: string, { asOf = null }: { asOf?: number | null } = {}) {
+export function loadEventAnalysis(stock: string, ticker: string, { asOf = null, benchmark = DEFAULT_BENCHMARK.symbol }: { asOf?: number | null; benchmark?: string } = {}) {
   const found = findEvent(ticker);
   const window = eventWindowOf(found, asOf);
   const event = found.then(async (r): Promise<Result<EventAnalysis>> => (r.ok ? ok(await loadEvent(r.data, Date.now(), asOf)) : r));
@@ -431,7 +431,7 @@ export function loadEventAnalysis(stock: string, ticker: string, { asOf = null }
   const long = found.then((r): Promise<Result<LongMarks | null>> => (r.ok ? loadEventLong(r.data, Date.now(), asOf) : Promise.resolve(ok(null))));
   const stockData = getStockOverview(stock, window);
   const benchmarkData = Promise.all([stockData, window]).then(([s, { end, frozen }]) =>
-    s.ok && stock !== DEFAULT_BENCHMARK.symbol ? getBenchmarkSeries(DEFAULT_BENCHMARK.symbol, { end, frozen }) : null,
+    s.ok && stock !== benchmark ? getBenchmarkSeries(benchmark, { end, frozen }) : null,
   );
   return { event, stockData, benchmarkData, long };
 }

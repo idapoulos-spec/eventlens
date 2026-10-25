@@ -1,14 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { currentAnalysisHref } from "./navigation";
 
 type Status = "idle" | "copied" | "failed";
 
 const LABEL: Record<Status, string> = { idle: "Copy link", copied: "Copied", failed: "Couldn't copy" };
 const ANNOUNCEMENT: Record<Status, string> = { idle: "", copied: "Link copied", failed: "Couldn't copy the link" };
 
-/** Copies the full URL of `href`, a path on this site, so the analysis can be shared. */
-export function CopyLinkButton({ href }: { href: string }) {
+/**
+ * Copies the full URL of `href`, a path on this site, so the analysis can be shared. With
+ * `current`, the link is rebuilt from the page's own URL when that's a valid analysis (Research
+ * keeps its settings there), and `href` is the fallback.
+ */
+export function CopyLinkButton({ href, current = false }: { href: string; current?: boolean }) {
   const [status, setStatus] = useState<Status>("idle");
 
   useEffect(() => {
@@ -20,7 +25,8 @@ export function CopyLinkButton({ href }: { href: string }) {
   async function copy() {
     try {
       // The clipboard is missing outside secure contexts, and may be blocked; both land in catch.
-      await navigator.clipboard.writeText(new URL(href, window.location.origin).href);
+      const link = (current && currentAnalysisHref(window.location.search, Date.now())) || href;
+      await navigator.clipboard.writeText(new URL(link, window.location.origin).href);
       setStatus("copied");
     } catch {
       setStatus("failed");

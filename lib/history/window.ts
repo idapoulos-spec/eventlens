@@ -3,10 +3,11 @@
 
 import { topOfHourCloses } from "@/lib/analytics/research";
 import type { TimePoint } from "@/lib/analytics/types";
-import { formatDateTime } from "@/lib/format";
-import { sessionClosePoints } from "@/lib/market-data/session";
+import { DISPLAY_TIME_ZONE, formatDateTime } from "@/lib/format";
+import { sessionClosePoints, timeZoneOffsetMs } from "@/lib/market-data/session";
 import type { StockBar } from "@/lib/market-data/types";
 import { fail, ok, type Result } from "@/lib/result";
+import { validateStockTicker } from "@/lib/validation";
 import type { LongRows } from "./rows";
 import type { FoundMarket, Provenance, ResearchBars, ResearchWindow } from "./types";
 
@@ -105,19 +106,59 @@ export const WINDOW_LABEL: Record<WindowChoice, string> = { 7: "7D", 30: "30D", 
 /** Windows past the 90 days the page loads with: their rows stream in after it, and they're computed in the background. */
 export const isLongWindow = (w: WindowChoice) => w === "all" || w > 90;
 
-/** The window and resolution Research opens at, from a link (a scan result's): null for the default (90D, hourly). */
+/**
+ * Where Research opens, from a link: every setting that changes its results. Null (or absent)
+ * for each default: 90D, hourly, market-adjusted, SPY, the resolution's default jump size, and
+ * windows ending now.
+ */
 export interface ResearchView {
   window: WindowChoice | null;
   resolution: "hourly" | "daily" | null;
+  /** Raw returns; null for market-adjusted. */
+  returns?: "raw" | null;
+  /** The benchmark, when it isn't the default. */
+  benchmark?: string | null;
+  /** The event study's jump size at the resolution shown, in the variable's unit, when it isn't the default. */
+  jump?: number | null;
+  /** A frozen link's as-of time (ms): Research ends there (see windowFor). */
+  asOf?: number | null;
 }
 
 export const WINDOW_PARAM = "window";
 export const RESOLUTION_PARAM = "res";
+export const RETURNS_PARAM = "returns";
+export const BENCHMARK_PARAM = "bench";
+export const JUMP_PARAM = "jump";
 
 /** A link's `window` (7, 30, 90, 180, 365, or all) and `res` (hourly or daily); anything else is the default. */
 export function parseResearchView(window: string | null | undefined, resolution: string | null | undefined): ResearchView {
   const choice = WINDOWS.find((w) => String(w) === window) ?? null;
   return { window: choice, resolution: resolution === "hourly" || resolution === "daily" ? resolution : null };
+}
+
+const JUMP_FORMAT = /^\d{1,3}(\.\d{1,2})?$/;
+
+/**
+ * Every Research setting a link carries. A setting that isn't valid falls back to its default
+ * (the panel checks the jump size against the variable's sizes), except the as-of time: a link
+ * that names one it can't read is an error, so it never quietly shows live numbers instead.
+ */
+export function parseResearchLink(get: (name: string) => string | null | undefined, now: number): { view: ResearchView; asOf: Result<number | null> } {
+  const view = parseResearchView(get(WINDOW_PARAM), get(RESOLUTION_PARAM));
+  const bench = get(BENCHMARK_PARAM);
+  const benchmark = bench ? validateStockTicker(bench) : null;
+  const jump = get(JUMP_PARAM);
+  const asOf = parseAsOf(get(ASOF_PARAM), now);
+  return {
+    view: {
+      ...view,
+      returns: get(RETURNS_PARAM) === "raw" ? "raw" : null,
+      benchmark: benchmark?.ok ? benchmark.value : null,
+      jump: jump && JUMP_FORMAT.test(jump) && Number(jump) > 0 ? Number(jump) : null,
+      asOf: asOf.ok ? asOf.data : null,
+    },
+    asOf,
+  };
 }
 
 /** How a window is computed: from the rows the page loaded with, in the background from the longer rows, or not yet. */
@@ -173,6 +214,22 @@ export function parseAsOf(value: string | null | undefined, now: number): Result
   if (!exact) return fail("invalid_asof", "The link's as-of time isn't a valid UTC time, such as 2026-10-25T18:05Z.");
   if (ms < EARLIEST_END || ms > now) return fail("invalid_asof", "The link's as-of time must be in the past, and no earlier than 2015.");
   return ok(ms);
+}
+
+/** A time as a date-time field shows it in New York time ("2026-10-07T14:02"), to the minute. */
+export function newYorkInput(ms: number): string {
+  return new Date(ms + timeZoneOffsetMs(ms, DISPLAY_TIME_ZONE)).toISOString().slice(0, 16);
+}
+
+/** A date-time field's New York time ("2026-10-07T14:02") as ms, or null if it isn't one. */
+export function fromNewYorkInput(text: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(text);
+  if (!m) return null;
+  const wall = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  // The offset at the wall time read as UTC, then at the result: right on both sides of a DST change.
+  let t = wall - timeZoneOffsetMs(wall, DISPLAY_TIME_ZONE);
+  t = wall - timeZoneOffsetMs(t, DISPLAY_TIME_ZONE);
+  return newYorkInput(t) === text ? t : null;
 }
 
 /** An as-of time for a link: to the minute when that's exact, else to the millisecond. */

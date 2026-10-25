@@ -5,6 +5,9 @@ import { sessionClosePoints } from "@/lib/market-data/session";
 import type { StockBar } from "@/lib/market-data/types";
 import {
   formatAsOf,
+  fromNewYorkInput,
+  newYorkInput,
+  parseResearchLink,
   LIVE_WINDOW,
   LONG_HISTORY_MS,
   parseAsOf,
@@ -229,5 +232,59 @@ describe("parseAsOf and formatAsOf", () => {
       expect(r.ok, text).toBe(false);
       if (!r.ok) expect(r.error.code).toBe("invalid_asof");
     }
+  });
+});
+
+describe("parseResearchLink", () => {
+  const NOW = Date.UTC(2026, 9, 25, 16);
+  const read = (query: string) => {
+    const params = new URLSearchParams(query);
+    return parseResearchLink((name) => params.get(name), NOW);
+  };
+
+  it("reads every setting a link carries", () => {
+    expect(read("window=365&res=daily&returns=raw&bench=qqq&jump=0.25&asof=2026-10-07T18:02Z")).toEqual({
+      view: { window: 365, resolution: "daily", returns: "raw", benchmark: "QQQ", jump: 0.25, asOf: Date.UTC(2026, 9, 7, 18, 2) },
+      asOf: { ok: true, data: Date.UTC(2026, 9, 7, 18, 2) },
+    });
+  });
+
+  it("falls back to each default for a setting it can't read", () => {
+    expect(read("window=60&res=weekly&returns=adjusted&bench=not+a+ticker&jump=-2").view).toEqual({
+      window: null,
+      resolution: null,
+      returns: null,
+      benchmark: null,
+      jump: null,
+      asOf: null,
+    });
+    for (const jump of ["0", "1e3", "2.555", "abc", ""]) expect(read(`jump=${jump}`).view.jump, jump).toBeNull();
+  });
+
+  it("reports an as-of time it can't read, rather than quietly going live", () => {
+    const { view, asOf } = read("asof=2026-10-07");
+    expect(asOf.ok).toBe(false);
+    expect(view.asOf).toBeNull();
+  });
+});
+
+describe("newYorkInput and fromNewYorkInput", () => {
+  it("convert between a time and a New York date-time field, either side of daylight saving time", () => {
+    for (const [text, ms] of [
+      ["2026-10-07T14:02", Date.UTC(2026, 9, 7, 18, 2)],
+      ["2026-01-15T09:30", Date.UTC(2026, 0, 15, 14, 30)],
+      ["2026-03-08T03:30", Date.UTC(2026, 2, 8, 7, 30)],
+      ["2026-11-01T00:59", Date.UTC(2026, 10, 1, 4, 59)],
+    ] as const) {
+      expect(newYorkInput(ms)).toBe(text);
+      expect(fromNewYorkInput(text)).toBe(ms);
+    }
+  });
+
+  it("reads seconds away, and rejects a time that doesn't exist in New York or isn't a date-time", () => {
+    expect(newYorkInput(Date.UTC(2026, 9, 7, 18, 2, 59, 999))).toBe("2026-10-07T14:02");
+    // Clocks jump from 2:00 to 3:00 on March 8, 2026.
+    expect(fromNewYorkInput("2026-03-08T02:30")).toBeNull();
+    for (const text of ["", "2026-10-07", "2026-10-07T14:02:00", "2026-13-01T10:00"]) expect(fromNewYorkInput(text), text).toBeNull();
   });
 });
