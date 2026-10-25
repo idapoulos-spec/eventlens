@@ -213,7 +213,7 @@ async function Weights({ data }: { data: EventResult }) {
  * Research with ΔE: rows at the stock's observations, each reading E at its own hour (see
  * buildExpectedRows), then the same panel as for one market.
  */
-async function EventResearch({
+export async function EventResearch({
   eventData,
   stockData,
   benchmarkData,

@@ -233,7 +233,7 @@ function CandidatePreview({ list }: { list: CandidateList }) {
   );
 }
 
-function ScanResults({ run, stock, choice, resolution, candidates }: { run: ScanRun; stock: string; choice: WindowChoice; resolution: Resolution; candidates: ScanCandidate[] }) {
+export function ScanResults({ run, stock, choice, resolution, candidates }: { run: ScanRun; stock: string; choice: WindowChoice; resolution: Resolution; candidates: ScanCandidate[] }) {
   const snap = useSyncExternalStore(run.subscribe, run.getSnapshot, run.getSnapshot);
   const { states, corrections, order } = snap;
   const done = states.filter((s) => s.status === "done").length;
