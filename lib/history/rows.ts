@@ -3,7 +3,7 @@
 
 import { buildExpectedRows, buildResearchRows, rowsSince, type ExpectedPoint, type ResearchRow, type SourcedPoint } from "@/lib/analytics/research";
 import type { LongHistory, ResearchBars } from "./types";
-import { RESEARCH_WINDOW_MS, researchStockPoints } from "./window";
+import { RESEARCH_WINDOW_MS, researchStockPoints, settledAt } from "./window";
 
 /** Hourly and daily rows, and where Research's windows count back from. */
 export interface ResearchRows {
@@ -16,7 +16,7 @@ export interface ResearchRows {
 interface StockSide {
   /** The stock's bars for Research. */
   research: ResearchBars;
-  /** When the bars were fetched: bars that hadn't closed by then may still have been forming. */
+  /** When the bars were fetched: bars that hadn't closed by then may still have been forming (see settledAt for a frozen window). */
   fetchedAt: number;
 }
 
@@ -27,7 +27,7 @@ export function marketResearchRows({
   research,
   fetchedAt,
 }: StockSide & { kalshi: SourcedPoint[]; closeTime: number | null }): ResearchRows {
-  const stock = researchStockPoints({ ...research, fetchedAt });
+  const stock = researchStockPoints({ ...research, fetchedAt: settledAt(research, fetchedAt) });
   return {
     hourly: buildResearchRows({ kalshi, closeTime, stock: stock.hourly, resolution: "hourly" }),
     daily: buildResearchRows({ kalshi, closeTime, stock: stock.daily, resolution: "daily" }),
@@ -37,7 +37,7 @@ export function marketResearchRows({
 
 /** An event's rows, each reading E at its own mark. */
 export function eventResearchRows({ marks, research, fetchedAt }: StockSide & { marks: ExpectedPoint[] }): ResearchRows {
-  const stock = researchStockPoints({ ...research, fetchedAt });
+  const stock = researchStockPoints({ ...research, fetchedAt: settledAt(research, fetchedAt) });
   return {
     hourly: buildExpectedRows({ stock: stock.hourly, marks, resolution: "hourly" }),
     daily: buildExpectedRows({ stock: stock.daily, marks, resolution: "daily" }),
@@ -65,7 +65,7 @@ export interface LongRows {
 
 /** The stock's points over the longer windows: every 30-minute bar, and the daily bars since `longStart`. */
 const longStock = ({ research, fetchedAt }: StockSide) =>
-  researchStockPoints({ halfHourly: research.halfHourly, daily: research.longDaily, end: research.end, fetchedAt });
+  researchStockPoints({ halfHourly: research.halfHourly, daily: research.longDaily, end: research.end, fetchedAt: settledAt(research, fetchedAt) });
 
 /** Nothing before the start is the market's, so the rows begin there. */
 const from = (rows: ResearchRow[], start: number) => rows.filter((r) => r.t >= start);

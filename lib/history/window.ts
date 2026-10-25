@@ -8,7 +8,7 @@ import { sessionClosePoints } from "@/lib/market-data/session";
 import type { StockBar } from "@/lib/market-data/types";
 import { fail, ok, type Result } from "@/lib/result";
 import type { LongRows } from "./rows";
-import type { FoundMarket, Provenance, ResearchWindow } from "./types";
+import type { FoundMarket, Provenance, ResearchBars, ResearchWindow } from "./types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -34,10 +34,27 @@ const timeOf = (iso: string | null) => {
   return Number.isFinite(ms) ? ms : null;
 };
 
-/** Research ends at the market's close once that has passed, otherwise now; its longer windows start no earlier than its open. */
-export function windowFor({ market, archived }: FoundMarket, now: number): ResearchWindow {
-  const close = timeOf(market.closeTime);
-  return { end: close !== null && close <= now ? close : null, archived, start: timeOf(market.openTime) };
+/**
+ * Research ends at the market's close once that has passed, otherwise now; its longer windows
+ * start no earlier than its open. With `asOf` (a link's as-of time), the window ends there
+ * instead of now, and at the close only if the market had closed by then.
+ */
+export function windowFor({ market, archived }: FoundMarket, now: number, asOf: number | null = null): ResearchWindow {
+  return closedOr(timeOf(market.closeTime), { archived, start: timeOf(market.openTime) }, now, asOf);
+}
+
+/** A window ending at `close` if it had passed by the as-of time (or now), else at the as-of time (or now). */
+export function closedOr(close: number | null, rest: Pick<ResearchWindow, "archived" | "start">, now: number, asOf: number | null): ResearchWindow {
+  if (close !== null && close <= (asOf ?? now)) return { end: close, ...rest };
+  return asOf === null ? { end: null, ...rest } : { end: asOf, ...rest, frozen: true };
+}
+
+/**
+ * When the bars count as settled: when they were fetched, or for a window frozen at an as-of
+ * time, then (bars that settled only after it weren't on screen at the time).
+ */
+export function settledAt({ end, frozen = false }: Pick<ResearchBars, "end" | "frozen">, fetchedAt: number): number {
+  return frozen && end !== null ? Math.min(fetchedAt, end) : fetchedAt;
 }
 
 /**
@@ -123,6 +140,8 @@ export function windowPlan(choice: WindowChoice, long: Result<LongRows | null> |
 // ---- /api/benchmark?symbol=QQQ&end=… : a benchmark for a window that ends in the past ----
 
 export const BENCHMARK_END_PARAM = "end";
+/** With `end`: the window is frozen at that as-of time (see ResearchWindow.frozen), so only bars settled by then count. */
+export const BENCHMARK_FROZEN_PARAM = "frozen";
 const EARLIEST_END = Date.UTC(2015, 0, 1);
 
 /** A window's end from a URL: absent (null), or whole milliseconds since 2015, not in the future. */
@@ -133,6 +152,34 @@ export function parseWindowEnd(value: string | null, now: number): Result<number
     return fail("invalid_end", "The research window's end must be a past time, in milliseconds.");
   }
   return ok(end);
+}
+
+// ---- ?asof=… : where a frozen link's Research ends ----
+
+/** An analysis link's as-of time: Research ends there, so the link gives the same numbers later. */
+export const ASOF_PARAM = "asof";
+const ASOF_FORMAT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?Z$/;
+
+/**
+ * An as-of time from a link: absent (null), or UTC ISO 8601 to the minute, second, or
+ * millisecond (2026-10-25T18:05Z, …T18:05:12Z, …T18:05:12.345Z), from 2015 up to now.
+ */
+export function parseAsOf(value: string | null | undefined, now: number): Result<number | null> {
+  if (value === null || value === undefined) return ok(null);
+  const m = ASOF_FORMAT.exec(value);
+  const ms = m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] ?? 0), +(m[7] ?? "0").padEnd(3, "0")) : NaN;
+  // Date.UTC rolls 2026-02-31 over to March; a real date and time reads back the same.
+  const exact = m !== null && Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 16) === `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}`;
+  if (!exact) return fail("invalid_asof", "The link's as-of time isn't a valid UTC time, such as 2026-10-25T18:05Z.");
+  if (ms < EARLIEST_END || ms > now) return fail("invalid_asof", "The link's as-of time must be in the past, and no earlier than 2015.");
+  return ok(ms);
+}
+
+/** An as-of time for a link: to the minute when that's exact, else to the millisecond. */
+export function formatAsOf(ms: number): string {
+  const iso = new Date(ms).toISOString();
+  if (iso.endsWith(":00.000Z")) return `${iso.slice(0, 16)}Z`;
+  return iso.endsWith(".000Z") ? `${iso.slice(0, 19)}Z` : iso;
 }
 
 // ---- The Sources note ----

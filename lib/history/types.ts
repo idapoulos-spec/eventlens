@@ -25,6 +25,12 @@ export interface ResearchWindow {
    * longer windows start no earlier: nothing before it is the market's.
    */
   start: number | null;
+  /**
+   * Research ends at an as-of time from the link (`end`), not at a close: the stock's and the
+   * benchmark's bars count as settled at that time rather than when they were fetched, so the
+   * window is what a viewer saw then. Absent: not frozen.
+   */
+  frozen?: boolean;
 }
 
 /** Where Research's Kalshi history came from, for the Sources note. */
@@ -47,6 +53,8 @@ export interface ResearchHistory {
 export interface ResearchBars {
   /** Where Research's window ends (ms), or null for now. */
   end: number | null;
+  /** The window ends at an as-of time (see ResearchWindow.frozen). Absent: not frozen. */
+  frozen?: boolean;
   /** Close-stamped 30-minute bars, oldest first. */
   halfHourly: StockBar[];
   /** Daily bars stamped at 00:00 UTC of their trading date, oldest first: those the 7, 30, and 90-day windows read. */

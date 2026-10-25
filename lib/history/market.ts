@@ -41,13 +41,14 @@ export function marketOf(found: Promise<Result<FoundMarket>>): Promise<Result<Ka
 /**
  * Where Research's window ends (a closed market's close, with the store on; otherwise now) and
  * where its longer windows can start (the market's open). It waits for the market lookup, so the
- * stock's bars reach back only as far as the market's life needs.
+ * stock's bars reach back only as far as the market's life needs. With `asOf` (a frozen link),
+ * it ends at that time, or at the close if the market had closed by then, store or not.
  */
-export function researchWindowOf(found: Promise<Result<FoundMarket>>): Promise<ResearchWindow> {
+export function researchWindowOf(found: Promise<Result<FoundMarket>>, asOf: number | null = null): Promise<ResearchWindow> {
   return found.then((r) => {
-    if (!r.ok) return LIVE_WINDOW;
-    const window = windowFor(r.data, Date.now());
+    if (!r.ok) return asOf === null ? LIVE_WINDOW : { ...LIVE_WINDOW, end: asOf, frozen: true };
+    const window = windowFor(r.data, Date.now(), asOf);
     // Without the store, Research ends now, as it always has.
-    return storeOn() ? window : { ...LIVE_WINDOW, start: window.start };
+    return storeOn() || asOf !== null ? window : { ...LIVE_WINDOW, start: window.start };
   });
 }
