@@ -26,16 +26,17 @@ export interface PriceSpan {
 /**
  * The bars each candidate's analysis reads: up to its end (its close, or now), from 100 days back
  * for the 7, 30, and 90-day windows, or from where its longer windows start (its open, at most
- * 540 days back) for the others, as its own page loads them.
+ * 540 days back) for the others, as its own page loads them. With `asOf` (a frozen scan), the
+ * windows of candidates still open then end there, and nothing runs to now.
  */
-export function priceSpan(candidates: Pick<ScanCandidate, "end" | "start">[], choice: WindowChoice, now: number): PriceSpan | null {
+export function priceSpan(candidates: Pick<ScanCandidate, "end" | "start">[], choice: WindowChoice, now: number, asOf: number | null = null): PriceSpan | null {
   if (candidates.length === 0) return null;
   let from = Infinity;
   let to = -Infinity;
   let live = false;
   for (const { end, start } of candidates) {
-    const anchor = end ?? now;
-    if (end === null) live = true;
+    const anchor = end ?? asOf ?? now;
+    if (end === null && asOf === null) live = true;
     from = Math.min(from, isLongWindow(choice) ? stockHistoryStart(start, anchor) : anchor - STOCK_HISTORY_MS);
     to = Math.max(to, anchor);
   }

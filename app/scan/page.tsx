@@ -5,9 +5,18 @@ import { Disclaimer } from "@/components/Disclaimer";
 import { LogoMark } from "@/components/LogoMark";
 import { ScanPage } from "@/components/scan/ScanPage";
 import { isAccessGateOn, requirePageSession } from "@/lib/auth/server";
-import { validateStockTicker } from "@/lib/validation";
+import { parseScanLink } from "@/components/scan/link";
+import { Notice } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Scan · EventLens" };
+
+/** Every setting of the form, from the link (a saved or frozen scan's); nothing runs until asked. */
+function readLink(params: Awaited<PageProps<"/scan">["searchParams"]>) {
+  return parseScanLink((name) => {
+    const v = params[name];
+    return Array.isArray(v) ? v[0] : v;
+  }, Date.now());
+}
 
 /**
  * One stock against many Kalshi events at once. The page itself loads nothing: the browser asks
@@ -15,8 +24,7 @@ export const metadata: Metadata = { title: "Scan · EventLens" };
  */
 export default async function Scan({ searchParams }: PageProps<"/scan">) {
   await requirePageSession();
-  const { stock: raw } = await searchParams;
-  const stock = validateStockTicker(Array.isArray(raw) ? raw[0] : raw);
+  const { link, asOf } = readLink(await searchParams);
 
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:py-10">
@@ -32,7 +40,7 @@ export default async function Scan({ searchParams }: PageProps<"/scan">) {
         </div>
         {isAccessGateOn() && <SignOutButton />}
       </header>
-      <ScanPage initialStock={stock.ok ? stock.value : ""} />
+      {asOf.ok ? <ScanPage initial={link} /> : <Notice title="Invalid input" message={asOf.error.message} />}
       <footer className="mt-10 border-t border-border pt-4">
         <Disclaimer />
       </footer>

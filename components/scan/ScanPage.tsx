@@ -1,26 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ALPHA } from "@/lib/analytics/inference";
 import { MAX_SCAN_CANDIDATES, SCAN_REFINE_BELOW, SCAN_REFINE_DRAWS } from "@/lib/analytics/scan";
 import type { Resolution } from "@/lib/analytics/research";
-import { formatDate } from "@/lib/format";
-import { WINDOW_LABEL, WINDOWS, type WindowChoice } from "@/lib/history/window";
+import { formatDate, formatDateTime } from "@/lib/format";
+import { fromNewYorkInput, newYorkInput, WINDOW_LABEL, WINDOWS, type WindowChoice } from "@/lib/history/window";
 import { DEFAULT_BENCHMARK } from "@/lib/market-data/benchmark-series";
 import type { CandidateList } from "@/lib/scan/candidates";
 import { benchmarkFromCache, MAX_PRICE_REQUESTS, priceCredits, priceSpan } from "@/lib/scan/span";
+import { SCAN_ASOF_PARAM } from "@/lib/scan/api";
 import { SCAN_CANDIDATES_PATH, type ScanCandidate, type ScanErrorResponse } from "@/lib/scan/types";
 import { validateStockTicker } from "@/lib/validation";
 import { analysisHref } from "../analysis/navigation";
+import { CopyLinkButton } from "../analysis/CopyLinkButton";
+import { MAY_DIFFER, REPRODUCED } from "../analysis/reproducibility";
 import { Caption, Flag, fmtR, Segmented } from "../research/parts";
 import { formatCi } from "../research/stats";
 import { KalshiSearch } from "../search/KalshiSearch";
 import { StockSearch } from "../search/StockSearch";
 import { Card, Notice } from "../ui";
 import { ScanRun, type CandidateState, type ScanSnapshot } from "./scanRunner";
+import { frozenScanHref, scanHref, type ScanLink, type Source } from "./link";
 import { chanceLine, correlationNote, medianAbs, SCOPE_NOTE, survivorsLine, WINNERS_CURSE } from "./text";
-
-type Source = "series" | "stored" | "tickers";
 
 const SOURCES: { value: Source; label: string }[] = [
   { value: "series", label: "A series" },
@@ -43,32 +45,57 @@ interface ListState {
   listedAt: number;
 }
 
-function listQuery(source: Source, series: string, settled: boolean, tickers: string): string {
-  if (source === "series") return new URLSearchParams({ scope: "series", series, settled: settled ? "1" : "0" }).toString();
-  if (source === "stored") return new URLSearchParams({ scope: "stored", ...(series.trim() && { series }) }).toString();
-  return new URLSearchParams({ scope: "tickers", tickers }).toString();
+function listQuery(source: Source, series: string, settled: boolean, tickers: string, asOf: number | null): string {
+  const frozen: Record<string, string> = asOf === null ? {} : { [SCAN_ASOF_PARAM]: String(asOf) };
+  if (source === "series") return new URLSearchParams({ scope: "series", series, settled: settled ? "1" : "0", ...frozen }).toString();
+  if (source === "stored") return new URLSearchParams({ scope: "stored", ...(series.trim() && { series }), ...frozen }).toString();
+  return new URLSearchParams({ scope: "tickers", tickers, ...frozen }).toString();
 }
 
-export function ScanPage({ initialStock }: { initialStock: string }) {
-  const [stock, setStock] = useState(initialStock);
-  const [source, setSource] = useState<Source>("series");
-  const [series, setSeries] = useState("KXFEDDECISION");
-  const [settled, setSettled] = useState(false);
-  const [tickers, setTickers] = useState("");
+/**
+ * Keeps the address bar's link at the form's settings, so it opens the same scan. Nothing is
+ * rewritten on load, only after a setting changes.
+ */
+function useScanLinkSync(link: ScanLink) {
+  const href = scanHref(link);
+  const synced = useRef<string | null>(null);
+  useEffect(() => {
+    if (synced.current === null || synced.current === href) {
+      synced.current = href;
+      return;
+    }
+    synced.current = href;
+    if (href !== window.location.pathname + window.location.search) window.history.replaceState(null, "", href);
+  }, [href]);
+}
+
+export function ScanPage({ initial }: { initial: ScanLink }) {
+  const [stock, setStock] = useState(initial.stock);
+  const [source, setSource] = useState<Source>(initial.source);
+  const [series, setSeries] = useState(initial.series);
+  const [settled, setSettled] = useState(initial.settled);
+  const [tickers, setTickers] = useState(initial.tickers);
   const [search, setSearch] = useState("");
-  const [choice, setChoice] = useState<WindowChoice>(90);
-  const [chosenResolution, setResolution] = useState<Resolution>("hourly");
+  const [choice, setChoice] = useState<WindowChoice>(initial.window);
+  const [chosenResolution, setResolution] = useState<Resolution>(initial.resolution);
   const resolution: Resolution = choice === 7 ? "hourly" : chosenResolution;
+  // Optional: windows still open at this New York time end there (a frozen scan); empty for now.
+  const [asOfInput, setAsOfInput] = useState(initial.asOf === null ? "" : newYorkInput(initial.asOf));
+  const asOf = asOfInput === "" ? null : fromNewYorkInput(asOfInput);
   const [listState, setListState] = useState<ListState>({ status: "idle", key: "", list: null, error: null, listedAt: 0 });
-  const [run, setRun] = useState<{ run: ScanRun; stock: string; choice: WindowChoice; resolution: Resolution; candidates: ScanCandidate[] } | null>(null);
+  const [run, setRun] = useState<{ run: ScanRun; stock: string; choice: WindowChoice; resolution: Resolution; candidates: ScanCandidate[]; asOf: number | null } | null>(null);
   const [stockError, setStockError] = useState<string | null>(null);
+  const asOfError = asOfInput !== "" && asOf === null ? "Enter a New York date and time, or clear it to scan as of now." : null;
 
   useEffect(() => () => run?.run.dispose(), [run]);
+  useScanLinkSync({ stock, source, series, settled, tickers, window: choice, resolution: chosenResolution, asOf });
 
-  const query = listQuery(source, series, settled, tickers);
+  const query = listQuery(source, series, settled, tickers, asOf);
   const list = listState.key === query && listState.status === "ready" ? listState.list : null;
 
   async function findCandidates() {
+    if (asOfError) return setListState({ status: "error", key: query, list: null, error: asOfError, listedAt: 0 });
+    if (asOf !== null && asOf > Date.now()) return setListState({ status: "error", key: query, list: null, error: "Pick an as-of time in the past.", listedAt: 0 });
     setListState({ status: "loading", key: query, list: null, error: null, listedAt: 0 });
     try {
       const response = await fetch(`${SCAN_CANDIDATES_PATH}?${query}`);
@@ -85,9 +112,9 @@ export function ScanPage({ initialStock }: { initialStock: string }) {
   const listedAt = listState.listedAt;
   const cost = useMemo(() => {
     if (!list || list.candidates.length === 0) return null;
-    const span = priceSpan(list.candidates, choice, listedAt)!;
+    const span = priceSpan(list.candidates, choice, listedAt, asOf)!;
     return { credits: priceCredits(span), cached: benchmarkFromCache(span, listedAt), span, stored: list.candidates.filter((c) => c.stored).length };
-  }, [list, choice, listedAt]);
+  }, [list, choice, listedAt, asOf]);
 
   function start() {
     const valid = validateStockTicker(stock);
@@ -96,7 +123,7 @@ export function ScanPage({ initialStock }: { initialStock: string }) {
     setStockError(null);
     if (!list || !cost || cost.credits > MAX_PRICE_REQUESTS) return;
     run?.run.dispose();
-    setRun({ run: new ScanRun({ stock: valid.value, choice, resolution, candidates: list.candidates }), stock: valid.value, choice, resolution, candidates: list.candidates });
+    setRun({ run: new ScanRun({ stock: valid.value, choice, resolution, candidates: list.candidates, asOf }), stock: valid.value, choice, resolution, candidates: list.candidates, asOf });
   }
 
   return (
@@ -169,7 +196,20 @@ export function ScanPage({ initialStock }: { initialStock: string }) {
               ]}
               onChange={setResolution}
             />
+            <label className="text-xs font-medium text-ink-secondary">
+              As of (New York time; optional)
+              <input
+                type="datetime-local"
+                value={asOfInput}
+                onChange={(e) => setAsOfInput(e.target.value)}
+                className="mt-1.5 block h-10 rounded-lg border border-border bg-surface-raised px-2 text-base text-ink sm:h-8 sm:text-xs"
+              />
+              <span className="mt-1 block font-normal text-ink-muted">
+                {asOf !== null ? `Windows still open then end at ${formatDateTime(asOf, { withYear: true })}; closed ones at their close.` : "Empty: windows end now, or at each one’s close."}
+              </span>
+            </label>
           </div>
+          {asOfError && <p className="text-xs text-down">{asOfError}</p>}
 
           {cost && (
             <p className="text-sm text-ink-secondary">
@@ -198,7 +238,7 @@ export function ScanPage({ initialStock }: { initialStock: string }) {
         </div>
       </Card>
 
-      {run && <ScanResults key={`${run.stock}|${run.choice}|${run.resolution}`} {...run} />}
+      {run && <ScanResults key={`${run.stock}|${run.choice}|${run.resolution}|${run.asOf ?? ""}`} {...run} />}
     </div>
   );
 }
@@ -233,7 +273,22 @@ function CandidatePreview({ list }: { list: CandidateList }) {
   );
 }
 
-export function ScanResults({ run, stock, choice, resolution, candidates }: { run: ScanRun; stock: string; choice: WindowChoice; resolution: Resolution; candidates: ScanCandidate[] }) {
+export function ScanResults({
+  run,
+  stock,
+  choice,
+  resolution,
+  candidates,
+  asOf = null,
+}: {
+  run: ScanRun;
+  stock: string;
+  choice: WindowChoice;
+  resolution: Resolution;
+  candidates: ScanCandidate[];
+  /** A frozen scan's as-of time, or null for a live one. */
+  asOf?: number | null;
+}) {
   const snap = useSyncExternalStore(run.subscribe, run.getSnapshot, run.getSnapshot);
   const { states, corrections, order } = snap;
   const done = states.filter((s) => s.status === "done").length;
@@ -252,7 +307,11 @@ export function ScanResults({ run, stock, choice, resolution, candidates }: { ru
   return (
     <Card
       title={`${stock} against ${candidates.length} ${candidates.length === 1 ? "candidate" : "candidates"} · ${WINDOW_LABEL[choice]} ${resolution}`}
-      subtitle={`Market-adjusted against ${DEFAULT_BENCHMARK.symbol}; each window ends where its own page’s does (its close, or now)`}
+      subtitle={
+        asOf === null
+          ? `Market-adjusted against ${DEFAULT_BENCHMARK.symbol}; each window ends where its own page’s does (its close, or now)`
+          : `Market-adjusted against ${DEFAULT_BENCHMARK.symbol}; frozen as of ${formatDateTime(asOf, { withYear: true })}: each window ends there, or at its close if that came first`
+      }
     >
       <div role="status" aria-live="polite" className="mb-4 text-sm text-ink-secondary">
         {snap.phase === "prices"
@@ -278,7 +337,7 @@ export function ScanResults({ run, stock, choice, resolution, candidates }: { ru
         </ul>
       </div>
 
-      <ScanTable snap={snap} candidates={candidates} stock={stock} choice={choice} resolution={resolution} order={order} />
+      <ScanTable snap={snap} candidates={candidates} stock={stock} choice={choice} resolution={resolution} order={order} asOf={asOf} />
 
       <Caption
         lead={`Ranked by adjusted p (both corrections keep the order of p). Each candidate gets the primary test its own page runs: the same-${resolution === "hourly" ? "hour" : "day"} correlation of the Kalshi change with the stock’s market-adjusted return, at the same window and resolution, with 999 bootstrap draws, so r, the interval, and “p (page)” match its page.`}
@@ -301,9 +360,40 @@ export function ScanResults({ run, stock, choice, resolution, candidates }: { ru
       )}
 
       {snap.phase === "done" && <Timings snap={snap} />}
+      {snap.phase === "done" && snap.prices && (
+        <section data-report-controls="" className="mt-4 border-t border-border pt-3 text-xs text-ink-secondary">
+          <FrozenScanLink stock={stock} candidates={candidates} choice={choice} resolution={resolution} asOf={asOf ?? snap.prices.fetchedAt} />
+        </section>
+      )}
     </Card>
   );
 }
+
+/** The finished scan's frozen link, and what it reproduces. */
+function FrozenScanLink({ stock, candidates, choice, resolution, asOf }: { stock: string; candidates: ScanCandidate[]; choice: WindowChoice; resolution: Resolution; asOf: number }) {
+  return (
+    <div className="grid gap-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <span>
+          Frozen link: names these {candidates.length} {candidates.length === 1 ? "candidate" : "candidates"} and ends their windows at{" "}
+          {formatDateTime(asOf, { withYear: true })} (or each one’s close), so it opens this scan again; run it to get this table.
+        </span>
+        <CopyLinkButton href={frozenScanHref({ stock, candidates, window: choice, resolution, asOf })} />
+      </div>
+      <details>
+        <summary className="cursor-pointer text-ink-muted hover:text-ink-secondary">What a frozen link reproduces, and what can still change</summary>
+        <ul className="mt-2 list-disc space-y-1 pl-5">
+          {[...REPRODUCED, ...MAY_DIFFER, SCAN_LIST_NOTE].map((t) => (
+            <li key={t}>{t}</li>
+          ))}
+        </ul>
+      </details>
+    </div>
+  );
+}
+
+export const SCAN_LIST_NOTE =
+  "A frozen scan link lists the candidates it tested, so the same ones are tested again; a series or stored-events list made later can differ, as events open and close (and an event’s most-traded outcome can change).";
 
 function looCell(state: Extract<CandidateState, { status: "done" }>) {
   const { loo } = state;
@@ -313,7 +403,23 @@ function looCell(state: Extract<CandidateState, { status: "done" }>) {
   return <span>stable{loo.p ? ` (p ${formatSmallP(loo.p[0])}–${formatSmallP(loo.p[1])})` : ""}</span>;
 }
 
-function ScanTable({ snap, candidates, stock, choice, resolution, order }: { snap: ScanSnapshot; candidates: ScanCandidate[]; stock: string; choice: WindowChoice; resolution: Resolution; order: number[] }) {
+function ScanTable({
+  snap,
+  candidates,
+  stock,
+  choice,
+  resolution,
+  order,
+  asOf,
+}: {
+  snap: ScanSnapshot;
+  candidates: ScanCandidate[];
+  stock: string;
+  choice: WindowChoice;
+  resolution: Resolution;
+  order: number[];
+  asOf: number | null;
+}) {
   const rows = order.filter((i) => snap.states[i].status === "done");
   if (rows.length === 0) return <p className="text-sm text-ink-muted">Results appear here as each candidate finishes.</p>;
   const head = ["#", "Candidate", "r (95% CI)", "p (page)", "p (scan)", "Holm", "BH", "Survives", "F1 moves", "F3 leave-one-out", ""];
@@ -365,7 +471,7 @@ function ScanTable({ snap, candidates, stock, choice, resolution, order }: { sna
                 <td className="whitespace-nowrap py-1.5 pr-3">{moves === null ? "—" : moves < 10 ? <Flag>{moves.toFixed(1)}</Flag> : moves.toFixed(1)}</td>
                 <td className="whitespace-nowrap py-1.5 pr-3">{looCell(state)}</td>
                 <td className="whitespace-nowrap py-1.5">
-                  <a href={analysisHref({ stock, kalshi: c.ticker }, { window: choice, resolution })} target="_blank" rel="noopener" className="text-series-kalshi hover:underline">
+                  <a href={analysisHref({ stock, kalshi: c.ticker }, { window: choice, resolution, asOf })} target="_blank" rel="noopener" className="text-series-kalshi hover:underline">
                     Full analysis →
                   </a>
                 </td>

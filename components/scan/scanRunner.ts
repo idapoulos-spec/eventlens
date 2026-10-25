@@ -8,7 +8,7 @@ import type { LeaveOneOut } from "@/lib/analytics/fragility";
 import { correctScan, leaveOneOutTargets, rankScan, scanCandidateSteps, scanLeaveOneOutSteps, type Correction, type ScanInput, type ScanTest } from "@/lib/analytics/scan";
 import type { WindowChoice } from "@/lib/history/window";
 import type { BenchmarkSeries } from "@/lib/market-data/types";
-import { RETRY_STATUSES, spanParams } from "@/lib/scan/api";
+import { RETRY_STATUSES, SCAN_ASOF_PARAM, spanParams } from "@/lib/scan/api";
 import { scanStock, type ScanStock } from "@/lib/scan/bars";
 import { candidateInput } from "@/lib/scan/rows";
 import { priceSpan } from "@/lib/scan/span";
@@ -27,6 +27,8 @@ export interface ScanSettings {
   choice: WindowChoice;
   resolution: Resolution;
   candidates: ScanCandidate[];
+  /** A frozen scan's as-of time (ms): windows still open then end there. */
+  asOf?: number | null;
 }
 
 export type CandidateState =
@@ -147,15 +149,16 @@ export class ScanRun {
   private waitingUntil: number | null = null;
 
   private async start() {
-    const { stock, choice, candidates } = this.settings;
-    const span = priceSpan(candidates, choice, Date.now());
+    const { stock, choice, candidates, asOf = null } = this.settings;
+    const span = priceSpan(candidates, choice, Date.now(), asOf);
     if (!span) return this.fail("There are no candidates to scan.");
     // Kalshi loads start with the prices; computing waits for both.
     this.pump();
     const t0 = now();
     // Twelve Data's free plan allows 8 requests a minute for everyone using the key; when they're
     // used up, wait for the next minute (twice at most) rather than spend more on retries.
-    const prices = await getJson<ScanPrices>(`${SCAN_PRICES_PATH}?${new URLSearchParams({ stock })}&${spanParams(span)}`, this.abort.signal, {
+    const frozen = asOf === null ? "" : `&${new URLSearchParams({ [SCAN_ASOF_PARAM]: String(asOf) })}`;
+    const prices = await getJson<ScanPrices>(`${SCAN_PRICES_PATH}?${new URLSearchParams({ stock })}&${spanParams(span)}${frozen}`, this.abort.signal, {
       quick: [],
       waitUpToSec: 70,
       waits: 2,
@@ -183,14 +186,14 @@ export class ScanRun {
 
   /** Starts Kalshi loads until LOAD_CONCURRENCY are in flight. */
   private pump() {
-    const { candidates, choice } = this.settings;
+    const { candidates, choice, asOf = null } = this.settings;
     while (this.loading < LOAD_CONCURRENCY && this.nextLoad < candidates.length) {
       const id = this.nextLoad++;
       const c = candidates[id];
       this.loading++;
       this.states[id] = { status: "loading" };
       const t0 = now();
-      const params = new URLSearchParams({ ticker: c.ticker, kind: c.kind, long: choice === "all" || choice > 90 ? "1" : "0" });
+      const params = new URLSearchParams({ ticker: c.ticker, kind: c.kind, long: choice === "all" || choice > 90 ? "1" : "0", ...(asOf !== null && { [SCAN_ASOF_PARAM]: String(asOf) }) });
       getJson<ScanKalshi>(`${SCAN_CANDIDATE_PATH}?${params}`, this.abort.signal)
         .then((r) => {
           const ms = now() - t0;

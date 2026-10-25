@@ -67,6 +67,8 @@ export type ScanKalshi =
       long: { points: KalshiPoint[]; start: number } | null;
       end: number | null;
       start: number | null;
+      /** The window ends at a frozen scan's as-of time (`end`), not a close: bars settle then. */
+      frozen?: true;
     }
   | {
       kind: "event";
@@ -74,6 +76,7 @@ export type ScanKalshi =
       long: { marks: ExpectedPoint[]; start: number } | null;
       end: number | null;
       start: number | null;
+      frozen?: true;
     };
 
 export interface ScanErrorResponse {

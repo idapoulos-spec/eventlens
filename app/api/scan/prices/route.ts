@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { checkAnalysisRateLimit, ANALYSIS_LIMIT_SUMMARY } from "@/lib/analysis-rate-limit";
 import { rejectUnlessSignedIn } from "@/lib/auth/session";
 import { DEFAULT_BENCHMARK } from "@/lib/market-data/benchmark-series";
-import { parseSpan, perMinuteLimit, scanError, upstreamError } from "@/lib/scan/api";
+import { parseScanAsOf, parseSpan, perMinuteLimit, scanError, upstreamError } from "@/lib/scan/api";
 import { getScanPrices } from "@/lib/scan/prices";
 import { validateStockTicker } from "@/lib/validation";
 
@@ -10,8 +10,9 @@ import { validateStockTicker } from "@/lib/validation";
 export const maxDuration = 40;
 
 /**
- * GET /api/scan/prices?stock=TLT&from=…&to=…&live=0|1 → ScanPrices: the stock's bars and the
- * default benchmark's closes over the scan's span, once per scan. It spends Twelve Data credits
+ * GET /api/scan/prices?stock=TLT&from=…&to=…&live=0|1[&asof=…] → ScanPrices: the stock's bars and
+ * the default benchmark's closes over the scan's span, once per scan; with asof (a frozen scan),
+ * the benchmark's closes settle then. It spends Twelve Data credits
  * (see lib/scan/span.ts priceCredits), so it counts as an analysis against the visitor's limit.
  */
 export async function GET(request: NextRequest) {
@@ -25,6 +26,8 @@ export async function GET(request: NextRequest) {
   }
   const span = parseSpan(request.nextUrl.searchParams, Date.now());
   if (!span.ok) return scanError(400, "invalid_span", span.message);
+  const asOf = parseScanAsOf(request.nextUrl.searchParams, Date.now());
+  if (!asOf.ok) return scanError(400, "invalid_asof", asOf.message);
 
   const limit = await checkAnalysisRateLimit();
   if (!limit.ok) {
@@ -33,7 +36,7 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const prices = await getScanPrices(stock.value, span.value);
+  const prices = await getScanPrices(stock.value, span.value, asOf.value);
   if (!prices.ok && prices.error.code === "rate_limited") return perMinuteLimit(prices.error.message, Date.now());
   if (!prices.ok) return upstreamError(prices.error);
   return Response.json(prices.data);
