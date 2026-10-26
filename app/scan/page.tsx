@@ -38,7 +38,12 @@ export default async function Scan({ searchParams }: PageProps<"/scan">) {
           </h1>
           <p className="mt-1 text-sm text-ink-secondary">Scan: exploratory leads across many Kalshi events, corrected for testing them all.</p>
         </div>
-        {isAccessGateOn() && <SignOutButton />}
+        <div className="flex shrink-0 items-center gap-3">
+          <Link href="/studies" className="text-sm text-ink-secondary hover:text-ink">
+            Saved studies
+          </Link>
+          {isAccessGateOn() && <SignOutButton />}
+        </div>
       </header>
       {asOf.ok ? <ScanPage initial={link} /> : <Notice title="Invalid input" message={asOf.error.message} />}
       <footer className="mt-10 border-t border-border pt-4">

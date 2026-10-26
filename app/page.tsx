@@ -90,6 +90,9 @@ export default async function Home({ searchParams }: PageProps<"/">) {
             <Link href={analysis ? `/scan?${new URLSearchParams({ stock: analysis.stock })}` : "/scan"} className="text-sm text-ink-secondary hover:text-ink">
               Scan many events
             </Link>
+            <Link href="/studies" className="text-sm text-ink-secondary hover:text-ink">
+              Saved studies
+            </Link>
             {isAccessGateOn() && <SignOutButton />}
           </div>
         </header>

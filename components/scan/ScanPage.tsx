@@ -15,6 +15,7 @@ import { validateStockTicker } from "@/lib/validation";
 import { analysisHref } from "../analysis/navigation";
 import { CopyLinkButton } from "../analysis/CopyLinkButton";
 import { MAY_DIFFER, REPRODUCED } from "../analysis/reproducibility";
+import { SaveStudy } from "../studies/SaveStudy";
 import { Caption, Flag, fmtR, Segmented } from "../research/parts";
 import { formatCi } from "../research/stats";
 import { KalshiSearch } from "../search/KalshiSearch";
@@ -83,7 +84,16 @@ export function ScanPage({ initial }: { initial: ScanLink }) {
   const [asOfInput, setAsOfInput] = useState(initial.asOf === null ? "" : newYorkInput(initial.asOf));
   const asOf = asOfInput === "" ? null : fromNewYorkInput(asOfInput);
   const [listState, setListState] = useState<ListState>({ status: "idle", key: "", list: null, error: null, listedAt: 0 });
-  const [run, setRun] = useState<{ run: ScanRun; stock: string; choice: WindowChoice; resolution: Resolution; candidates: ScanCandidate[]; asOf: number | null } | null>(null);
+  const [run, setRun] = useState<{
+    run: ScanRun;
+    stock: string;
+    choice: WindowChoice;
+    resolution: Resolution;
+    candidates: ScanCandidate[];
+    asOf: number | null;
+    /** The form's link when the scan started: a saved scan that isn't frozen lists its candidates again. */
+    formHref: string;
+  } | null>(null);
   const [stockError, setStockError] = useState<string | null>(null);
   const asOfError = asOfInput !== "" && asOf === null ? "Enter a New York date and time, or clear it to scan as of now." : null;
 
@@ -123,7 +133,15 @@ export function ScanPage({ initial }: { initial: ScanLink }) {
     setStockError(null);
     if (!list || !cost || cost.credits > MAX_PRICE_REQUESTS) return;
     run?.run.dispose();
-    setRun({ run: new ScanRun({ stock: valid.value, choice, resolution, candidates: list.candidates, asOf }), stock: valid.value, choice, resolution, candidates: list.candidates, asOf });
+    setRun({
+      run: new ScanRun({ stock: valid.value, choice, resolution, candidates: list.candidates, asOf }),
+      stock: valid.value,
+      choice,
+      resolution,
+      candidates: list.candidates,
+      asOf,
+      formHref: scanHref({ stock: valid.value, source, series, settled, tickers, window: choice, resolution: chosenResolution, asOf }),
+    });
   }
 
   return (
@@ -280,6 +298,7 @@ export function ScanResults({
   resolution,
   candidates,
   asOf = null,
+  formHref,
 }: {
   run: ScanRun;
   stock: string;
@@ -288,6 +307,8 @@ export function ScanResults({
   candidates: ScanCandidate[];
   /** A frozen scan's as-of time, or null for a live one. */
   asOf?: number | null;
+  /** The form's link when it started, for saving the scan unfrozen. */
+  formHref?: string;
 }) {
   const snap = useSyncExternalStore(run.subscribe, run.getSnapshot, run.getSnapshot);
   const { states, corrections, order } = snap;
@@ -362,7 +383,15 @@ export function ScanResults({
       {snap.phase === "done" && <Timings snap={snap} />}
       {snap.phase === "done" && snap.prices && (
         <section data-report-controls="" className="mt-4 border-t border-border pt-3 text-xs text-ink-secondary">
-          <FrozenScanLink stock={stock} candidates={candidates} choice={choice} resolution={resolution} asOf={asOf ?? snap.prices.fetchedAt} />
+          <FrozenScanLink
+            stock={stock}
+            candidates={candidates}
+            choice={choice}
+            resolution={resolution}
+            asOf={asOf ?? snap.prices.fetchedAt}
+            formHref={formHref}
+            headline={`${tested.length} tested · ${holm} survive Holm · ${bh} survive BH`}
+          />
         </section>
       )}
     </Card>
@@ -370,7 +399,24 @@ export function ScanResults({
 }
 
 /** The finished scan's frozen link, and what it reproduces. */
-function FrozenScanLink({ stock, candidates, choice, resolution, asOf }: { stock: string; candidates: ScanCandidate[]; choice: WindowChoice; resolution: Resolution; asOf: number }) {
+function FrozenScanLink({
+  stock,
+  candidates,
+  choice,
+  resolution,
+  asOf,
+  formHref,
+  headline,
+}: {
+  stock: string;
+  candidates: ScanCandidate[];
+  choice: WindowChoice;
+  resolution: Resolution;
+  asOf: number;
+  formHref?: string;
+  headline: string;
+}) {
+  const frozen = frozenScanHref({ stock, candidates, window: choice, resolution, asOf });
   return (
     <div className="grid gap-2">
       <div className="flex flex-wrap items-center gap-3">
@@ -378,8 +424,18 @@ function FrozenScanLink({ stock, candidates, choice, resolution, asOf }: { stock
           Frozen link: names these {candidates.length} {candidates.length === 1 ? "candidate" : "candidates"} and ends their windows at{" "}
           {formatDateTime(asOf, { withYear: true })} (or each one’s close), so it opens this scan again; run it to get this table.
         </span>
-        <CopyLinkButton href={frozenScanHref({ stock, candidates, window: choice, resolution, asOf })} />
+        <CopyLinkButton href={frozen} />
       </div>
+      <SaveStudy
+        defaultName={`${stock} scan · ${candidates.length} ${candidates.length === 1 ? "candidate" : "candidates"} · ${WINDOW_LABEL[choice]} ${resolution}`}
+        link={(freeze) => (freeze || !formHref ? frozen : formHref)}
+        freezeLabel={
+          formHref
+            ? `Freeze it: name these ${candidates.length} candidates and end their windows at ${formatDateTime(asOf, { withYear: true })}, so its link gives this table later (unticked, it lists the candidates again when opened)`
+            : null
+        }
+        headline={headline}
+      />
       <details>
         <summary className="cursor-pointer text-ink-muted hover:text-ink-secondary">What a frozen link reproduces, and what can still change</summary>
         <ul className="mt-2 list-disc space-y-1 pl-5">

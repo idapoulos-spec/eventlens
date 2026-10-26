@@ -42,6 +42,7 @@ import { formatDate, formatDateTime, formatShortDate, formatSigned, formatTime }
 import type { BenchmarkSeries } from "@/lib/market-data/types";
 import { fail, type Result } from "@/lib/result";
 import { analysisFromSearch, analysisHref } from "../analysis/navigation";
+import { SaveStudy } from "../studies/SaveStudy";
 import { EventStudyChart } from "../charts/EventStudyChart";
 import { formatLag, LeadLagChart, type LagUnit } from "../charts/LeadLagChart";
 import { RollingCorrelationChart } from "../charts/RollingCorrelationChart";
@@ -389,6 +390,18 @@ export function ResearchPanel({
             onLoad={(t) => goTo({ ...linkView, asOf: t })}
             subject={variable.kind === "probability" ? "market’s" : "event’s first"}
           />
+          <div className="mt-2">
+            <SaveStudy
+              defaultName={`${stockSymbol} vs. ${kalshiTicker} · ${WINDOW_LABEL[choice]} ${resolution}`}
+              link={(freeze) => {
+                const analysis = analysisFromSearch(window.location.search);
+                return analysis && analysisHref(analysis, { ...linkView, asOf: freeze ? asOf : frozenAt });
+              }}
+              freezeLabel={frozenAt === null ? `Freeze it at this view’s time (${formatDateTime(asOf, { withYear: true })}), so its link gives these numbers later` : null}
+              headline={primaryHeadline(primary)}
+              onFrozen={() => setFrozenAt(asOf)}
+            />
+          </div>
         </section>
         {note && (
           <p role="status" className="mt-2 text-xs text-ink-secondary">
@@ -520,6 +533,12 @@ export function ResearchPanel({
 }
 
 // ---- The link: every setting, and where the windows end ----
+
+/** The primary test in one line, for a saved study: what it showed when saved. */
+export function primaryHeadline(primary: TestResult | null): string | null {
+  if (primary?.p == null) return null;
+  return `r = ${fmtR(primary.estimate)} (95% CI ${formatCi(primary.ci, fmtR)}), p = ${formatP(primary.p)}`;
+}
 
 /** The jump sizes the panel opens with: the link's at the resolution it opens at, if it's one the variable offers. */
 function linkedThresholds(variable: KalshiVariable, view: ResearchView | undefined): Record<Resolution, number> {
