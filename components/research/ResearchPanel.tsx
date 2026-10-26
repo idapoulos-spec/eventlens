@@ -43,6 +43,9 @@ import type { BenchmarkSeries } from "@/lib/market-data/types";
 import { fail, type Result } from "@/lib/result";
 import { analysisFromSearch, analysisHref } from "../analysis/navigation";
 import { SaveStudy } from "../studies/SaveStudy";
+import { analysisFileBase, analysisReport, type ReportSources } from "../report/analysisReport";
+import { ReportControls } from "../report/ReportControls";
+import { APP_COMMIT, APP_VERSION } from "@/lib/report/version";
 import { EventStudyChart } from "../charts/EventStudyChart";
 import { formatLag, LeadLagChart, type LagUnit } from "../charts/LeadLagChart";
 import { RollingCorrelationChart } from "../charts/RollingCorrelationChart";
@@ -67,7 +70,7 @@ import { useBenchmark, type BenchmarkChoice } from "./useBenchmark";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-interface Settings extends ComputeSettings {
+export interface Settings extends ComputeSettings {
   unit: LagUnit;
   /** Singular and plural names of one interval. */
   noun: [string, string];
@@ -78,7 +81,7 @@ interface Settings extends ComputeSettings {
   rollingSpan: string;
 }
 
-const SETTINGS: Record<Resolution, Settings> = {
+export const SETTINGS: Record<Resolution, Settings> = {
   hourly: {
     ...COMPUTE_SETTINGS.hourly,
     unit: "h",
@@ -98,7 +101,7 @@ const SETTINGS: Record<Resolution, Settings> = {
 };
 
 // A rolling view needs this many intervals beyond one window to show any change over time.
-const ROLLING_EXTRA = 10;
+export const ROLLING_EXTRA = 10;
 
 const COMMON_EXCLUSIONS: Record<string, string> = {
   before_kalshi: "before Kalshi's first price in the loaded history",
@@ -108,7 +111,7 @@ const COMMON_EXCLUSIONS: Record<string, string> = {
   outcome_set_changed: "across a change in which outcomes were open",
 };
 
-const EXCLUSION_LABEL: Record<Resolution, Record<string, string>> = {
+export const EXCLUSION_LABEL: Record<Resolution, Record<string, string>> = {
   hourly: { non_trading: "across nights, weekends, or halts", ...COMMON_EXCLUSIONS },
   daily: { non_trading: "across a missing session", ...COMMON_EXCLUSIONS },
 };
@@ -142,10 +145,12 @@ interface Props {
    * a frozen link's windows end at the close instead, so its numbers can differ from these.
    */
   closedAt?: number | null;
+  /** Where the data came from, for a report. */
+  sources?: ReportSources;
 }
 
 /** How the market-adjusted view was adjusted, for its captions. */
-interface Adjustment {
+export interface Adjustment {
   benchmark: string;
   model: MarketModel;
   eventModel: MarketModel | null;
@@ -196,6 +201,7 @@ export function ResearchPanel({
   initialView,
   windowFrozen = false,
   closedAt = null,
+  sources = { kalshiFetchedAt: null, stockFetchedAt: null, provenance: null, title: null },
 }: Props) {
   // 90 days by default: with 30 days of hourly data the power tests (correlation-test.test.ts)
   // miss a correlation of about 0.4 roughly half the time.
@@ -400,6 +406,47 @@ export function ResearchPanel({
               freezeLabel={frozenAt === null ? `Freeze it at this view’s time (${formatDateTime(asOf, { withYear: true })}), so its link gives these numbers later` : null}
               headline={primaryHeadline(primary)}
               onFrozen={() => setFrozenAt(asOf)}
+            />
+          </div>
+          <div className="mt-2">
+            <ReportControls
+              ready={results !== null && !(primary?.p != null && !looPart)}
+              pendingText={results === null ? "The report waits for the results." : "The report waits for the leave-one-out check…"}
+              fileBase={analysisFileBase({ stock: stockSymbol, kalshi: kalshiTicker, choice, resolution, asOf })}
+              build={({ preparedBy, includeLink }) => {
+                if (!results) return null;
+                const analysis = analysisFromSearch(window.location.search);
+                return analysisReport({
+                  stock: stockSymbol,
+                  kalshi: kalshiTicker,
+                  variable,
+                  choice,
+                  resolution,
+                  threshold,
+                  chosenReturns,
+                  benchmark: benchmark.active.symbol,
+                  benchmarkFetchedAt: benchSeries?.fetchedAt ?? null,
+                  isSelf,
+                  unavailable,
+                  asOf,
+                  windowEnd,
+                  windowFrozen,
+                  frozenAt,
+                  windowNote: note,
+                  results,
+                  detectable: detectablePart?.value ?? null,
+                  leaveOneOut: looPart?.value ?? null,
+                  sample,
+                  fewRuns: resolution === "daily" && plan.kind === "loaded" && plan.days < 90,
+                  longDaily: resolution === "daily" && plan.kind === "long",
+                  sources,
+                  link: includeLink && analysis ? new URL(analysisHref(analysis, linkView), window.location.origin).href : null,
+                  preparedBy,
+                  generatedAt: Date.now(),
+                  version: APP_VERSION,
+                  commit: APP_COMMIT,
+                });
+              }}
             />
           </div>
         </section>
@@ -673,7 +720,7 @@ function FreezeControls({
 // ---- Summary and flags ----
 
 /** Lowercases a sentence's first letter to continue a sentence, unless it starts a ticker (e.g. "TLT is …"). */
-const lowerFirst = (text: string) => (/^[A-Z][a-z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text);
+export const lowerFirst = (text: string) => (/^[A-Z][a-z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text);
 
 /** How to read the sign of a correlation, for one market's YES side or an event's expected value. */
 function SignNote({ stockSymbol, variable }: { stockSymbol: string; variable: KalshiVariable }) {
@@ -694,7 +741,7 @@ function SignNote({ stockSymbol, variable }: { stockSymbol: string; variable: Ka
   );
 }
 
-function sampleFlags(stats: CorrelationStats, variable: KalshiVariable): string[] {
+export function sampleFlags(stats: CorrelationStats, variable: KalshiVariable): string[] {
   const flags: string[] = [];
   if (stats.flag === "insufficient") flags.push(`Too few intervals to analyze (n = ${stats.n}; at least 10 needed)`);
   else if (stats.flag === "small") flags.push(`Small sample (n = ${stats.n}): results can swing a lot by chance`);
@@ -704,12 +751,12 @@ function sampleFlags(stats: CorrelationStats, variable: KalshiVariable): string[
 }
 
 /** e.g. "beta 1.18 from the full 90 days (n = 412 hourly intervals), not only this window". */
-function betaFrom(model: MarketModel, resolution: Resolution, sample: ModelSample): string {
+export function betaFrom(model: MarketModel, resolution: Resolution, sample: ModelSample): string {
   return `beta ${model.beta.toFixed(2)} from ${modelSample(model, resolution, sample)}${sample.kind === "loaded" && sample.days < 90 ? ", not only this window" : ""}`;
 }
 
 /** The adjustment in one sentence, for a chart's small print. */
-function adjustmentNote({ benchmark, model, sample }: Adjustment, stockSymbol: string, resolution: Resolution): string {
+export function adjustmentNote({ benchmark, model, sample }: Adjustment, stockSymbol: string, resolution: Resolution): string {
   return `Market-adjusted: ${stockSymbol}’s return minus (alpha + beta × ${benchmark}’s return), with ${betaFrom(model, resolution, sample)}.`;
 }
 
@@ -907,26 +954,26 @@ function PrimaryTest({
 }
 
 const pct = (share: number) => `${Math.round(share * 100)}%`;
-const REASON_TEXT: Record<FragileReason, string> = {
+export const REASON_TEXT: Record<FragileReason, string> = {
   movement: "a few intervals carry most of the movement",
   leave_one_out: "leaving out one session changes the decision",
 };
 
 // From fragility-rates.sim.test.ts: how often the warning (F1 or F3) came on in hourly simulations with
 // no real relationship, 200 data sets per window.
-const WARNING_BY_CHANCE =
+export const WARNING_BY_CHANCE =
   "11.5% of data sets over a year and 13.0% over 180 days, but 22.5% over 90 days and 75.0% over 30 days, where few intervals carry Kalshi's movement";
 // The same runs, for the pre-set F2 check taken out of the warning on 2026-10-19.
-const F2_BY_CHANCE = "98.5% of data sets at 90 days and 61% at a year";
+export const F2_BY_CHANCE = "98.5% of data sets at 90 days and 61% at a year";
 
 /** When an interval ran: its New York date and hours (hourly), or the session it closed (daily). */
-function intervalText(t: number, resolution: Resolution): string {
+export function intervalText(t: number, resolution: Resolution): string {
   if (resolution === "daily") return `${formatDate(t)} (close to close)`;
   return `${formatDate(t)}, ${formatTime(t - 60 * 60 * 1000)}–${formatTime(t)}`;
 }
 
 /** When a session or run of days was. */
-function sessionText(from: number, to: number, resolution: Resolution): string {
+export function sessionText(from: number, to: number, resolution: Resolution): string {
   if (resolution === "hourly") return formatDate(from);
   return formatShortDate(from) === formatShortDate(to) ? formatDate(to) : `${formatShortDate(from)} – ${formatDate(to)}`;
 }
@@ -935,7 +982,7 @@ function sessionText(from: number, to: number, resolution: Resolution): string {
  * How much the primary result rests on a few intervals and sessions (lib/analytics/fragility.ts),
  * with a warning at thresholds fixed before any result was seen.
  */
-function FragilityBlock({
+export function FragilityBlock({
   fragility: f,
   leaveOneOut: loo,
   pending,
@@ -1061,15 +1108,15 @@ function FragilityBlock({
 // From long-windows.sim.test.ts, daily with 252 trading days: the primary test's interval covered the
 // true effect in 180 of 200 data sets (below the 92% bar set beforehand, so shown here), and with no
 // link 28 of 400 had p < 0.05 (within the 7.5% bar, but above 5%).
-const LONG_DAILY_COVERAGE = "90% (180 of 200, 95% range 85–93%)";
-const LONG_DAILY_FALSE_POSITIVES = "7.0% (28 of 400, 95% range 4.9–9.9%)";
+export const LONG_DAILY_COVERAGE = "90% (180 of 200, 95% range 85–93%)";
+export const LONG_DAILY_FALSE_POSITIVES = "7.0% (28 of 400, 95% range 4.9–9.9%)";
 
 /** The smallest correlation the primary test could detect with 80% power in this sample. */
 // From power.test.ts, on validation seeds: with 20 daily intervals (about 10 runs of days), effects of the
 // size reported were detected in 27 of 60 fresh samples, far below the 80% the figure claims.
-const UNRELIABLE_DAILY = "45% (27 of 60, 95% range 33–58%)";
+export const UNRELIABLE_DAILY = "45% (27 of 60, 95% range 33–58%)";
 
-function DetectableLine({ detectable, fewRuns }: { detectable: DetectableCorrelation; fewRuns: boolean }) {
+export function DetectableLine({ detectable, fewRuns }: { detectable: DetectableCorrelation; fewRuns: boolean }) {
   const units = plural(detectable.units, detectable.unit === "day_run" ? ["run of days", "runs of days"] : ["session", "sessions"]);
   const power = `${Math.round(detectable.power * 100)}%`;
   return (
@@ -1102,7 +1149,7 @@ function DetectableLine({ detectable, fewRuns }: { detectable: DetectableCorrela
 
 // ---- Chart cards ----
 
-function when(lag: number, settings: Settings, subject: string): string {
+export function when(lag: number, settings: Settings, subject: string): string {
   const n = Math.abs(lag);
   const span = plural(n, settings.noun);
   if (lag === 0) return `${subject} in the same ${settings.noun[0]}`;
@@ -1258,7 +1305,7 @@ function RollingCard({
 }
 
 /** Warnings for a group with few events: none, too few for any test, or rough intervals. */
-function eventFlag(name: string, group: GroupTests | undefined, n: number): string | null {
+export function eventFlag(name: string, group: GroupTests | undefined, n: number): string | null {
   if (n === 0) return null;
   if (n < MIN_TEST_EVENTS) return `Only ${plural(n, [name, `${name}s`])}: too few for intervals or p-values to mean much`;
   if (n >= SMALL_EVENT_COUNT) return null;

@@ -33,6 +33,7 @@ async function marketKalshi(ticker: string, long: boolean, asOf: number | null):
     end: w.end,
     start: w.start,
     ...(w.frozen && { frozen: true as const }),
+    provenance: history.data.provenance,
   });
 }
 
@@ -54,6 +55,7 @@ async function eventKalshi(ticker: string, long: boolean, asOf: number | null): 
     end: event.window.end,
     start: event.window.start,
     ...(event.window.frozen && { frozen: true as const }),
+    provenance: event.provenance,
   });
 }
 

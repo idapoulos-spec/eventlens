@@ -5,6 +5,7 @@
 
 import type { Resolution } from "@/lib/analytics/research";
 import type { LeaveOneOut } from "@/lib/analytics/fragility";
+import type { Provenance } from "@/lib/history/types";
 import { correctScan, leaveOneOutTargets, rankScan, scanCandidateSteps, scanLeaveOneOutSteps, type Correction, type ScanInput, type ScanTest } from "@/lib/analytics/scan";
 import type { WindowChoice } from "@/lib/history/window";
 import type { BenchmarkSeries } from "@/lib/market-data/types";
@@ -59,7 +60,9 @@ export interface ScanSnapshot {
   corrections: (Correction | null)[];
   /** Candidate indices, best first (tested ones; untested and pending after). */
   order: number[];
-  prices: Pick<ScanPrices, "requests" | "fetchedAt"> | null;
+  prices: (Pick<ScanPrices, "requests" | "fetchedAt"> & { benchmarkFetchedAt: number }) | null;
+  /** Where each candidate's Kalshi history came from, once loaded (null until then, or if not said). */
+  provenance: (Provenance | null)[];
   /** Waiting for Twelve Data's next minute until this time (ms since 1970), or null. */
   waitingUntil: number | null;
   timings: ScanTimings;
@@ -128,6 +131,7 @@ export class ScanRun {
   private stock: ScanStock | null = null;
   private benchmark: BenchmarkSeries | null = null;
   private kalshi = new Map<number, ScanKalshi>();
+  private provenance: (Provenance | null)[] = [];
   private inputs = new Map<number, ScanInput>();
   private queue: { id: number; kind: "test" | "loo"; steps: Generator<void, unknown>; spent: number }[] = [];
   private scheduled = false;
@@ -173,7 +177,7 @@ export class ScanRun {
     this.timings.prices = now() - this.started;
     this.stock = scanStock(prices.data);
     this.benchmark = prices.data.benchmark;
-    this.pricesInfo = { requests: prices.data.requests, fetchedAt: prices.data.fetchedAt };
+    this.pricesInfo = { requests: prices.data.requests, fetchedAt: prices.data.fetchedAt, benchmarkFetchedAt: prices.data.benchmark.fetchedAt };
     for (const id of this.kalshi.keys()) this.enqueueTest(id);
     this.publish();
   }
@@ -203,6 +207,7 @@ export class ScanRun {
             this.states[id] = { status: "untested", reason: r.message };
           } else {
             this.kalshi.set(id, r.data);
+            this.provenance[id] = r.data.provenance ?? null;
             this.states[id] = { status: "computing" };
             if (this.stock) this.enqueueTest(id);
           }
@@ -348,7 +353,8 @@ export class ScanRun {
         key: this.settings.candidates[i].ticker,
       })),
     );
-    return { phase, error, states, corrections, order, prices, waitingUntil: this.waitingUntil ?? null, timings: { ...this.timings, loads: [...this.timings.loads], computes: [...this.timings.computes] } };
+    const provenance = this.settings.candidates.map((_, i) => this.provenance[i] ?? null);
+    return { phase, error, states, corrections, order, prices, provenance, waitingUntil: this.waitingUntil ?? null, timings: { ...this.timings, loads: [...this.timings.loads], computes: [...this.timings.computes] } };
   }
 
   private publish(phase: ScanSnapshot["phase"] = this.snapshot.phase === "prices" && this.stock ? "running" : this.snapshot.phase, error: string | null = this.snapshot.error) {

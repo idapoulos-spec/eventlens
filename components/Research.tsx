@@ -109,6 +109,7 @@ export async function Research({
       opened={Number.isFinite(opened) ? opened : null}
       initialView={view}
       {...(frozen && { windowFrozen: true })}
+      sources={{ kalshiFetchedAt: k.data.fetchedAt, stockFetchedAt: s.data.historyFetchedAt, provenance: h.data.provenance, title: market.title }}
       // Without the store a closed market's windows end now, but a frozen link's end at its close.
       {...(end === null && closeTime !== null && Number.isFinite(closeTime) && closeTime <= asOf && { closedAt: closeTime })}
     />

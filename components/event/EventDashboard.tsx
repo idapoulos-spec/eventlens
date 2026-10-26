@@ -274,6 +274,7 @@ export async function EventResearch({
         opened={event.window.start}
         initialView={view}
         {...(frozen && { windowFrozen: true })}
+        sources={{ kalshiFetchedAt: event.fetchedAt, stockFetchedAt: s.data.historyFetchedAt, provenance: event.provenance, title: event.title }}
       />
       <p className="text-xs text-ink-muted">{definitionText(event)} Each Research row reads E at its own hour; an interval whose open outcomes changed between its ends is left out.</p>
     </div>

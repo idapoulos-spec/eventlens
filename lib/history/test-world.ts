@@ -46,6 +46,11 @@ interface Bar {
 
 // Each symbol moves with a market factor (SPY's own moves) plus noise of its own.
 const BETA: Record<string, number> = { SPY: 1, NVDA: 1.4, TLT: -0.3 };
+/**
+ * Opt-in symbols that start at a distinctive price instead of 100, so a test can tell whether any
+ * price leaks into its output (lib/report/licensing.test.ts); every other symbol is unchanged.
+ */
+export const CANARY_START: Record<string, number> = { CNRY: 98765.4321, CNRYB: 87654.3219 };
 const factor = (() => {
   const rng = mulberry32(seedOf("market"));
   return SESSION_OPENS.map(() => Array.from({ length: 13 }, (_, i) => (i === 0 ? 0.005 : 0.0012) * normal(rng)));
@@ -57,7 +62,7 @@ function barsOf(symbol: string): Bar[] {
   if (!bars) {
     const rng = mulberry32(seedOf(symbol));
     const beta = BETA[symbol] ?? 1;
-    let price = 100;
+    let price = CANARY_START[symbol] ?? 100;
     bars = SESSION_OPENS.flatMap((open, s) =>
       factor[s].map((m, i) => {
         const own = symbol === "SPY" ? 0 : (i === 0 ? 0.008 : 0.0025) * normal(rng);

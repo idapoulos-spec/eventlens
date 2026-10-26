@@ -16,6 +16,9 @@ import { analysisHref } from "../analysis/navigation";
 import { CopyLinkButton } from "../analysis/CopyLinkButton";
 import { MAY_DIFFER, REPRODUCED } from "../analysis/reproducibility";
 import { SaveStudy } from "../studies/SaveStudy";
+import { formatSmallP, scanFileBase, scanReport } from "../report/scanReport";
+import { ReportControls } from "../report/ReportControls";
+import { APP_COMMIT, APP_VERSION } from "@/lib/report/version";
 import { Caption, Flag, fmtR, Segmented } from "../research/parts";
 import { formatCi } from "../research/stats";
 import { KalshiSearch } from "../search/KalshiSearch";
@@ -31,8 +34,7 @@ const SOURCES: { value: Source; label: string }[] = [
   { value: "tickers", label: "Custom list" },
 ];
 
-/** p-values down to the finer p's resolution: three decimals, or e.g. "5.0e-5". */
-export const formatSmallP = (p: number | null) => (p === null ? "—" : p >= 0.001 ? p.toFixed(3) : p.toExponential(1));
+export { formatSmallP };
 
 const seconds = (ms: number | null) => (ms === null ? "—" : `${(ms / 1000).toFixed(1)} s`);
 
@@ -70,6 +72,14 @@ function useScanLinkSync(link: ScanLink) {
   }, [href]);
 }
 
+/** How a scan's candidates were chosen, in words, for its report. */
+function selectionText(source: Source, series: string, settled: boolean, listedAt: number): string {
+  const when = `listed ${formatDateTime(listedAt, { withYear: true })}`;
+  if (source === "series") return `${series}’s open events${settled ? " and its stored settled events" : ""}, ${when}`;
+  if (source === "stored") return `${series.trim() ? `${series.trim()}’s` : "every"} stored events, settled ones included, ${when}`;
+  return `a custom list, ${when}`;
+}
+
 export function ScanPage({ initial }: { initial: ScanLink }) {
   const [stock, setStock] = useState(initial.stock);
   const [source, setSource] = useState<Source>(initial.source);
@@ -93,6 +103,8 @@ export function ScanPage({ initial }: { initial: ScanLink }) {
     asOf: number | null;
     /** The form's link when the scan started: a saved scan that isn't frozen lists its candidates again. */
     formHref: string;
+    /** How the candidates were chosen, for a report. */
+    selection: string;
   } | null>(null);
   const [stockError, setStockError] = useState<string | null>(null);
   const asOfError = asOfInput !== "" && asOf === null ? "Enter a New York date and time, or clear it to scan as of now." : null;
@@ -141,6 +153,7 @@ export function ScanPage({ initial }: { initial: ScanLink }) {
       candidates: list.candidates,
       asOf,
       formHref: scanHref({ stock: valid.value, source, series, settled, tickers, window: choice, resolution: chosenResolution, asOf }),
+      selection: selectionText(source, series, settled, listedAt),
     });
   }
 
@@ -299,6 +312,7 @@ export function ScanResults({
   candidates,
   asOf = null,
   formHref,
+  selection = "",
 }: {
   run: ScanRun;
   stock: string;
@@ -309,6 +323,8 @@ export function ScanResults({
   asOf?: number | null;
   /** The form's link when it started, for saving the scan unfrozen. */
   formHref?: string;
+  /** How the candidates were chosen, for a report. */
+  selection?: string;
 }) {
   const snap = useSyncExternalStore(run.subscribe, run.getSnapshot, run.getSnapshot);
   const { states, corrections, order } = snap;
@@ -392,6 +408,29 @@ export function ScanResults({
             formHref={formHref}
             headline={`${tested.length} tested · ${holm} survive Holm · ${bh} survive BH`}
           />
+          <div className="mt-2">
+            <ReportControls
+              ready
+              pendingText=""
+              fileBase={scanFileBase({ stock, choice, resolution, candidates, generatedAt: snap.prices.fetchedAt })}
+              build={({ preparedBy, includeLink }) =>
+                scanReport({
+                  stock,
+                  choice,
+                  resolution,
+                  candidates,
+                  snap,
+                  asOf,
+                  selection,
+                  link: includeLink ? new URL(frozenScanHref({ stock, candidates, window: choice, resolution, asOf: asOf ?? snap.prices!.fetchedAt }), window.location.origin).href : null,
+                  preparedBy,
+                  generatedAt: Date.now(),
+                  version: APP_VERSION,
+                  commit: APP_COMMIT,
+                })
+              }
+            />
+          </div>
         </section>
       )}
     </Card>
