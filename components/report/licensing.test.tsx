@@ -173,11 +173,16 @@ describe("reports carry no stock return finer than a statistic", () => {
       const { rises, falls } = countEvents(report);
       const events = table("event-study");
       const comparison = table("market-comparison")!;
+      const chart = blocks.find((b) => b.kind === "chart" && b.id === "event-study");
       for (const [name, n, col] of [["Rises", rises, 3], ["Falls", falls, 4]] as const) {
         const shown = events?.head.some((h) => h.startsWith(name)) ?? false;
         expect(shown, `${name} at ${jump} pp (n = ${n})`).toBe(n >= MIN_TEST_EVENTS);
         expect(comparison.rows.every((r) => r[col].startsWith("n <")), `${name} averages at ${jump} pp`).toBe(n < MIN_TEST_EVENTS);
+        // The chart draws a path only for a group with enough events.
+        expect(chart?.kind === "chart" && chart.svg.includes(`After ${name.toLowerCase()} (`), `${name} path at ${jump} pp`).toBe(n >= MIN_TEST_EVENTS);
       }
+      // Charts appear only for the lead-lag correlations, the rolling correlation, and the event study.
+      expect(blocks.filter((b) => b.kind === "chart").map((b) => (b as { id: string }).id).every((id) => ["lead-lag", "rolling", "event-study"].includes(id))).toBe(true);
     }
   });
 });

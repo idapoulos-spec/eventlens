@@ -15,6 +15,7 @@ import { formatShortDate, formatSigned } from "@/lib/format";
 import type { Provenance } from "@/lib/history/types";
 import { provenanceNote, WINDOW_LABEL, type WindowChoice } from "@/lib/history/window";
 import type { Block, Report, Section } from "@/lib/report/model";
+import { eventStudyChart, leadLagChart, rollingChart } from "@/lib/report/charts";
 import { reportInstant, reportTime } from "@/lib/report/format";
 import { MAY_DIFFER, REPRODUCED } from "../analysis/reproducibility";
 import { formatLag } from "../charts/LeadLagChart";
@@ -422,8 +423,24 @@ function leadLagBlocks(i: AnalysisReportInput, adjustment: Adjustment | null): B
       uncorrected.length > 0 ? ` Uncorrected, ${uncorrected.map((l) => `${fmt(l)} has p = ${formatP(l.test.p)}`).join(" and ")}: about what chance produces across ${tested.length} tests.` : ""
     }`;
   }
+  const chart: Block[] =
+    measured.length === 0
+      ? []
+      : [
+          {
+            kind: "chart",
+            id: "lead-lag",
+            svg: leadLagChart(
+              lags.map((l) => ({ label: fmt(l), r: l.r, ci: l.test.ci, primary: l.test.role === "primary" })),
+              `Lead-lag: the correlation of ${changes} with ${i.stock}’s ${returnNoun}s at each lag, with 95% intervals`,
+            ),
+            alt: `Lead-lag: r at each lag (dots) with its 95% interval (whiskers)`,
+            caption: `Correlation of ${changes} with ${i.stock}’s ${returnNoun}s, shifted by ${settings.noun[1]}; right of 0, ${variable.text.subject} moved first. Exploratory; the values are in the table below.`,
+          },
+        ];
   return [
     p(lead),
+    ...chart,
     {
       kind: "table",
       id: "lead-lag",
@@ -444,7 +461,19 @@ function rollingBlocks(i: AnalysisReportInput, adjustment: Adjustment | null): B
   const changes = i.results.view.changes.length;
   const has = changes >= w + ROLLING_EXTRA && rs.length > 0;
   const latest = points.at(-1)?.r ?? null;
+  const chart: Block[] = has
+    ? [
+        {
+          kind: "chart",
+          id: "rolling",
+          svg: rollingChart(points, `Rolling ${settings.same.toLowerCase()} correlation over time`, formatShortDate),
+          alt: "Rolling correlation over time",
+          caption: "Descriptive only: each point is the correlation over the intervals just before it.",
+        },
+      ]
+    : [];
   return [
+    ...chart,
     p(
       has
         ? `The ${settings.same.toLowerCase()} correlation over the last ${w} intervals (${settings.rollingSpan})${adjustment ? `, market-adjusted vs. ${adjustment.benchmark}` : ""} moved from ${fmtR(Math.min(...rs))} to ${fmtR(Math.max(...rs))} (latest ${fmtR(latest)}).`
@@ -496,6 +525,25 @@ function eventBlocks(i: AnalysisReportInput, adjustment: Adjustment | null): Blo
     out.push(p(`The average path after ${omitted.map((g) => g.name).join(" and ")} is left out of this report: with fewer than ${MIN_TEST_EVENTS} events it is close to a single event’s returns.`));
   }
   if (shown.length > 0) {
+    const base = study.baseline.mean;
+    out.push({
+      kind: "chart",
+      id: "event-study",
+      svg: eventStudyChart(
+        {
+          labels: study.offsets.map((k) => formatLag(k, settings.unit)),
+          groups: shown.map((g) => ({
+            name: `After ${g.name} (n = ${study[g.key].n})`,
+            mean: study[g.key].mean ?? [],
+            band: tests[g.key].bars.map((t, k) => (t?.ci && base ? ([t.ci[0] + base[k], t.ci[1] + base[k]] as [number, number]) : null)),
+          })),
+          baseline: base ?? [],
+        },
+        `Average ${i.stock} cumulative ${kind} around ${variable.kind === "probability" ? "Kalshi jumps" : "jumps in E"}, with 95% bands and the baseline`,
+      ),
+      alt: `Average cumulative ${kind} after ${shown.map((g) => g.name).join(" and ")}, with 95% bands, against the baseline`,
+      caption: "Compare each path with the baseline (gray), not with zero. Shaded: 95% intervals for the average path. Paths of groups with too few events to average are left out.",
+    });
     const pc = (v: number) => formatSigned(v, 2, "%");
     const cell = (t: TestResult | null) => (t === null ? ["—", "—", "—"] : [t.estimate === null ? "—" : pc(t.estimate), formatCi(t.ci, pc), t.p === null ? "—" : `${formatP(t.p)} (${formatP(t.bh)})`]);
     const label = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);

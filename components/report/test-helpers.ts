@@ -26,7 +26,7 @@ export function tablesOf(html: string): PageTable[] {
 
 /** The numbers in a text, as written ("−0.10", "+0.26", "0.072", "1,204", "45%", "5.0e-5"), with minus signs unified. */
 export function numbersIn(text: string): string[] {
-  return [...text.replace(/−/g, "-").matchAll(/[-+]?\d[\d,]*(?:\.\d+)?(?:e-?\d+)?%?/g)].map((m) => m[0]);
+  return [...text.replace(/−/g, "-").matchAll(/[-+]?\d+(?:,\d{3})*(?:\.\d+)?(?:e-?\d+)?%?/g)].map((m) => m[0]);
 }
 
 /** Numbers in `text` that `page` doesn't have anywhere. */
