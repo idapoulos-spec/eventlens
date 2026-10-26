@@ -1,13 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { CONTROL_BUTTON as BUTTON, type Control } from "../analysis/ControlBar";
 import { renderHtml } from "@/lib/report/html";
 import { renderMarkdown } from "@/lib/report/markdown";
 import type { Report, ReportOptions } from "@/lib/report/model";
 import { cleanAuthor, MAX_AUTHOR_LENGTH, readAuthor, writeAuthor } from "./author";
-
-const BUTTON =
-  "inline-flex h-9 items-center rounded-md border border-border px-2.5 font-medium text-ink-secondary transition hover:bg-surface-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 sm:h-7";
 
 /** How long a printable report's address keeps working after it opens (it lives in this tab's memory). */
 const KEEP_PAGE_MS = 10 * 60 * 1000;
@@ -24,9 +22,10 @@ function download(text: string, type: string, name: string) {
 /**
  * Exports what's on screen as a report: a printable page (opened in a new tab, to print or save as
  * PDF) or Markdown. The report is built in the browser from the page's own results, so it costs no
- * requests. `build` returns null when there's nothing to report.
+ * requests. `build` returns null when there's nothing to report. Its button, message, and form go
+ * in a ControlBar.
  */
-export function ReportControls({
+export function useReportControl({
   ready,
   pendingText,
   build,
@@ -37,7 +36,7 @@ export function ReportControls({
   pendingText: string;
   build: (options: ReportOptions) => Report | null;
   fileBase: string;
-}) {
+}): Control {
   const [open, setOpen] = useState(false);
   const [author, setAuthor] = useState("");
   const [includeLink, setIncludeLink] = useState(true);
@@ -76,44 +75,41 @@ export function ReportControls({
     setStatus("Downloaded.");
   }
 
-  return (
-    <div className="grid gap-2">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <button type="button" onClick={toggle} className={BUTTON} aria-expanded={open} disabled={!ready} title={ready ? undefined : pendingText}>
-          Report…
-        </button>
-        {!ready && <span className="text-ink-muted">{pendingText}</span>}
-        {status && <span role="status">{status}</span>}
-      </div>
-      {open && ready && (
-        <div className="grid max-w-xl gap-2 rounded-lg border border-border p-3">
-          <label className="grid gap-1">
-            <span>Prepared by (optional; remembered in this browser)</span>
-            <input
-              value={author}
-              maxLength={MAX_AUTHOR_LENGTH}
-              onChange={(e) => setAuthor(e.target.value)}
-              className="h-10 rounded-lg border border-border bg-surface-raised px-2 text-base text-ink sm:h-8 sm:text-xs"
-            />
-          </label>
-          <label className="flex items-start gap-2">
-            <input type="checkbox" checked={includeLink} onChange={(e) => setIncludeLink(e.target.checked)} className="mt-0.5" />
-            <span>Include the reproducible link (it opens behind this site’s sign-in). The settings are listed under Inputs either way.</span>
-          </label>
-          <p className="text-ink-muted">
-            Statistics and Kalshi data only: no stock prices, price series, or price charts (Twelve Data’s terms). Built from this page,
-            so it costs no data requests.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={printable} className={BUTTON}>
-              Open printable report
-            </button>
-            <button type="button" onClick={markdown} className={BUTTON}>
-              Download Markdown
-            </button>
-          </div>
+  return {
+    buttons: (
+      <button type="button" onClick={toggle} className={BUTTON} aria-expanded={open} disabled={!ready} title={ready ? undefined : pendingText}>
+        Report…
+      </button>
+    ),
+    status: !ready ? <span className="text-ink-muted">{pendingText}</span> : status && <span role="status">{status}</span>,
+    panel: open && ready && (
+      <div className="grid max-w-xl gap-2 rounded-lg border border-border p-3">
+        <label className="grid gap-1">
+          <span>Prepared by (optional; remembered in this browser)</span>
+          <input
+            value={author}
+            maxLength={MAX_AUTHOR_LENGTH}
+            onChange={(e) => setAuthor(e.target.value)}
+            className="h-10 rounded-lg border border-border bg-surface-raised px-2 text-base text-ink sm:h-8 sm:text-xs"
+          />
+        </label>
+        <label className="flex items-start gap-2">
+          <input type="checkbox" checked={includeLink} onChange={(e) => setIncludeLink(e.target.checked)} className="mt-0.5" />
+          <span>Include the reproducible link (it opens behind this site’s sign-in). The settings are listed under Inputs either way.</span>
+        </label>
+        <p className="text-ink-muted">
+          Statistics and Kalshi data only: no stock prices, price series, or price charts (Twelve Data’s terms). Built from this page,
+          so it costs no data requests.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={printable} className={BUTTON}>
+            Open printable report
+          </button>
+          <button type="button" onClick={markdown} className={BUTTON}>
+            Download Markdown
+          </button>
         </div>
-      )}
-    </div>
-  );
+      </div>
+    ),
+  };
 }

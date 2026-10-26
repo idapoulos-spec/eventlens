@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEVICE_ONLY } from "./saved";
-import { SaveStudy } from "./SaveStudy";
+import { ControlBar } from "../analysis/ControlBar";
+import { useSaveStudy } from "./useSaveStudy";
 import { importSummary, StudiesPage } from "./StudiesPage";
 
 // Static markup only: vitest runs in Node without a DOM, so the store's behavior is covered by saved.test.ts.
@@ -17,9 +18,13 @@ describe("StudiesPage", () => {
   });
 });
 
-describe("SaveStudy", () => {
+function SaveOnly() {
+  return <ControlBar controls={[useSaveStudy({ defaultName: "TLT vs. X", link: () => "/", freezeLabel: "Freeze it", headline: null })]} />;
+}
+
+describe("useSaveStudy", () => {
   it("starts closed, as one button", () => {
-    const html = renderToStaticMarkup(<SaveStudy defaultName="TLT vs. X" link={() => "/"} freezeLabel="Freeze it" headline={null} />);
+    const html = renderToStaticMarkup(<SaveOnly />);
     expect(html).toContain("Save study…");
     expect(html).not.toContain("Freeze it");
   });

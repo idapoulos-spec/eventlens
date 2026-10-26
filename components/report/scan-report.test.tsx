@@ -95,6 +95,10 @@ describe("a scan report's numbers are its results card's", () => {
     const html = renderToStaticMarkup(<ScanResults run={run} {...settings} />);
     run.dispose();
 
+    // The frozen link's controls sit in one row after its text: Copy link, Save study, and Report.
+    const row = /<span>Frozen link: [\s\S]*?<\/span><div class="flex flex-wrap items-center gap-2">([\s\S]*?)<\/div><\/div>/.exec(html);
+    expect([...(row?.[1] ?? "").matchAll(/<button[^>]*>(?:<svg[\s\S]*?<\/svg>)?([^<]+)<\/button>/g)].map((m) => m[1])).toEqual(["Copy link", "Save study…", "Report…"]);
+
     const report = scanReport({ ...settings, snap, asOf: null, selection: "a custom list", link: null, preparedBy: null, generatedAt: NOW, version: "test", commit: "test" });
     const page = textOf(html);
     const pageRows = tablesOf(html).find((t) => t.head[0] === "#" && t.head.includes("p (scan)"))!.rows;
