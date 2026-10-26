@@ -15,9 +15,11 @@ import { validateStockTicker } from "@/lib/validation";
 import { analysisHref } from "../analysis/navigation";
 import { CopyLinkButton } from "../analysis/CopyLinkButton";
 import { MAY_DIFFER, REPRODUCED } from "../analysis/reproducibility";
-import { SaveStudy } from "../studies/SaveStudy";
+import { ControlBar } from "../analysis/ControlBar";
+import { useSaveStudy } from "../studies/useSaveStudy";
 import { formatSmallP, scanFileBase, scanReport } from "../report/scanReport";
-import { ReportControls } from "../report/ReportControls";
+import { useReportControl } from "../report/useReportControl";
+import type { Report } from "@/lib/report/model";
 import { APP_COMMIT, APP_VERSION } from "@/lib/report/version";
 import { Caption, Flag, fmtR, Segmented } from "../research/parts";
 import { formatCi } from "../research/stats";
@@ -407,37 +409,16 @@ export function ScanResults({
             asOf={asOf ?? snap.prices.fetchedAt}
             formHref={formHref}
             headline={`${tested.length} tested · ${holm} survive Holm · ${bh} survive BH`}
+            report={(options) => scanReport({ stock, choice, resolution, candidates, snap, asOf, selection, ...options, generatedAt: Date.now(), version: APP_VERSION, commit: APP_COMMIT })}
+            fileBase={scanFileBase({ stock, choice, resolution, candidates, generatedAt: snap.prices.fetchedAt })}
           />
-          <div className="mt-2">
-            <ReportControls
-              ready
-              pendingText=""
-              fileBase={scanFileBase({ stock, choice, resolution, candidates, generatedAt: snap.prices.fetchedAt })}
-              build={({ preparedBy, includeLink }) =>
-                scanReport({
-                  stock,
-                  choice,
-                  resolution,
-                  candidates,
-                  snap,
-                  asOf,
-                  selection,
-                  link: includeLink ? new URL(frozenScanHref({ stock, candidates, window: choice, resolution, asOf: asOf ?? snap.prices!.fetchedAt }), window.location.origin).href : null,
-                  preparedBy,
-                  generatedAt: Date.now(),
-                  version: APP_VERSION,
-                  commit: APP_COMMIT,
-                })
-              }
-            />
-          </div>
         </section>
       )}
     </Card>
   );
 }
 
-/** The finished scan's frozen link, and what it reproduces. */
+/** The finished scan's frozen link, with Copy link, Save study, and Report beside it, and what it reproduces. */
 function FrozenScanLink({
   stock,
   candidates,
@@ -446,44 +427,56 @@ function FrozenScanLink({
   asOf,
   formHref,
   headline,
+  report,
+  fileBase,
 }: {
   stock: string;
   candidates: ScanCandidate[];
   choice: WindowChoice;
   resolution: Resolution;
+  /** The link's as-of time: the scan's own, or when its prices were fetched. */
   asOf: number;
   formHref?: string;
   headline: string;
+  /** The scan's report, given the reader's options and the link to put in it. */
+  report: (options: { preparedBy: string | null; link: string | null }) => Report;
+  fileBase: string;
 }) {
   const frozen = frozenScanHref({ stock, candidates, window: choice, resolution, asOf });
+  const saveControl = useSaveStudy({
+    defaultName: `${stock} scan · ${candidates.length} ${candidates.length === 1 ? "candidate" : "candidates"} · ${WINDOW_LABEL[choice]} ${resolution}`,
+    link: (freeze) => (freeze || !formHref ? frozen : formHref),
+    freezeLabel: formHref
+      ? `Freeze it: name these ${candidates.length} candidates and end their windows at ${formatDateTime(asOf, { withYear: true })}, so its link gives this table later (unticked, it lists the candidates again when opened)`
+      : null,
+    headline,
+  });
+  const reportControl = useReportControl({
+    ready: true,
+    pendingText: "",
+    fileBase,
+    build: ({ preparedBy, includeLink }) => report({ preparedBy, link: includeLink ? new URL(frozen, window.location.origin).href : null }),
+  });
   return (
-    <div className="grid gap-2">
-      <div className="flex flex-wrap items-center gap-3">
+    <ControlBar
+      lead={
         <span>
           Frozen link: names these {candidates.length} {candidates.length === 1 ? "candidate" : "candidates"} and ends their windows at{" "}
           {formatDateTime(asOf, { withYear: true })} (or each one’s close), so it opens this scan again; run it to get this table.
         </span>
-        <CopyLinkButton href={frozen} />
-      </div>
-      <SaveStudy
-        defaultName={`${stock} scan · ${candidates.length} ${candidates.length === 1 ? "candidate" : "candidates"} · ${WINDOW_LABEL[choice]} ${resolution}`}
-        link={(freeze) => (freeze || !formHref ? frozen : formHref)}
-        freezeLabel={
-          formHref
-            ? `Freeze it: name these ${candidates.length} candidates and end their windows at ${formatDateTime(asOf, { withYear: true })}, so its link gives this table later (unticked, it lists the candidates again when opened)`
-            : null
-        }
-        headline={headline}
-      />
-      <details>
-        <summary className="cursor-pointer text-ink-muted hover:text-ink-secondary">What a frozen link reproduces, and what can still change</summary>
-        <ul className="mt-2 list-disc space-y-1 pl-5">
-          {[...REPRODUCED, ...MAY_DIFFER, SCAN_LIST_NOTE].map((t) => (
-            <li key={t}>{t}</li>
-          ))}
-        </ul>
-      </details>
-    </div>
+      }
+      controls={[{ buttons: <CopyLinkButton href={frozen} /> }, saveControl, reportControl]}
+      notes={
+        <details>
+          <summary className="cursor-pointer text-ink-muted hover:text-ink-secondary">What a frozen link reproduces, and what can still change</summary>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {[...REPRODUCED, ...MAY_DIFFER, SCAN_LIST_NOTE].map((t) => (
+              <li key={t}>{t}</li>
+            ))}
+          </ul>
+        </details>
+      }
+    />
   );
 }
 

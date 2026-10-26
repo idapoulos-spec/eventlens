@@ -42,9 +42,10 @@ import { formatDate, formatDateTime, formatShortDate, formatSigned, formatTime }
 import type { BenchmarkSeries } from "@/lib/market-data/types";
 import { fail, type Result } from "@/lib/result";
 import { analysisFromSearch, analysisHref } from "../analysis/navigation";
-import { SaveStudy } from "../studies/SaveStudy";
+import { ControlBar, CONTROL_BUTTON, type Control } from "../analysis/ControlBar";
+import { useSaveStudy } from "../studies/useSaveStudy";
 import { analysisFileBase, analysisReport, type ReportSources } from "../report/analysisReport";
-import { ReportControls } from "../report/ReportControls";
+import { useReportControl } from "../report/useReportControl";
 import { APP_COMMIT, APP_VERSION } from "@/lib/report/version";
 import { EventStudyChart } from "../charts/EventStudyChart";
 import { formatLag, LeadLagChart, type LagUnit } from "../charts/LeadLagChart";
@@ -311,6 +312,68 @@ export function ResearchPanel({
   };
   useLinkSync(linkView);
 
+  // The controls under the settings: freeze or load another as-of time, save the study, and export a report.
+  const freezeControl = useFreezeControl({
+    asOf,
+    windowEnd,
+    windowFrozen,
+    frozenAt,
+    closedAt,
+    onFreeze: () => setFrozenAt(asOf),
+    onLive: () => (windowFrozen ? goTo({ ...linkView, asOf: null }) : setFrozenAt(null)),
+    onLoad: (t) => goTo({ ...linkView, asOf: t }),
+    subject: variable.kind === "probability" ? "market’s" : "event’s first",
+  });
+  const saveControl = useSaveStudy({
+    defaultName: `${stockSymbol} vs. ${kalshiTicker} · ${WINDOW_LABEL[choice]} ${resolution}`,
+    link: (freeze) => {
+      const analysis = analysisFromSearch(window.location.search);
+      return analysis && analysisHref(analysis, { ...linkView, asOf: freeze ? asOf : frozenAt });
+    },
+    freezeLabel: frozenAt === null ? `Freeze it at this view’s time (${formatDateTime(asOf, { withYear: true })}), so its link gives these numbers later` : null,
+    headline: primaryHeadline(primary),
+    onFrozen: () => setFrozenAt(asOf),
+  });
+  const reportControl = useReportControl({
+    ready: results !== null && !(primary?.p != null && !looPart),
+    pendingText: results === null ? "The report waits for the results." : "The report waits for the leave-one-out check…",
+    fileBase: analysisFileBase({ stock: stockSymbol, kalshi: kalshiTicker, choice, resolution, asOf }),
+    build: ({ preparedBy, includeLink }) => {
+      if (!results) return null;
+      const analysis = analysisFromSearch(window.location.search);
+      return analysisReport({
+        stock: stockSymbol,
+        kalshi: kalshiTicker,
+        variable,
+        choice,
+        resolution,
+        threshold,
+        chosenReturns,
+        benchmark: benchmark.active.symbol,
+        benchmarkFetchedAt: benchSeries?.fetchedAt ?? null,
+        isSelf,
+        unavailable,
+        asOf,
+        windowEnd,
+        windowFrozen,
+        frozenAt,
+        windowNote: note,
+        results,
+        detectable: detectablePart?.value ?? null,
+        leaveOneOut: looPart?.value ?? null,
+        sample,
+        fewRuns: resolution === "daily" && plan.kind === "loaded" && plan.days < 90,
+        longDaily: resolution === "daily" && plan.kind === "long",
+        sources,
+        link: includeLink && analysis ? new URL(analysisHref(analysis, linkView), window.location.origin).href : null,
+        preparedBy,
+        generatedAt: Date.now(),
+        version: APP_VERSION,
+        commit: APP_COMMIT,
+      });
+    },
+  });
+
   function downloadCsv() {
     if (!results) return;
     const closesByT = closes && new Map(closes.map((p) => [p.t, p.value]));
@@ -385,70 +448,7 @@ export function ResearchPanel({
           </button>
         </div>
         <section data-report-controls="" className="mt-3 border-t border-border pt-3 text-xs text-ink-secondary">
-          <FreezeControls
-            asOf={asOf}
-            windowEnd={windowEnd}
-            windowFrozen={windowFrozen}
-            frozenAt={frozenAt}
-            closedAt={closedAt}
-            onFreeze={() => setFrozenAt(asOf)}
-            onLive={() => (windowFrozen ? goTo({ ...linkView, asOf: null }) : setFrozenAt(null))}
-            onLoad={(t) => goTo({ ...linkView, asOf: t })}
-            subject={variable.kind === "probability" ? "market’s" : "event’s first"}
-          />
-          <div className="mt-2">
-            <SaveStudy
-              defaultName={`${stockSymbol} vs. ${kalshiTicker} · ${WINDOW_LABEL[choice]} ${resolution}`}
-              link={(freeze) => {
-                const analysis = analysisFromSearch(window.location.search);
-                return analysis && analysisHref(analysis, { ...linkView, asOf: freeze ? asOf : frozenAt });
-              }}
-              freezeLabel={frozenAt === null ? `Freeze it at this view’s time (${formatDateTime(asOf, { withYear: true })}), so its link gives these numbers later` : null}
-              headline={primaryHeadline(primary)}
-              onFrozen={() => setFrozenAt(asOf)}
-            />
-          </div>
-          <div className="mt-2">
-            <ReportControls
-              ready={results !== null && !(primary?.p != null && !looPart)}
-              pendingText={results === null ? "The report waits for the results." : "The report waits for the leave-one-out check…"}
-              fileBase={analysisFileBase({ stock: stockSymbol, kalshi: kalshiTicker, choice, resolution, asOf })}
-              build={({ preparedBy, includeLink }) => {
-                if (!results) return null;
-                const analysis = analysisFromSearch(window.location.search);
-                return analysisReport({
-                  stock: stockSymbol,
-                  kalshi: kalshiTicker,
-                  variable,
-                  choice,
-                  resolution,
-                  threshold,
-                  chosenReturns,
-                  benchmark: benchmark.active.symbol,
-                  benchmarkFetchedAt: benchSeries?.fetchedAt ?? null,
-                  isSelf,
-                  unavailable,
-                  asOf,
-                  windowEnd,
-                  windowFrozen,
-                  frozenAt,
-                  windowNote: note,
-                  results,
-                  detectable: detectablePart?.value ?? null,
-                  leaveOneOut: looPart?.value ?? null,
-                  sample,
-                  fewRuns: resolution === "daily" && plan.kind === "loaded" && plan.days < 90,
-                  longDaily: resolution === "daily" && plan.kind === "long",
-                  sources,
-                  link: includeLink && analysis ? new URL(analysisHref(analysis, linkView), window.location.origin).href : null,
-                  preparedBy,
-                  generatedAt: Date.now(),
-                  version: APP_VERSION,
-                  commit: APP_COMMIT,
-                });
-              }}
-            />
-          </div>
+          <ControlBar lead={freezeControl.lead} controls={[freezeControl, saveControl, reportControl]} notes={freezeControl.note} />
         </section>
         {note && (
           <p role="status" className="mt-2 text-xs text-ink-secondary">
@@ -625,8 +625,11 @@ function goTo(view: ResearchView) {
   if (analysis) window.location.assign(analysisHref(analysis, view));
 }
 
-/** Where the windows end, and the controls that freeze them there or load another as-of time. */
-function FreezeControls({
+/**
+ * Where the windows end (the bar's text), the controls that freeze them there or load another
+ * as-of time, and a note when a frozen link would end elsewhere (the bar's notes).
+ */
+function useFreezeControl({
   asOf,
   windowEnd,
   windowFrozen,
@@ -647,7 +650,7 @@ function FreezeControls({
   onLoad: (asOf: number) => void;
   /** "market’s" or "event’s first", for its close. */
   subject: string;
-}) {
+}): Control & { lead: ReactNode; note: ReactNode } {
   const [picking, setPicking] = useState(false);
   const [input, setInput] = useState(() => newYorkInput(asOf));
   const [error, setError] = useState<string | null>(null);
@@ -670,51 +673,49 @@ function FreezeControls({
     onLoad(t);
   }
 
-  const button =
-    "inline-flex h-9 items-center rounded-md border border-border px-2.5 font-medium text-ink-secondary transition hover:bg-surface-raised hover:text-ink sm:h-7";
-  return (
-    <div className="grid gap-2">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <span role="status">{status}</span>
+  return {
+    lead: <span role="status">{status}</span>,
+    buttons: (
+      <>
         {frozenAt === null ? (
-          <button type="button" onClick={onFreeze} className={button} title="Puts this view’s time in the link: no reload, no data requests">
+          <button type="button" onClick={onFreeze} className={CONTROL_BUTTON} title="Puts this view’s time in the link: no reload, no data requests">
             Freeze at this view’s time
           </button>
         ) : (
-          <button type="button" onClick={onLive} className={button}>
+          <button type="button" onClick={onLive} className={CONTROL_BUTTON}>
             Go live
           </button>
         )}
-        <button type="button" onClick={() => setPicking((p) => !p)} className={button} aria-expanded={picking}>
+        <button type="button" onClick={() => setPicking((p) => !p)} className={CONTROL_BUTTON} aria-expanded={picking}>
           As of another time…
         </button>
+      </>
+    ),
+    note: frozenAt === null && closedAt !== null && (
+      <p>
+        This market closed on {formatDate(closedAt)}: a frozen link’s windows end at its close, so its numbers can differ from
+        these, which end now.
+      </p>
+    ),
+    panel: picking && (
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="grid gap-1">
+          <span>As of (New York time)</span>
+          <input
+            type="datetime-local"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            className="h-10 rounded-lg border border-border bg-surface-raised px-2 text-base text-ink sm:h-8 sm:text-xs"
+          />
+        </label>
+        <button type="button" onClick={load} className={CONTROL_BUTTON}>
+          Load as of then
+        </button>
+        <span className="text-ink-muted">Reloads the analysis with the windows ending then: about 5 Twelve Data credits, like any analysis.</span>
+        {error && <span className="text-down">{error}</span>}
       </div>
-      {frozenAt === null && closedAt !== null && (
-        <p>
-          This market closed on {formatDate(closedAt)}: a frozen link’s windows end at its close, so its numbers can differ from
-          these, which end now.
-        </p>
-      )}
-      {picking && (
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="grid gap-1">
-            <span>As of (New York time)</span>
-            <input
-              type="datetime-local"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              className="h-10 rounded-lg border border-border bg-surface-raised px-2 text-base text-ink sm:h-8 sm:text-xs"
-            />
-          </label>
-          <button type="button" onClick={load} className={button}>
-            Load as of then
-          </button>
-          <span className="text-ink-muted">Reloads the analysis with the windows ending then: about 5 Twelve Data credits, like any analysis.</span>
-          {error && <span className="text-down">{error}</span>}
-        </div>
-      )}
-    </div>
-  );
+    ),
+  };
 }
 
 // ---- Summary and flags ----

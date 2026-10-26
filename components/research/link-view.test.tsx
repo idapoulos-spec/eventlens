@@ -71,6 +71,9 @@ describe("Research opens as its link says", () => {
     expect(html).toContain("<section data-report-controls");
     expect(html).toContain("Windows end now (Oct 7, 2026, 12:40 PM EDT), so the numbers change as new data arrives.");
     expect(html).toContain("Freeze at this view’s time");
+    // One row: the text, then the four controls side by side in one group, in their order.
+    const row = /<span role="status">Windows end now[^<]*<\/span><div class="flex flex-wrap items-center gap-2">([\s\S]*?)<\/div><\/div>/.exec(html);
+    expect([...(row?.[1] ?? "").matchAll(/<button[^>]*>([^<]+)<\/button>/g)].map((m) => m[1])).toEqual(["Freeze at this view’s time", "As of another time…", "Save study…", "Report…"]);
   });
 
   it("with its window, resolution, returns, and jump size", async () => {
