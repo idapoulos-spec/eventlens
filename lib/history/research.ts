@@ -103,12 +103,13 @@ async function storedOrLive(ticker: string, range: TimeRange, live: LiveFetch): 
 }
 
 /**
- * Hourly implied-probability points for Research: 97 days ending at the window's end (now, or a
- * closed market's close). Without the store, exactly the live request it has always been.
+ * Hourly implied-probability points for Research: 97 days ending at the window's end (now, a
+ * closed market's close, or a frozen link's as-of time). Without the store, a window ending now
+ * is exactly the live request it has always been, and one ending in the past is read live.
  */
 export async function getResearchHistory(ticker: string, researchWindow: Promise<ResearchWindow>): Promise<Result<ResearchHistory>> {
   const { end, archived } = await researchWindow;
-  if (!storeOn()) {
+  if (!storeOn() && end === null) {
     const live = await getKalshiResearchHistory(ticker);
     return live.ok ? ok({ points: live.data, provenance: LIVE_ONLY }) : live;
   }

@@ -13,12 +13,16 @@ import { Card, Notice } from "./ui";
 
 const SUBTITLE = "Lead-lag, rolling correlation, and an event study over 7, 30, 90, or 180 days, a year, or the market's whole life";
 
-/** @param end where the windows end when that's a closed market's close, rather than now */
-export function ResearchCard({ end = null, children }: { end?: number | null; children: ReactNode }) {
+/** @param end where the windows end when that's a closed market's close (or, `frozen`, a frozen link's as-of time), rather than now */
+export function ResearchCard({ end = null, frozen = false, children }: { end?: number | null; frozen?: boolean; children: ReactNode }) {
   return (
     <Card
       title="Research"
-      subtitle={end === null ? SUBTITLE : `${SUBTITLE}, ending at the market's close (${formatDateTime(end, { withYear: true })})`}
+      subtitle={
+        end === null
+          ? SUBTITLE
+          : `${SUBTITLE}, ending at ${frozen ? "the link’s as-of time" : "the market's close"} (${formatDateTime(end, { withYear: true })})`
+      }
     >
       {children}
     </Card>
@@ -55,8 +59,9 @@ export async function Research({
 }) {
   const [k, s, h, b] = await Promise.all([kalshiData, stockData, historyData, benchmarkData]);
   const end = s.ok ? s.data.research.end : null;
+  const frozen = s.ok && s.data.research.frozen === true;
   const notice = (title: string, message: string, tone: "info" | "error" = "info") => (
-    <ResearchCard end={end}>
+    <ResearchCard end={end} frozen={frozen}>
       <Notice tone={tone} title={title} message={message} />
     </ResearchCard>
   );
@@ -103,6 +108,10 @@ export async function Research({
       long={long}
       opened={Number.isFinite(opened) ? opened : null}
       initialView={view}
+      {...(frozen && { windowFrozen: true })}
+      sources={{ kalshiFetchedAt: k.data.fetchedAt, stockFetchedAt: s.data.historyFetchedAt, provenance: h.data.provenance, title: market.title }}
+      // Without the store a closed market's windows end now, but a frozen link's end at its close.
+      {...(end === null && closeTime !== null && Number.isFinite(closeTime) && closeTime <= asOf && { closedAt: closeTime })}
     />
   );
 }

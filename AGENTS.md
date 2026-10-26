@@ -53,9 +53,10 @@ Before pushing, run `pnpm lint`, `pnpm test`, and `pnpm build`. CI (`.github/wor
 
 Run each step as its own command, and check it before the next. Never chain a tag onto the merge command (with `&&` or `;`, or in the same script):
 
-1. Merge (`git merge --no-ff <branch>`, with the message from a file via `-F <file>`: `-F -` doesn't read stdin, so the merge fails).
-2. Verify the merge succeeded: `git log -1` on `main` shows the new merge commit, and `git rev-parse HEAD` is that commit.
-3. Push `main`.
-4. Only then create the tag on that commit (`git tag -a vX.Y.Z -F <file> <merge commit>`) and push it.
+1. On the branch, set `package.json`'s `"version"` to the release's `X.Y.Z` if it isn't already (reports name the version and commit of the build), commit, and push.
+2. Merge (`git merge --no-ff <branch>`, with the message from a file via `-F <file>`: `-F -` doesn't read stdin, so the merge fails).
+3. Verify the merge succeeded: `git log -1` on `main` shows the new merge commit, and `git rev-parse HEAD` is that commit.
+4. Push `main`.
+5. Only then create the tag `vX.Y.Z`, matching `package.json`'s version, on that commit (`git tag -a vX.Y.Z -F <file> <merge commit>`) and push it.
 
 On 2026-10-21 a failed merge (`-F -`) was followed by a chained `git tag` and `git push`, which tagged and published the previous `main` commit; the tag had to be deleted and re-created.

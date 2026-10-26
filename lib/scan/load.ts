@@ -12,9 +12,9 @@ import type { ScanKalshi } from "./types";
 
 const toPoint = ({ t, value, sumP, openSet, missing }: ExpectedPoint): ExpectedPoint => ({ t, value, sumP, openSet, missing });
 
-async function marketKalshi(ticker: string, long: boolean): Promise<Result<ScanKalshi>> {
+async function marketKalshi(ticker: string, long: boolean, asOf: number | null): Promise<Result<ScanKalshi>> {
   const found = findKalshiMarket(ticker);
-  const window = researchWindowOf(found);
+  const window = researchWindowOf(found, asOf);
   const [f, history, longHistory, w] = await Promise.all([
     found,
     getResearchHistory(ticker, window),
@@ -32,14 +32,16 @@ async function marketKalshi(ticker: string, long: boolean): Promise<Result<ScanK
     long: longHistory.data && { points: longHistory.data.points, start: longHistory.data.start },
     end: w.end,
     start: w.start,
+    ...(w.frozen && { frozen: true as const }),
+    provenance: history.data.provenance,
   });
 }
 
-async function eventKalshi(ticker: string, long: boolean): Promise<Result<ScanKalshi>> {
+async function eventKalshi(ticker: string, long: boolean, asOf: number | null): Promise<Result<ScanKalshi>> {
   const found = await findEvent(ticker);
   if (!found.ok) return found;
   const now = Date.now();
-  const [event, longMarks] = await Promise.all([loadEvent(found.data, now), long ? loadEventLong(found.data, now) : Promise.resolve(ok(null))]);
+  const [event, longMarks] = await Promise.all([loadEvent(found.data, now, asOf), long ? loadEventLong(found.data, now, asOf) : Promise.resolve(ok(null))]);
   // As the event page decides Research is unavailable (EventDashboard's noExpected).
   if (event.problem !== null || event.outcomes.some((o) => o.unmapped !== null)) {
     return fail("unmapped", "Its outcomes can't all be given values, so it has no expected value.");
@@ -52,10 +54,12 @@ async function eventKalshi(ticker: string, long: boolean): Promise<Result<ScanKa
     long: longMarks.data && { marks: longMarks.data.marks.map(toPoint), start: longMarks.data.start },
     end: event.window.end,
     start: event.window.start,
+    ...(event.window.frozen && { frozen: true as const }),
+    provenance: event.provenance,
   });
 }
 
-/** A candidate's Kalshi side as its page reads it. Never rejects. */
-export function loadCandidateKalshi(ticker: string, kind: "event" | "market", long: boolean): Promise<Result<ScanKalshi>> {
-  return kind === "event" ? eventKalshi(ticker, long) : marketKalshi(ticker, long);
+/** A candidate's Kalshi side as its page reads it; with `asOf`, as its frozen page does. Never rejects. */
+export function loadCandidateKalshi(ticker: string, kind: "event" | "market", long: boolean, asOf: number | null = null): Promise<Result<ScanKalshi>> {
+  return kind === "event" ? eventKalshi(ticker, long, asOf) : marketKalshi(ticker, long, asOf);
 }

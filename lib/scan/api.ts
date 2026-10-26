@@ -81,3 +81,14 @@ export function parseSpan(params: URLSearchParams, now: number): { ok: true; val
 }
 
 export const spanParams = ({ from, to, live }: PriceSpan) => new URLSearchParams({ from: String(Math.floor(from)), to: String(Math.ceil(to)), live: live ? "1" : "0" });
+
+/** A frozen scan's as-of time (ms since 1970), on each of its requests: every window still open then ends there. */
+export const SCAN_ASOF_PARAM = "asof";
+
+/** The as-of time of a scan's request: absent (null), or whole ms from 2015 up to now. */
+export function parseScanAsOf(params: URLSearchParams, now: number): { ok: true; value: number | null } | { ok: false; message: string } {
+  const raw = params.get(SCAN_ASOF_PARAM);
+  if (raw === null) return { ok: true, value: null };
+  const ms = /^\d{1,15}$/.test(raw) ? Number(raw) : NaN;
+  return ms >= EARLIEST && ms <= now ? { ok: true, value: ms } : { ok: false, message: "The scan's as-of time must be a past time." };
+}

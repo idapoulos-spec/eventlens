@@ -19,9 +19,9 @@ export function EventTitle({ ticker }: { ticker: string }) {
   );
 }
 
-function ChangeStat({ label, change, unit, live }: { label: string; change: ExpectedChange; unit: string; live: boolean }) {
+function ChangeStat({ label, change, unit, live, frozen }: { label: string; change: ExpectedChange; unit: string; live: boolean; frozen: boolean }) {
   const detail = !live ? (
-    "Not live: the event has closed"
+    frozen ? "Not live: frozen at the link’s as-of time" : "Not live: the event has closed"
   ) : change.unavailable ? (
     <>
       {CHANGE_NOTE[change.unavailable]}
@@ -45,7 +45,9 @@ function Headline({ event }: { event: EventAnalysis }) {
       ? `Missing: ${MISSING_TEXT[current.missing!]}`
       : live
         ? `From live books, ${formatDateTime(current.t)} · Σp ${current.sumP!.toFixed(3)}`
-        : `Last value before the close, ${formatDateTime(current.t, { withYear: true })} · Σp ${current.sumP!.toFixed(3)}`;
+        : event.window.frozen
+          ? `Last value by the link’s as-of time, ${formatDateTime(current.t, { withYear: true })} · Σp ${current.sumP!.toFixed(3)}`
+          : `Last value before the close, ${formatDateTime(current.t, { withYear: true })} · Σp ${current.sumP!.toFixed(3)}`;
   return <Stat size="lg" label={label} value={formatExpected(current.value, event.unit, 1)} detail={detail} />;
 }
 
@@ -64,7 +66,7 @@ function OutcomesTable({ event, live }: { event: EventAnalysis; live: boolean })
               Value
             </th>
             <th scope="col" className={`${th} text-right`}>
-              {live ? "p now" : "p at close"}
+              {live ? "p now" : event.window.frozen ? "p then" : "p at close"}
             </th>
             <th scope="col" className={`${th} text-right`}>
               Weight
@@ -138,6 +140,15 @@ export function EventPanel({ event }: { event: EventAnalysis }) {
           <Notice tone="info" title="Not trading" message="No outcome trades right now, so the figures below aren’t live." />
         </div>
       )}
+      {event.window.frozen && (
+        <div className="mt-4">
+          <Notice
+            tone="info"
+            title="Frozen at the link’s as-of time"
+            message={`The figures below are the event as of ${formatDateTime(event.window.end!, { withYear: true })}, not live quotes, so this link gives the same numbers later.`}
+          />
+        </div>
+      )}
       {event.historyError && (
         <div className="mt-4">
           <Notice title="Kalshi history failed to load" message={`${event.historyError} E is missing where an outcome’s history is.`} />
@@ -148,8 +159,8 @@ export function EventPanel({ event }: { event: EventAnalysis }) {
         <div className="col-span-2 sm:col-span-3">
           <Headline event={event} />
         </div>
-        <ChangeStat label="1h change" change={event.change1h} unit={event.unit} live={live} />
-        <ChangeStat label="24h change" change={event.change24h} unit={event.unit} live={live} />
+        <ChangeStat label="1h change" change={event.change1h} unit={event.unit} live={live} frozen={event.window.frozen === true} />
+        <ChangeStat label="24h change" change={event.change24h} unit={event.unit} live={live} frozen={event.window.frozen === true} />
         <Stat
           label="Outcomes"
           value={String(event.outcomes.length)}

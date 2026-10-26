@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 import { rejectUnlessSignedIn } from "@/lib/auth/session";
 import { clientIp } from "@/lib/client-ip";
 import { createRateLimiter } from "@/lib/rate-limit";
-import { scanError, upstreamError } from "@/lib/scan/api";
+import { parseScanAsOf, scanError, upstreamError } from "@/lib/scan/api";
 import { loadCandidateKalshi } from "@/lib/scan/load";
 import { validateKalshiTicker } from "@/lib/validation";
 
@@ -18,8 +18,9 @@ const limiter = createRateLimiter([
 ]);
 
 /**
- * GET /api/scan/candidate?ticker=…&kind=event|market&long=0|1 → ScanKalshi: one candidate's
- * Kalshi side, as its own page reads it; with long=1 also its history for 180D, 1Y, and All.
+ * GET /api/scan/candidate?ticker=…&kind=event|market&long=0|1[&asof=…] → ScanKalshi: one
+ * candidate's Kalshi side, as its own page reads it (frozen at asof, as its frozen page); with
+ * long=1 also its history for 180D, 1Y, and All.
  */
 export async function GET(request: NextRequest) {
   const denied = await rejectUnlessSignedIn(request.cookies);
@@ -30,11 +31,13 @@ export async function GET(request: NextRequest) {
   if (!ticker.ok) return scanError(400, "invalid_ticker", ticker.message);
   const kind = params.get("kind");
   if (kind !== "event" && kind !== "market") return scanError(400, "invalid_kind", "A candidate is an event or a market.");
+  const asOf = parseScanAsOf(params, Date.now());
+  if (!asOf.ok) return scanError(400, "invalid_asof", asOf.message);
 
   const limit = limiter(clientIp(request.headers));
   if (!limit.ok) return scanError(429, "rate_limited", "Too many candidates loaded. Please wait a moment and try again.", { "Retry-After": String(limit.retryAfterSec) });
 
-  const kalshi = await loadCandidateKalshi(ticker.value, kind, params.get("long") === "1");
+  const kalshi = await loadCandidateKalshi(ticker.value, kind, params.get("long") === "1", asOf.value);
   if (!kalshi.ok) return upstreamError(kalshi.error);
   return Response.json(kalshi.data);
 }

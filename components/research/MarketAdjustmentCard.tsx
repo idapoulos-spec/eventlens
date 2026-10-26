@@ -23,15 +23,15 @@ import { formatCi, formatP, methodText, RoleBadge, unavailableText } from "./sta
 import type { Benchmark, BenchmarkChoice } from "./useBenchmark";
 
 // From market-model.test.ts ("simulations: false positives for the primary test and the regression").
-const NEWEY_WEST_NOTE =
+export const NEWEY_WEST_NOTE =
   "in 400 simulated data sets of 21 hourly sessions (about 30 days) with no relationship, where the stock was more volatile in the hours Kalshi moved, it came out below 0.05 in 8.0% of them, against 4.5% for this bootstrap.";
 
-const verdictText = (p: number) => (p < 0.05 ? "distinguishable" : "not distinguishable");
+export const verdictText = (p: number) => (p < 0.05 ? "distinguishable" : "not distinguishable");
 
 /** At or above this R², the benchmark explains nearly all of the stock's moves. */
-const NEAR_DUPLICATE_R2 = 0.95;
+export const NEAR_DUPLICATE_R2 = 0.95;
 
-const intervalNoun = (resolution: Resolution): [string, string] =>
+export const intervalNoun = (resolution: Resolution): [string, string] =>
   resolution === "hourly" ? ["hourly interval", "hourly intervals"] : ["daily interval", "daily intervals"];
 
 /**
@@ -47,7 +47,7 @@ export function modelSample(model: MarketModel, resolution: Resolution, sample: 
 }
 
 /** Alpha per interval in percent; hourly alphas are tiny, so they get more decimals. */
-const formatAlpha = (alpha: number) => formatSigned(alpha * 100, Math.abs(alpha * 100) >= 0.01 ? 3 : 4, "%");
+export const formatAlpha = (alpha: number) => formatSigned(alpha * 100, Math.abs(alpha * 100) >= 0.01 ? 3 : 4, "%");
 
 const pairs = (changes: ChangePoint[]) => changes.map((c) => ({ x: c.kalshiChange, y: c.logReturn }));
 const lastValue = (mean: number[] | null | undefined) => formatSigned(mean?.at(-1) ?? null, 2, "%");

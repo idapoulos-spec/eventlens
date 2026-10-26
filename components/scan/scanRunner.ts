@@ -5,10 +5,11 @@
 
 import type { Resolution } from "@/lib/analytics/research";
 import type { LeaveOneOut } from "@/lib/analytics/fragility";
+import type { Provenance } from "@/lib/history/types";
 import { correctScan, leaveOneOutTargets, rankScan, scanCandidateSteps, scanLeaveOneOutSteps, type Correction, type ScanInput, type ScanTest } from "@/lib/analytics/scan";
 import type { WindowChoice } from "@/lib/history/window";
 import type { BenchmarkSeries } from "@/lib/market-data/types";
-import { RETRY_STATUSES, spanParams } from "@/lib/scan/api";
+import { RETRY_STATUSES, SCAN_ASOF_PARAM, spanParams } from "@/lib/scan/api";
 import { scanStock, type ScanStock } from "@/lib/scan/bars";
 import { candidateInput } from "@/lib/scan/rows";
 import { priceSpan } from "@/lib/scan/span";
@@ -27,6 +28,8 @@ export interface ScanSettings {
   choice: WindowChoice;
   resolution: Resolution;
   candidates: ScanCandidate[];
+  /** A frozen scan's as-of time (ms): windows still open then end there. */
+  asOf?: number | null;
 }
 
 export type CandidateState =
@@ -57,7 +60,9 @@ export interface ScanSnapshot {
   corrections: (Correction | null)[];
   /** Candidate indices, best first (tested ones; untested and pending after). */
   order: number[];
-  prices: Pick<ScanPrices, "requests" | "fetchedAt"> | null;
+  prices: (Pick<ScanPrices, "requests" | "fetchedAt"> & { benchmarkFetchedAt: number }) | null;
+  /** Where each candidate's Kalshi history came from, once loaded (null until then, or if not said). */
+  provenance: (Provenance | null)[];
   /** Waiting for Twelve Data's next minute until this time (ms since 1970), or null. */
   waitingUntil: number | null;
   timings: ScanTimings;
@@ -126,6 +131,7 @@ export class ScanRun {
   private stock: ScanStock | null = null;
   private benchmark: BenchmarkSeries | null = null;
   private kalshi = new Map<number, ScanKalshi>();
+  private provenance: (Provenance | null)[] = [];
   private inputs = new Map<number, ScanInput>();
   private queue: { id: number; kind: "test" | "loo"; steps: Generator<void, unknown>; spent: number }[] = [];
   private scheduled = false;
@@ -147,15 +153,16 @@ export class ScanRun {
   private waitingUntil: number | null = null;
 
   private async start() {
-    const { stock, choice, candidates } = this.settings;
-    const span = priceSpan(candidates, choice, Date.now());
+    const { stock, choice, candidates, asOf = null } = this.settings;
+    const span = priceSpan(candidates, choice, Date.now(), asOf);
     if (!span) return this.fail("There are no candidates to scan.");
     // Kalshi loads start with the prices; computing waits for both.
     this.pump();
     const t0 = now();
     // Twelve Data's free plan allows 8 requests a minute for everyone using the key; when they're
     // used up, wait for the next minute (twice at most) rather than spend more on retries.
-    const prices = await getJson<ScanPrices>(`${SCAN_PRICES_PATH}?${new URLSearchParams({ stock })}&${spanParams(span)}`, this.abort.signal, {
+    const frozen = asOf === null ? "" : `&${new URLSearchParams({ [SCAN_ASOF_PARAM]: String(asOf) })}`;
+    const prices = await getJson<ScanPrices>(`${SCAN_PRICES_PATH}?${new URLSearchParams({ stock })}&${spanParams(span)}${frozen}`, this.abort.signal, {
       quick: [],
       waitUpToSec: 70,
       waits: 2,
@@ -170,7 +177,7 @@ export class ScanRun {
     this.timings.prices = now() - this.started;
     this.stock = scanStock(prices.data);
     this.benchmark = prices.data.benchmark;
-    this.pricesInfo = { requests: prices.data.requests, fetchedAt: prices.data.fetchedAt };
+    this.pricesInfo = { requests: prices.data.requests, fetchedAt: prices.data.fetchedAt, benchmarkFetchedAt: prices.data.benchmark.fetchedAt };
     for (const id of this.kalshi.keys()) this.enqueueTest(id);
     this.publish();
   }
@@ -183,14 +190,14 @@ export class ScanRun {
 
   /** Starts Kalshi loads until LOAD_CONCURRENCY are in flight. */
   private pump() {
-    const { candidates, choice } = this.settings;
+    const { candidates, choice, asOf = null } = this.settings;
     while (this.loading < LOAD_CONCURRENCY && this.nextLoad < candidates.length) {
       const id = this.nextLoad++;
       const c = candidates[id];
       this.loading++;
       this.states[id] = { status: "loading" };
       const t0 = now();
-      const params = new URLSearchParams({ ticker: c.ticker, kind: c.kind, long: choice === "all" || choice > 90 ? "1" : "0" });
+      const params = new URLSearchParams({ ticker: c.ticker, kind: c.kind, long: choice === "all" || choice > 90 ? "1" : "0", ...(asOf !== null && { [SCAN_ASOF_PARAM]: String(asOf) }) });
       getJson<ScanKalshi>(`${SCAN_CANDIDATE_PATH}?${params}`, this.abort.signal)
         .then((r) => {
           const ms = now() - t0;
@@ -200,6 +207,7 @@ export class ScanRun {
             this.states[id] = { status: "untested", reason: r.message };
           } else {
             this.kalshi.set(id, r.data);
+            this.provenance[id] = r.data.provenance ?? null;
             this.states[id] = { status: "computing" };
             if (this.stock) this.enqueueTest(id);
           }
@@ -345,7 +353,8 @@ export class ScanRun {
         key: this.settings.candidates[i].ticker,
       })),
     );
-    return { phase, error, states, corrections, order, prices, waitingUntil: this.waitingUntil ?? null, timings: { ...this.timings, loads: [...this.timings.loads], computes: [...this.timings.computes] } };
+    const provenance = this.settings.candidates.map((_, i) => this.provenance[i] ?? null);
+    return { phase, error, states, corrections, order, prices, provenance, waitingUntil: this.waitingUntil ?? null, timings: { ...this.timings, loads: [...this.timings.loads], computes: [...this.timings.computes] } };
   }
 
   private publish(phase: ScanSnapshot["phase"] = this.snapshot.phase === "prices" && this.stock ? "running" : this.snapshot.phase, error: string | null = this.snapshot.error) {

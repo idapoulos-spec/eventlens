@@ -70,9 +70,11 @@ const compact = (bars: StockBar[]): CompactBars => ({ t: bars.map((b) => b.t), c
 /**
  * The stock's bars and the default benchmark's closes over `span`. The stock's requests go first,
  * so it gets the shared Twelve Data quota first, as on the pages. Refused when the span needs more
- * than MAX_PRICE_REQUESTS requests.
+ * than MAX_PRICE_REQUESTS requests. With `asOf` (a frozen scan), the benchmark's closes count as
+ * settled then, as on a frozen page. (A candidate that closed in the 5 minutes before the as-of
+ * time would see its last benchmark close left out, which its page, ending at its close, keeps.)
  */
-export async function getScanPrices(symbol: string, span: PriceSpan): Promise<Result<ScanPrices>> {
+export async function getScanPrices(symbol: string, span: PriceSpan, asOf: number | null = null): Promise<Result<ScanPrices>> {
   if (priceCredits(span) > MAX_PRICE_REQUESTS) {
     return fail("too_long", "These candidates' windows span too long a time for one scan's prices (at most 8 Twelve Data requests). Pick fewer settled events, or a shorter window.");
   }
@@ -93,7 +95,9 @@ export async function getScanPrices(symbol: string, span: PriceSpan): Promise<Re
     if (benchmark.ok && benchmark.data.fetchedAt >= started) requests += 2;
   } else {
     const b = await symbolBars(DEFAULT_BENCHMARK.symbol, span, apiKey, counted, now);
-    benchmark = b.ok ? ok(benchmarkPoints(DEFAULT_BENCHMARK.symbol, b.data.halfHourly, b.data.daily, b.data.fetchedAt)) : b;
+    benchmark = b.ok
+      ? ok(benchmarkPoints(DEFAULT_BENCHMARK.symbol, b.data.halfHourly, b.data.daily, b.data.fetchedAt, asOf === null ? b.data.fetchedAt : Math.min(b.data.fetchedAt, asOf)))
+      : b;
   }
   if (!benchmark.ok) return benchmark;
 

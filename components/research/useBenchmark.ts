@@ -5,7 +5,7 @@
 // back to one costs no request.
 
 import { useRef, useState } from "react";
-import { BENCHMARK_END_PARAM } from "@/lib/history/window";
+import { BENCHMARK_END_PARAM, BENCHMARK_FROZEN_PARAM } from "@/lib/history/window";
 import {
   BENCHMARK_API_PATH,
   BENCHMARK_SYMBOL_PARAM,
@@ -31,15 +31,16 @@ const UNAVAILABLE = "Benchmark prices couldn't be loaded. Please try again short
 
 /**
  * Loads one benchmark, for the research window ending at `end` if given (a closed market's
- * close), else the latest bars. Resolves to null if `signal` aborts (another benchmark was
- * picked); never rejects.
+ * close, or with `frozen`, a frozen link's as-of time), else the latest bars. Resolves to null
+ * if `signal` aborts (another benchmark was picked); never rejects.
  */
 export async function fetchBenchmark(
   symbol: string,
-  { end = null, signal }: { end?: number | null; signal?: AbortSignal } = {},
+  { end = null, frozen = false, signal }: { end?: number | null; frozen?: boolean; signal?: AbortSignal } = {},
 ): Promise<Result<BenchmarkSeries> | null> {
   const query = new URLSearchParams({ [BENCHMARK_SYMBOL_PARAM]: symbol });
   if (end !== null) query.set(BENCHMARK_END_PARAM, String(end));
+  if (end !== null && frozen) query.set(BENCHMARK_FROZEN_PARAM, "1");
   try {
     const res = await fetch(`${BENCHMARK_API_PATH}?${query}`, { signal });
     const body = (await res.json().catch(() => null)) as Partial<BenchmarkSeries & BenchmarkErrorResponse> | null;
@@ -62,16 +63,22 @@ export interface Benchmark {
 }
 
 /**
- * @param initial the default benchmark as the server loaded it, or null if it didn't.
- * @param end where Research's window ends, if that's a closed market's close rather than now.
+ * @param initial the first benchmark (`first`) as the server loaded it, or null if it didn't.
+ * @param end where Research's window ends, if that's a closed market's close (or, with `frozen`,
+ * a frozen link's as-of time) rather than now.
+ * @param first the benchmark Research starts with: the default, or a link's.
  */
-export function useBenchmark(initial: Result<BenchmarkSeries> | null, end: number | null = null): Benchmark {
-  const [active, setActive] = useState<BenchmarkChoice>(DEFAULT_BENCHMARK);
+export function useBenchmark(
+  initial: Result<BenchmarkSeries> | null,
+  end: number | null = null,
+  { first = DEFAULT_BENCHMARK, frozen = false }: { first?: BenchmarkChoice; frozen?: boolean } = {},
+): Benchmark {
+  const [active, setActive] = useState<BenchmarkChoice>(first);
   const [loaded, setLoaded] = useState<Record<string, BenchmarkSeries>>(() =>
     initial?.ok ? { [initial.data.symbol]: initial.data } : {},
   );
   const [status, setStatus] = useState<BenchmarkStatus>(() =>
-    initial && !initial.ok ? { state: "error", choice: DEFAULT_BENCHMARK, message: initial.error.message } : { state: "ready" },
+    initial && !initial.ok ? { state: "error", choice: first, message: initial.error.message } : { state: "ready" },
   );
   // The request in flight, if any. A ref, so a second pick of the same symbol in the same
   // event (a picked result, then Enter) doesn't start another request.
@@ -89,7 +96,7 @@ export function useBenchmark(initial: Result<BenchmarkSeries> | null, end: numbe
     const controller = new AbortController();
     pending.current = { symbol: choice.symbol, controller };
     setStatus({ state: "loading", choice });
-    const result = await fetchBenchmark(choice.symbol, { end, signal: controller.signal });
+    const result = await fetchBenchmark(choice.symbol, { end, frozen, signal: controller.signal });
     if (!result) return;
     pending.current = null;
     if (result.ok) {

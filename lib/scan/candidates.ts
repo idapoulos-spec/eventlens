@@ -113,8 +113,15 @@ function ordered(list: CandidateList): CandidateList {
   return { ...list, candidates: sorted.slice(0, MAX_SCAN_CANDIDATES), truncated: list.truncated || sorted.length > MAX_SCAN_CANDIDATES };
 }
 
+/**
+ * Where a frozen scan's windows end: candidates that had closed by its as-of time at their close
+ * (with the store or without, as on a frozen page), the rest at the as-of time (`end` null).
+ */
+const frozenAt = (now: number, asOf: number | null) => ({ at: asOf ?? now, store: storeOn() || asOf !== null });
+
 /** Every stored event (of one series, or all), settled ones included. */
-export async function storedCandidates(series: string | null, now = Date.now()): Promise<Result<CandidateList>> {
+export async function storedCandidates(series: string | null, now = Date.now(), asOf: number | null = null): Promise<Result<CandidateList>> {
+  const { at, store } = frozenAt(now, asOf);
   if (!storeOn()) return fail("no_store", "This site has no data store, so there are no stored events to scan.");
   const rows = await readStore("stored events", (sql) => readStoredMarkets(sql, series));
   if (rows === null) return fail("unavailable", "The data store couldn't be read. Please try again shortly.");
@@ -126,7 +133,7 @@ export async function storedCandidates(series: string | null, now = Date.now()):
   }
   const list: CandidateList = { candidates: [], skipped: [], truncated: false };
   for (const [ticker, e] of byEvent) {
-    const c = eventCandidate({ ticker, series: e.series, title: e.markets[0]?.title ?? ticker, markets: e.markets }, true, now);
+    const c = eventCandidate({ ticker, series: e.series, title: e.markets[0]?.title ?? ticker, markets: e.markets }, true, at, store);
     if (c.ok) list.candidates.push(c.data);
     else list.skipped.push({ ticker, reason: c.error.message });
   }
@@ -134,7 +141,8 @@ export async function storedCandidates(series: string | null, now = Date.now()):
 }
 
 /** A series' open events from Kalshi, and with `settled` its stored settled events too. */
-export async function seriesCandidates(series: string, { settled }: { settled: boolean }, now = Date.now()): Promise<Result<CandidateList>> {
+export async function seriesCandidates(series: string, { settled }: { settled: boolean }, now = Date.now(), asOf: number | null = null): Promise<Result<CandidateList>> {
+  const { at, store } = frozenAt(now, asOf);
   const events: RawEvent[] = [];
   let cursor = "";
   for (let page = 0; page < MAX_EVENT_PAGES; page++) {
@@ -151,12 +159,12 @@ export async function seriesCandidates(series: string, { settled }: { settled: b
   const stored = (await readStore("stored tickers", (sql) => readStoredTickers(sql, events.map((e) => e.event_ticker)))) ?? new Set<string>();
   const list: CandidateList = { candidates: [], skipped: [], truncated: cursor !== "" };
   for (const e of events) {
-    const c = eventCandidate({ ticker: e.event_ticker, series: e.series_ticker ?? series, title: e.title || e.event_ticker, markets: e.markets ?? [] }, stored.has(e.event_ticker), now);
+    const c = eventCandidate({ ticker: e.event_ticker, series: e.series_ticker ?? series, title: e.title || e.event_ticker, markets: e.markets ?? [] }, stored.has(e.event_ticker), at, store);
     if (c.ok) list.candidates.push(c.data);
     else list.skipped.push({ ticker: e.event_ticker, reason: c.error.message });
   }
   if (settled && storeOn()) {
-    const past = await storedCandidates(series, now);
+    const past = await storedCandidates(series, now, asOf);
     if (past.ok) {
       const have = new Set(list.candidates.map((c) => c.event));
       list.candidates.push(...past.data.candidates.filter((c) => c.end !== null && !have.has(c.event)));
@@ -176,12 +184,12 @@ async function liveEvent(ticker: string): Promise<Result<RawEvent>> {
 }
 
 /** One ticker: a Fed decision event, a market, or any other event (one of its markets). */
-async function tickerCandidate(ticker: string, stored: boolean, now: number): Promise<Result<ScanCandidate>> {
+async function tickerCandidate(ticker: string, stored: boolean, now: number, store: boolean): Promise<Result<ScanCandidate>> {
   if (supportedEvent(ticker)) {
     const found = await findEvent(ticker);
     if (!found.ok) return found;
     const { title, markets } = found.data;
-    return eventCandidate({ ticker, series: seriesOf(ticker), title, markets }, stored || found.data.stored.length > 0, now);
+    return eventCandidate({ ticker, series: seriesOf(ticker), title, markets }, stored || found.data.stored.length > 0, now, store);
   }
   const market = await findKalshiMarket(ticker);
   if (market.ok) {
@@ -194,7 +202,7 @@ async function tickerCandidate(ticker: string, stored: boolean, now: number): Pr
       title: raw.title,
       label: raw.subtitle ?? null,
       picked: null,
-      end: storeOn() && raw.closeTime !== null && Date.parse(raw.closeTime) <= now ? Date.parse(raw.closeTime) : null,
+      end: store && raw.closeTime !== null && Date.parse(raw.closeTime) <= now ? Date.parse(raw.closeTime) : null,
       start: time(raw.openTime),
       stored,
     });
@@ -202,14 +210,15 @@ async function tickerCandidate(ticker: string, stored: boolean, now: number): Pr
   if (market.error.code !== "not_found") return market;
   const event = await liveEvent(ticker);
   if (!event.ok) return event;
-  return eventCandidate({ ticker, series: event.data.series_ticker ?? seriesOf(ticker), title: event.data.title || ticker, markets: event.data.markets ?? [] }, stored, now);
+  return eventCandidate({ ticker, series: event.data.series_ticker ?? seriesOf(ticker), title: event.data.title || ticker, markets: event.data.markets ?? [] }, stored, now, store);
 }
 
 /** A series ticker is an event ticker's first part (KXFEDDECISION-26DEC → KXFEDDECISION). */
 const seriesOf = (eventTicker: string) => eventTicker.split("-")[0] || null;
 
 /** A custom list: each ticker resolved as its page would resolve it, a few at a time. */
-export async function tickerCandidates(tickers: string[], now = Date.now()): Promise<Result<CandidateList>> {
+export async function tickerCandidates(tickers: string[], now = Date.now(), asOf: number | null = null): Promise<Result<CandidateList>> {
+  const { at, store } = frozenAt(now, asOf);
   const stored = (await readStore("stored tickers", (sql) => readStoredTickers(sql, tickers))) ?? new Set<string>();
   const results: Result<ScanCandidate>[] = new Array(tickers.length);
   let next = 0;
@@ -217,7 +226,7 @@ export async function tickerCandidates(tickers: string[], now = Date.now()): Pro
     Array.from({ length: Math.min(LOOKUP_CONCURRENCY, tickers.length) }, async () => {
       while (next < tickers.length) {
         const i = next++;
-        results[i] = await tickerCandidate(tickers[i], stored.has(tickers[i]), now);
+        results[i] = await tickerCandidate(tickers[i], stored.has(tickers[i]), at, store);
       }
     }),
   );

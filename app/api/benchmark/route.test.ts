@@ -25,10 +25,11 @@ afterAll(() => {
 });
 
 // The limiter lives in module state, so each test uses its own IP.
-function load(symbol: string | null, ip: string, signedIn = true, end?: string) {
+function load(symbol: string | null, ip: string, signedIn = true, end?: string, frozen?: string) {
   const url = new URL("http://localhost/api/benchmark");
   if (symbol !== null) url.searchParams.set("symbol", symbol);
   if (end !== undefined) url.searchParams.set("end", end);
+  if (frozen !== undefined) url.searchParams.set("frozen", frozen);
   return GET(new NextRequest(url, { headers: { "x-real-ip": ip, ...(signedIn && { cookie }) } }));
 }
 
@@ -67,6 +68,17 @@ describe("GET /api/benchmark", () => {
     const res = await load("QQQ", "10.0.1.4", true, String(end));
     expect(res.status).toBe(200);
     expect(benchmarkMock).toHaveBeenCalledWith("QQQ", { end });
+  });
+
+  it("loads the benchmark for a window frozen at a link's as-of time, only with frozen=1 and an end", async () => {
+    benchmarkMock.mockResolvedValue(ok(QQQ));
+    const end = Date.UTC(2026, 9, 7, 18, 2, 10);
+    expect((await load("QQQ", "10.0.1.10", true, String(end), "1")).status).toBe(200);
+    expect(benchmarkMock).toHaveBeenLastCalledWith("QQQ", { end, frozen: true });
+    await load("QQQ", "10.0.1.11", true, String(end), "yes");
+    expect(benchmarkMock).toHaveBeenLastCalledWith("QQQ", { end });
+    await load("QQQ", "10.0.1.12", true, undefined, "1");
+    expect(benchmarkMock).toHaveBeenLastCalledWith("QQQ");
   });
 
   it("rejects a window end that isn't a past time with 400, without fetching", async () => {

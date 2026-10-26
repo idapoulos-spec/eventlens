@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { AnalysisFlow, AnalysisResults } from "@/components/analysis/AnalysisFlow";
 import { CopyLinkButton } from "@/components/analysis/CopyLinkButton";
+import { MAY_DIFFER, REPRODUCED } from "@/components/analysis/reproducibility";
 import { analysisHref, type Analysis } from "@/components/analysis/navigation";
 import { SignOutButton } from "@/components/auth/SignOutButton";
 import { Dashboard } from "@/components/Dashboard";
@@ -13,8 +14,8 @@ import { Notice } from "@/components/ui";
 import { ANALYSIS_LIMIT_SUMMARY, checkAnalysisRateLimit } from "@/lib/analysis-rate-limit";
 import { isAccessGateOn, requirePageSession } from "@/lib/auth/server";
 import { supportedEvent } from "@/lib/expected/series";
-import { parseResearchView, RESOLUTION_PARAM, WINDOW_PARAM } from "@/lib/history/window";
-import { formatWait } from "@/lib/format";
+import { parseResearchLink, type ResearchView } from "@/lib/history/window";
+import { formatDateTime, formatWait } from "@/lib/format";
 import { validateKalshiTicker, validateStockTicker } from "@/lib/validation";
 
 // Cap on how long Vercel lets this page's server function run. Worst cases, with every request
@@ -38,14 +39,16 @@ const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v
 function readQuery(params: Awaited<PageProps<"/">["searchParams"]>) {
   const rawStock = first(params.stock);
   const rawKalshi = first(params.kalshi);
+  // Optional: where Research opens (every setting, as Research keeps them in the URL) and its as-of time.
+  const { view, asOf } = parseResearchLink((name) => first(params[name]), Date.now());
   return {
     rawStock,
     rawKalshi,
     hasQuery: rawStock !== undefined || rawKalshi !== undefined,
     stock: validateStockTicker(rawStock),
     kalshi: validateKalshiTicker(rawKalshi),
-    // Optional: where Research opens (a scan result links to its window and resolution).
-    view: parseResearchView(first(params[WINDOW_PARAM]), first(params[RESOLUTION_PARAM])),
+    view,
+    asOfError: asOf.ok ? null : asOf.error.message,
   };
 }
 
@@ -63,10 +66,11 @@ export async function generateMetadata({ searchParams }: PageProps<"/">): Promis
 
 export default async function Home({ searchParams }: PageProps<"/">) {
   await requirePageSession();
-  const { rawStock, rawKalshi, hasQuery, stock, kalshi, view: researchView } = readQuery(await searchParams);
+  const { rawStock, rawKalshi, hasQuery, stock, kalshi, view: researchView, asOfError } = readQuery(await searchParams);
   // Only valid analyses reach the upstream APIs, so only they count against the limit.
-  const rateLimit = stock.ok && kalshi.ok ? await checkAnalysisRateLimit() : { ok: true as const };
-  const analysis = stock.ok && kalshi.ok && rateLimit.ok ? { stock: stock.value, kalshi: kalshi.value } : null;
+  const valid = stock.ok && kalshi.ok && asOfError === null;
+  const rateLimit = valid ? await checkAnalysisRateLimit() : { ok: true as const };
+  const analysis = valid && rateLimit.ok ? { stock: stock.value, kalshi: kalshi.value } : null;
   const view: PageView = !hasQuery ? "start" : analysis ? "analysis" : "notice";
 
   return (
@@ -86,6 +90,9 @@ export default async function Home({ searchParams }: PageProps<"/">) {
             <Link href={analysis ? `/scan?${new URLSearchParams({ stock: analysis.stock })}` : "/scan"} className="text-sm text-ink-secondary hover:text-ink">
               Scan many events
             </Link>
+            <Link href="/studies" className="text-sm text-ink-secondary hover:text-ink">
+              Saved studies
+            </Link>
             {isAccessGateOn() && <SignOutButton />}
           </div>
         </header>
@@ -101,8 +108,8 @@ export default async function Home({ searchParams }: PageProps<"/">) {
         <AnalysisResults label={analysis ? `Analysis of ${analysis.stock} vs. ${analysis.kalshi}` : undefined}>
           {!hasQuery ? (
             <EmptyState />
-          ) : !stock.ok || !kalshi.ok ? (
-            <Notice title="Invalid input" message={!stock.ok ? stock.message : !kalshi.ok ? kalshi.message : ""} />
+          ) : !stock.ok || !kalshi.ok || asOfError !== null ? (
+            <Notice title="Invalid input" message={!stock.ok ? stock.message : !kalshi.ok ? kalshi.message : (asOfError ?? "")} />
           ) : !rateLimit.ok ? (
             <Notice
               tone="info"
@@ -112,10 +119,11 @@ export default async function Home({ searchParams }: PageProps<"/">) {
           ) : (
             // The key remounts the analysis for each new one, so it fades in and every section shows its loading state again.
             <div
-              key={`${stock.value}|${kalshi.value}`}
+              // A different as-of time is a different analysis too.
+              key={researchView.asOf == null ? `${stock.value}|${kalshi.value}` : `${stock.value}|${kalshi.value}|${researchView.asOf}`}
               className="transition duration-300 ease-out starting:opacity-0 motion-safe:starting:translate-y-2"
             >
-              <ResultsBar stock={stock.value} kalshi={kalshi.value} />
+              <ResultsBar stock={stock.value} kalshi={kalshi.value} view={researchView} />
               {supportedEvent(kalshi.value) ? (
                 <EventDashboard stock={stock.value} kalshi={kalshi.value} view={researchView} />
               ) : (
@@ -133,15 +141,47 @@ export default async function Home({ searchParams }: PageProps<"/">) {
   );
 }
 
-/** Names the analysis on screen (where phones scroll to after Analyze) and offers its link to share. */
-function ResultsBar({ stock, kalshi }: Analysis) {
+/**
+ * Names the analysis on screen (where phones scroll to after Analyze) and offers its link to share,
+ * with every setting Research keeps in the URL; for a frozen link, says so and what it reproduces.
+ */
+function ResultsBar({ stock, kalshi, view }: Analysis & { view: ResearchView }) {
   return (
-    <div className="mb-3 flex items-center justify-between gap-3">
-      <p className="min-w-0 truncate text-xs text-ink-muted">
-        <span className="font-mono text-ink-secondary">{stock}</span> vs.{" "}
-        <span className="font-mono text-ink-secondary">{kalshi}</span>
+    <>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="min-w-0 truncate text-xs text-ink-muted">
+          <span className="font-mono text-ink-secondary">{stock}</span> vs.{" "}
+          <span className="font-mono text-ink-secondary">{kalshi}</span>
+        </p>
+        <CopyLinkButton href={analysisHref({ stock, kalshi }, view)} current />
+      </div>
+      {view.asOf != null && <FrozenNote asOf={view.asOf} />}
+    </>
+  );
+}
+
+function FrozenNote({ asOf }: { asOf: number }) {
+  return (
+    <div className="mb-4 rounded-lg border border-border bg-surface p-3 text-xs text-ink-secondary">
+      <p>
+        <span className="font-medium text-ink">Frozen as of {formatDateTime(asOf, { withYear: true })}.</span> Research ends there,
+        so this link gives the same numbers later; the Kalshi market and stock panels above it still show the latest data.
       </p>
-      <CopyLinkButton href={analysisHref({ stock, kalshi })} />
+      <details className="mt-1.5">
+        <summary className="cursor-pointer text-ink-muted hover:text-ink-secondary">What a frozen link reproduces, and what can still change</summary>
+        <p className="mt-2 font-medium text-ink-secondary">The same every time, given the same data:</p>
+        <ul className="mt-1 list-disc space-y-1 pl-5">
+          {REPRODUCED.map((t) => (
+            <li key={t}>{t}</li>
+          ))}
+        </ul>
+        <p className="mt-2 font-medium text-ink-secondary">What can still change:</p>
+        <ul className="mt-1 list-disc space-y-1 pl-5">
+          {MAY_DIFFER.map((t) => (
+            <li key={t}>{t}</li>
+          ))}
+        </ul>
+      </details>
     </div>
   );
 }

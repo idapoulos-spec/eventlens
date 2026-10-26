@@ -308,9 +308,9 @@ export async function getStockOverview(
     // Half-hour bars serve both the hourly comparison chart (combined into Twelve Data's
     // hourly bars) and research, whose top-of-hour closes line up with Kalshi's hourly
     // candles, so research costs no extra API credit. The quote is always fetched fresh.
-    const [rawQuote, { end, start, history }] = await Promise.all([
+    const [rawQuote, { end, start, frozen, history }] = await Promise.all([
       twelveGet<RawQuote>("/quote", { symbol }, apiKey, LIVE),
-      Promise.resolve(researchWindow).then(async ({ end, start }) => ({ end, start, history: await getStockHistory(symbol, apiKey, { end, start }) })),
+      Promise.resolve(researchWindow).then(async ({ end, start, frozen }) => ({ end, start, frozen, history: await getStockHistory(symbol, apiKey, { end, start }) })),
     ]);
     if (!history.ok) return history;
     const { halfHourly, daily: allDaily, researchDaily, fetchedAt: historyFetchedAt, from } = history.data;
@@ -338,6 +338,7 @@ export async function getStockOverview(
       fetchedAt: Date.now(),
       research: {
         end,
+        ...(frozen && { frozen }),
         halfHourly: halfHourly.bars,
         daily: researchDaily ?? daily,
         // A past window's bars after its end are left out later (researchStockPoints); a live one's forming session now.

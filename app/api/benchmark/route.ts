@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { rejectUnlessSignedIn } from "@/lib/auth/session";
 import { clientIp } from "@/lib/client-ip";
-import { BENCHMARK_END_PARAM, parseWindowEnd } from "@/lib/history/window";
+import { BENCHMARK_END_PARAM, BENCHMARK_FROZEN_PARAM, parseWindowEnd } from "@/lib/history/window";
 import { BENCHMARK_SYMBOL_PARAM, getBenchmarkSeries, type BenchmarkErrorResponse, type BenchmarkSeries } from "@/lib/market-data";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { validateStockTicker } from "@/lib/validation";
@@ -31,7 +31,8 @@ function error(status: number, code: string, message: string, headers?: HeadersI
 /**
  * GET /api/benchmark?symbol=… → BenchmarkSeries: a benchmark for the Research panel's market
  * adjustment. With &end=… (ms), its bars cover the research window ending then (a closed
- * market's close) instead of the latest ones.
+ * market's close) instead of the latest ones; with &frozen=1 too, a frozen link's window, where
+ * only bars settled by its as-of time count.
  */
 export async function GET(request: NextRequest) {
   // Before anything else, so a visitor who isn't signed in learns nothing, not even whether the input is valid.
@@ -51,7 +52,12 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const series = await (end.data === null ? getBenchmarkSeries(symbol.value) : getBenchmarkSeries(symbol.value, { end: end.data }));
+  const frozen = end.data !== null && request.nextUrl.searchParams.get(BENCHMARK_FROZEN_PARAM) === "1";
+  const series = await (end.data === null
+    ? getBenchmarkSeries(symbol.value)
+    : frozen
+      ? getBenchmarkSeries(symbol.value, { end: end.data, frozen })
+      : getBenchmarkSeries(symbol.value, { end: end.data }));
   if (!series.ok) return error(ERROR_STATUS[series.error.code] ?? 502, series.error.code, series.error.message);
   const body: BenchmarkSeries = series.data;
   return Response.json(body);

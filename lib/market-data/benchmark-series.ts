@@ -26,17 +26,18 @@ const HALF_HOUR_MS = 30 * 60 * 1000;
 /**
  * A benchmark's research closes from its 30-minute and daily bars, stamped exactly like
  * the stock's: top-of-hour closes, and session closes (sessionClosePoints). Bars that
- * hadn't settled when they were fetched are left out. While a session is under way its
- * daily bar is too, even when the latest 30-minute bar has settled.
+ * hadn't settled when they were fetched (or by `settledAt`, a frozen window's as-of time)
+ * are left out. While a session is under way its daily bar is too, even when the latest
+ * 30-minute bar has settled.
  */
-export function benchmarkPoints(symbol: string, halfHourly: StockBar[], daily: StockBar[], fetchedAt: number): BenchmarkSeries {
-  const cutoff = fetchedAt - BENCHMARK_SETTLE_MS;
+export function benchmarkPoints(symbol: string, halfHourly: StockBar[], daily: StockBar[], fetchedAt: number, settledAt = fetchedAt): BenchmarkSeries {
+  const cutoff = settledAt - BENCHMARK_SETTLE_MS;
   const closes = sessionClosePoints(daily, halfHourly);
   return {
     symbol,
     hourly: topOfHourCloses(
       halfHourly.map((b) => ({ t: b.t, value: b.close })),
-      fetchedAt,
+      settledAt,
       BENCHMARK_SETTLE_MS,
     ),
     daily: closes.filter((p, i) => p.t <= cutoff && tradingDayClose(daily[i].t) <= cutoff),

@@ -36,7 +36,10 @@ export const scanStock = (prices: ScanPrices): ScanStock => ({ halfHourly: expan
  * inside the scan's span, its 30-minute bars are rescaled over the span's split sessions, which
  * can be more than the page sees (adjustIntradayForSplits).
  */
-export function candidateBars({ halfHourly, daily: allDaily, fetchedAt }: ScanStock, { end, start }: { end: number | null; start: number | null }): { research: ResearchBars; fetchedAt: number } {
+export function candidateBars(
+  { halfHourly, daily: allDaily, fetchedAt }: ScanStock,
+  { end, start, frozen }: { end: number | null; start: number | null; frozen?: true },
+): { research: ResearchBars; fetchedAt: number } {
   const from = stockHistoryStart(start, end ?? fetchedAt);
   const first = dateStart(from);
   const bars = halfHourly.filter((b) => b.t >= first);
@@ -45,6 +48,8 @@ export function candidateBars({ halfHourly, daily: allDaily, fetchedAt }: ScanSt
     return {
       research: {
         end,
+        // A frozen window's bars settle at its as-of time, as on its frozen page (see settledAt).
+        ...(frozen && { frozen }),
         halfHourly: bars,
         daily: sinceFrom.filter((b) => b.t >= dateStart(end - STOCK_HISTORY_MS)),
         longDaily: sinceFrom,

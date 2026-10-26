@@ -27,7 +27,10 @@ type StockResult = Promise<Result<StockAnalysis>>;
  * section then fades in over its placeholder.
  */
 export function Dashboard({ stock, kalshi, view }: { stock: string; kalshi: string; view?: ResearchView }) {
-  const { kalshiData, stockData, researchHistory, benchmarkData, longHistory } = loadAnalysis(stock, kalshi);
+  const { kalshiData, stockData, researchHistory, benchmarkData, longHistory } = loadAnalysis(stock, kalshi, {
+    asOf: view?.asOf ?? null,
+    ...(view?.benchmark && { benchmark: view.benchmark }),
+  });
 
   return (
     <div className="grid gap-4 sm:gap-5">

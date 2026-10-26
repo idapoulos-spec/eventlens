@@ -2,6 +2,7 @@
 // histories), since a scan moves one stock's bars once and many candidates' histories.
 
 import type { ExpectedPoint } from "@/lib/analytics/research";
+import type { Provenance } from "@/lib/history/types";
 import type { KalshiPoint } from "@/lib/kalshi/types";
 import type { BenchmarkSeries } from "@/lib/market-data/types";
 import type { DataError } from "@/lib/result";
@@ -67,6 +68,10 @@ export type ScanKalshi =
       long: { points: KalshiPoint[]; start: number } | null;
       end: number | null;
       start: number | null;
+      /** The window ends at a frozen scan's as-of time (`end`), not a close: bars settle then. */
+      frozen?: true;
+      /** Where its 90-day history came from (the data store, a live tail, or live), for a report's sources. */
+      provenance?: Provenance;
     }
   | {
       kind: "event";
@@ -74,6 +79,8 @@ export type ScanKalshi =
       long: { marks: ExpectedPoint[]; start: number } | null;
       end: number | null;
       start: number | null;
+      frozen?: true;
+      provenance?: Provenance;
     };
 
 export interface ScanErrorResponse {

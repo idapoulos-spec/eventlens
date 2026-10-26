@@ -4,8 +4,14 @@ import type { KalshiMarket } from "@/lib/kalshi/types";
 import { sessionClosePoints } from "@/lib/market-data/session";
 import type { StockBar } from "@/lib/market-data/types";
 import {
+  formatAsOf,
+  fromNewYorkInput,
+  newYorkInput,
+  parseResearchLink,
   LIVE_WINDOW,
   LONG_HISTORY_MS,
+  parseAsOf,
+  settledAt,
   longHistoryStart,
   parseWindowEnd,
   provenanceNote,
@@ -163,5 +169,122 @@ describe("parseResearchView", () => {
     expect(parseResearchView(undefined, undefined)).toEqual({ window: null, resolution: null });
     expect(parseResearchView("45", "weekly")).toEqual({ window: null, resolution: null });
     expect(parseResearchView("90 ", "Daily")).toEqual({ window: null, resolution: null });
+  });
+});
+
+describe("windowFor with an as-of time (a frozen link)", () => {
+  const NOW = Date.UTC(2026, 9, 25, 16);
+  const AS_OF = Date.UTC(2026, 9, 7, 18, 2, 10, 345);
+  const market = (closeTime: string | null, openTime: string | null = null) => ({ closeTime, openTime }) as KalshiMarket;
+
+  it("ends at the as-of time while the market was still open then, and marks the window frozen", () => {
+    expect(windowFor({ market: market("2026-12-09T19:00:00Z", "2025-05-01T00:00:00Z"), archived: false }, NOW, AS_OF)).toEqual({
+      end: AS_OF,
+      archived: false,
+      start: Date.UTC(2025, 4, 1),
+      frozen: true,
+    });
+    // Closing between the as-of time and now doesn't move it.
+    expect(windowFor({ market: market("2026-10-20T19:00:00Z"), archived: false }, NOW, AS_OF).end).toBe(AS_OF);
+  });
+
+  it("ends at the close, as without one, when the market had closed by the as-of time", () => {
+    const closed = { market: market("2025-12-10T19:00:00Z", "2025-03-03T15:00:00Z"), archived: true };
+    expect(windowFor(closed, NOW, AS_OF)).toEqual(windowFor(closed, NOW));
+  });
+});
+
+describe("settledAt", () => {
+  it("is the fetch time, unless the window is frozen at an earlier as-of time", () => {
+    expect(settledAt({ end: null }, 500)).toBe(500);
+    expect(settledAt({ end: 300 }, 500)).toBe(500);
+    expect(settledAt({ end: 300, frozen: true }, 500)).toBe(300);
+    expect(settledAt({ end: 300, frozen: true }, 200)).toBe(200);
+  });
+});
+
+describe("parseAsOf and formatAsOf", () => {
+  const NOW = Date.UTC(2026, 9, 25, 16);
+
+  it("reads UTC times to the minute, second, or millisecond, and writes them back the same", () => {
+    for (const [text, ms] of [
+      ["2026-10-07T18:02Z", Date.UTC(2026, 9, 7, 18, 2)],
+      ["2026-10-07T18:02:10Z", Date.UTC(2026, 9, 7, 18, 2, 10)],
+      ["2026-10-07T18:02:10.345Z", Date.UTC(2026, 9, 7, 18, 2, 10, 345)],
+    ] as const) {
+      expect(parseAsOf(text, NOW)).toEqual({ ok: true, data: ms });
+      expect(formatAsOf(ms)).toBe(text);
+    }
+    expect(parseAsOf("2026-10-07T18:02:10.3Z", NOW)).toEqual({ ok: true, data: Date.UTC(2026, 9, 7, 18, 2, 10, 300) });
+    expect(parseAsOf(null, NOW)).toEqual({ ok: true, data: null });
+    expect(parseAsOf(undefined, NOW)).toEqual({ ok: true, data: null });
+  });
+
+  it("keeps every millisecond, so a frozen link ends exactly where the page did", () => {
+    const ms = Date.UTC(2026, 9, 7, 16, 40, 30, 1);
+    const text = formatAsOf(ms);
+    expect(parseAsOf(text, NOW)).toEqual({ ok: true, data: ms });
+  });
+
+  it("rejects anything else: other formats, offsets, impossible dates, the future, and before 2015", () => {
+    for (const text of ["", "now", "1760000000000", "2026-10-07", "2026-10-07T18:02", "2026-10-07 18:02Z", "2026-10-07T18:02+02:00", "2026-02-31T10:00Z", "2026-10-07T24:30Z", "2026-10-25T16:01Z", "2014-12-31T23:59Z"]) {
+      const r = parseAsOf(text, NOW);
+      expect(r.ok, text).toBe(false);
+      if (!r.ok) expect(r.error.code).toBe("invalid_asof");
+    }
+  });
+});
+
+describe("parseResearchLink", () => {
+  const NOW = Date.UTC(2026, 9, 25, 16);
+  const read = (query: string) => {
+    const params = new URLSearchParams(query);
+    return parseResearchLink((name) => params.get(name), NOW);
+  };
+
+  it("reads every setting a link carries", () => {
+    expect(read("window=365&res=daily&returns=raw&bench=qqq&jump=0.25&asof=2026-10-07T18:02Z")).toEqual({
+      view: { window: 365, resolution: "daily", returns: "raw", benchmark: "QQQ", jump: 0.25, asOf: Date.UTC(2026, 9, 7, 18, 2) },
+      asOf: { ok: true, data: Date.UTC(2026, 9, 7, 18, 2) },
+    });
+  });
+
+  it("falls back to each default for a setting it can't read", () => {
+    expect(read("window=60&res=weekly&returns=adjusted&bench=not+a+ticker&jump=-2").view).toEqual({
+      window: null,
+      resolution: null,
+      returns: null,
+      benchmark: null,
+      jump: null,
+      asOf: null,
+    });
+    for (const jump of ["0", "1e3", "2.555", "abc", ""]) expect(read(`jump=${jump}`).view.jump, jump).toBeNull();
+  });
+
+  it("reports an as-of time it can't read, rather than quietly going live", () => {
+    const { view, asOf } = read("asof=2026-10-07");
+    expect(asOf.ok).toBe(false);
+    expect(view.asOf).toBeNull();
+  });
+});
+
+describe("newYorkInput and fromNewYorkInput", () => {
+  it("convert between a time and a New York date-time field, either side of daylight saving time", () => {
+    for (const [text, ms] of [
+      ["2026-10-07T14:02", Date.UTC(2026, 9, 7, 18, 2)],
+      ["2026-01-15T09:30", Date.UTC(2026, 0, 15, 14, 30)],
+      ["2026-03-08T03:30", Date.UTC(2026, 2, 8, 7, 30)],
+      ["2026-11-01T00:59", Date.UTC(2026, 10, 1, 4, 59)],
+    ] as const) {
+      expect(newYorkInput(ms)).toBe(text);
+      expect(fromNewYorkInput(text)).toBe(ms);
+    }
+  });
+
+  it("reads seconds away, and rejects a time that doesn't exist in New York or isn't a date-time", () => {
+    expect(newYorkInput(Date.UTC(2026, 9, 7, 18, 2, 59, 999))).toBe("2026-10-07T14:02");
+    // Clocks jump from 2:00 to 3:00 on March 8, 2026.
+    expect(fromNewYorkInput("2026-03-08T02:30")).toBeNull();
+    for (const text of ["", "2026-10-07", "2026-10-07T14:02:00", "2026-13-01T10:00"]) expect(fromNewYorkInput(text), text).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analysisHref, REANALYZE_AFTER_MS, sameAnalysis, submitAction } from "./navigation";
+import { analysisFromSearch, analysisHref, currentAnalysisHref, REANALYZE_AFTER_MS, sameAnalysis, submitAction } from "./navigation";
 
 const NVDA = { stock: "NVDA", kalshi: "KXFEDDECISION-26OCT-H25" };
 const SPY = { stock: "SPY", kalshi: "KXRECSSNBER-27" };
@@ -17,6 +17,39 @@ describe("analysisHref", () => {
     expect(analysisHref(NVDA, { window: 365, resolution: "daily" })).toBe("/?stock=NVDA&kalshi=KXFEDDECISION-26OCT-H25&window=365&res=daily");
     expect(analysisHref(NVDA, { window: "all", resolution: null })).toBe("/?stock=NVDA&kalshi=KXFEDDECISION-26OCT-H25&window=all");
     expect(analysisHref(NVDA, { window: null, resolution: null })).toBe(analysisHref(NVDA));
+  });
+});
+
+describe("analysisHref with every setting", () => {
+  const AS_OF = Date.UTC(2026, 9, 7, 18, 2, 10, 345);
+
+  it("writes each one that isn't its default, and the as-of time as UTC", () => {
+    expect(analysisHref(NVDA, { window: 30, resolution: "daily", returns: "raw", benchmark: "QQQ", jump: 0.5, asOf: AS_OF })).toBe(
+      "/?stock=NVDA&kalshi=KXFEDDECISION-26OCT-H25&window=30&res=daily&returns=raw&bench=QQQ&jump=0.5&asof=2026-10-07T18%3A02%3A10.345Z",
+    );
+    expect(analysisHref(NVDA, { window: null, resolution: null, returns: null, benchmark: null, jump: null, asOf: null })).toBe(analysisHref(NVDA));
+  });
+
+  it("reads back the same through the page's own parser", () => {
+    const href = analysisHref(NVDA, { window: "all", resolution: "hourly", benchmark: "BRK.B", jump: 10, asOf: Date.UTC(2026, 9, 7, 18) });
+    expect(href).toContain("asof=2026-10-07T18%3A00Z");
+    expect(currentAnalysisHref(href.slice(1), Date.UTC(2026, 9, 25))).toBe(href);
+  });
+});
+
+describe("currentAnalysisHref", () => {
+  const now = Date.UTC(2026, 9, 25);
+
+  it("rebuilds the link from what the page reads, dropping anything else", () => {
+    expect(currentAnalysisHref("?stock=nvda&kalshi=KXFEDDECISION-26OCT-H25&utm_source=x&window=7&bench=", now)).toBe(
+      "/?stock=NVDA&kalshi=KXFEDDECISION-26OCT-H25&window=7",
+    );
+  });
+
+  it("is null without a valid analysis, or with an as-of time the page would reject", () => {
+    expect(currentAnalysisHref("?stock=NVDA", now)).toBeNull();
+    expect(currentAnalysisHref("?stock=NVDA&kalshi=KXFEDDECISION-26OCT-H25&asof=yesterday", now)).toBeNull();
+    expect(analysisFromSearch("?stock=NVDA&kalshi=KXFEDDECISION-26OCT-H25")).toEqual(NVDA);
   });
 });
 

@@ -10,7 +10,7 @@ import { coveragePlan, mergeByTime } from "@/lib/history/merge";
 import { ARCHIVE_DEADLINE_MS, LONG_DEADLINE_MS, TAIL_OVERLAP_MS, withDeadline } from "@/lib/history/research";
 import { readStore, storeOn } from "@/lib/history/store";
 import type { Provenance, ResearchWindow } from "@/lib/history/types";
-import { KALSHI_HISTORY_MS, LIVE_WINDOW, longHistoryStart, RESEARCH_WINDOW_MS } from "@/lib/history/window";
+import { closedOr, KALSHI_HISTORY_MS, LIVE_WINDOW, longHistoryStart, RESEARCH_WINDOW_MS } from "@/lib/history/window";
 import { LIVE } from "@/lib/fetch-cache";
 import { DEFAULT_BENCHMARK } from "@/lib/market-data/benchmark-series";
 import { getBenchmarkSeries } from "@/lib/market-data/benchmark";
@@ -136,15 +136,15 @@ export function firstOpenOf(markets: RawMarket[]): number | null {
 
 /**
  * Research ends at the event's first close once that has passed (E isn't defined after it),
- * otherwise now; its longer windows start no earlier than the first outcome's open.
+ * otherwise now; its longer windows start no earlier than the first outcome's open. With `asOf`
+ * (a frozen link), it ends there instead of now, and at the first close only if that had passed by then.
  */
-export function eventWindow(found: FoundEvent, now: number): ResearchWindow {
-  const close = firstCloseOf(found.markets);
-  return { end: close !== null && close <= now ? close : null, archived: found.archived, start: firstOpenOf(found.markets) };
+export function eventWindow(found: FoundEvent, now: number, asOf: number | null = null): ResearchWindow {
+  return closedOr(firstCloseOf(found.markets), { archived: found.archived, start: firstOpenOf(found.markets) }, now, asOf);
 }
 
-export function eventWindowOf(found: Promise<Result<FoundEvent>>): Promise<ResearchWindow> {
-  return found.then((r) => (r.ok ? eventWindow(r.data, Date.now()) : LIVE_WINDOW));
+export function eventWindowOf(found: Promise<Result<FoundEvent>>, asOf: number | null = null): Promise<ResearchWindow> {
+  return found.then((r) => (r.ok ? eventWindow(r.data, Date.now(), asOf) : asOf === null ? LIVE_WINDOW : { ...LIVE_WINDOW, end: asOf, frozen: true }));
 }
 
 const toBook = ({ endTs, yesBid, yesAsk }: KalshiCandle): OutcomeCandle => ({
@@ -283,8 +283,11 @@ async function loadHistories(found: FoundEvent, metas: OutcomeMeta[], range: Tim
   return { histories, provenance: { storedThrough, liveFrom, liveFailed }, error };
 }
 
-/** A whole event's analysis, from its found outcomes. Never rejects. */
-export async function loadEvent(found: FoundEvent, fetchedAt = Date.now()): Promise<EventAnalysis> {
+/**
+ * A whole event's analysis, from its found outcomes. With `asOf` (a frozen link), everything ends
+ * there, as for an event past its first close: E and its history at that time. Never rejects.
+ */
+export async function loadEvent(found: FoundEvent, fetchedAt = Date.now(), asOf: number | null = null): Promise<EventAnalysis> {
   const mapping = mapEvent(found.markets, found.mutuallyExclusive);
   const books: OutcomeBook[] = found.markets.map((m) => ({
     ticker: m.ticker,
@@ -297,7 +300,7 @@ export async function loadEvent(found: FoundEvent, fetchedAt = Date.now()): Prom
     ask: toNumber(m.yes_ask_dollars),
   }));
   const firstClose = firstCloseOf(found.markets);
-  const window = eventWindow(found, fetchedAt);
+  const window = eventWindow(found, fetchedAt, asOf);
   // Minute boundaries, as the single-market history (windowEndSec).
   const to = windowEndSec(window.end ?? fetchedAt) * 1000;
   const from = to - RESEARCH_WINDOW_MS;
@@ -389,9 +392,9 @@ export interface LongMarks {
  * 90 days). Null when the event is no older than the 90 days the page already has, or its outcomes
  * can't be mapped; a failure when the history can't be loaded in LONG_DEADLINE_MS. Never rejects.
  */
-export async function loadEventLong(found: FoundEvent, fetchedAt = Date.now()): Promise<Result<LongMarks | null>> {
+export async function loadEventLong(found: FoundEvent, fetchedAt = Date.now(), asOf: number | null = null): Promise<Result<LongMarks | null>> {
   const mapping = mapEvent(found.markets, found.mutuallyExclusive);
-  const window = eventWindow(found, fetchedAt);
+  const window = eventWindow(found, fetchedAt, asOf);
   const to = windowEndSec(window.end ?? fetchedAt) * 1000;
   const start = longHistoryStart(window.start, to);
   if (mapping.outcomes.length === 0 || start >= to - RESEARCH_WINDOW_MS) return ok(null);
@@ -420,15 +423,15 @@ export async function loadEventLong(found: FoundEvent, fetchedAt = Date.now()): 
  * which says whether Research ends now or at the event's first close; its default benchmark waits
  * for the stock, so the stock gets the shared Twelve Data quota first.
  */
-export function loadEventAnalysis(stock: string, ticker: string) {
+export function loadEventAnalysis(stock: string, ticker: string, { asOf = null, benchmark = DEFAULT_BENCHMARK.symbol }: { asOf?: number | null; benchmark?: string } = {}) {
   const found = findEvent(ticker);
-  const window = eventWindowOf(found);
-  const event = found.then(async (r): Promise<Result<EventAnalysis>> => (r.ok ? ok(await loadEvent(r.data)) : r));
+  const window = eventWindowOf(found, asOf);
+  const event = found.then(async (r): Promise<Result<EventAnalysis>> => (r.ok ? ok(await loadEvent(r.data, Date.now(), asOf)) : r));
   // Research's longer windows: loaded alongside, and streamed after the page's first render.
-  const long = found.then((r): Promise<Result<LongMarks | null>> => (r.ok ? loadEventLong(r.data) : Promise.resolve(ok(null))));
+  const long = found.then((r): Promise<Result<LongMarks | null>> => (r.ok ? loadEventLong(r.data, Date.now(), asOf) : Promise.resolve(ok(null))));
   const stockData = getStockOverview(stock, window);
-  const benchmarkData = Promise.all([stockData, window]).then(([s, { end }]) =>
-    s.ok && stock !== DEFAULT_BENCHMARK.symbol ? getBenchmarkSeries(DEFAULT_BENCHMARK.symbol, { end }) : null,
+  const benchmarkData = Promise.all([stockData, window]).then(([s, { end, frozen }]) =>
+    s.ok && stock !== benchmark ? getBenchmarkSeries(benchmark, { end, frozen }) : null,
   );
   return { event, stockData, benchmarkData, long };
 }
