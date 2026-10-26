@@ -492,9 +492,7 @@ function eventBlocks(i: AnalysisReportInput, adjustment: Adjustment | null): Blo
   const study: EventStudy | null = i.results.view.study;
   const tests: EventStudyTests | null = i.results.view.events;
   const kind = adjustment ? "market-adjusted return" : "return";
-  // A market's label already says "moved" ("the probability moved"); an event's is the value's name.
-  const moved = variable.kind === "probability" ? variable.text.moved : `${variable.text.moved} moved`;
-  const intro = p(`Average ${i.stock} cumulative ${kind} in the ${settings.noun[1]} before and after ${moved} ≥${threshold} ${variable.unit} in one ${settings.noun[0]}.`);
+  const intro = p(`Average ${i.stock} cumulative ${kind} in the ${settings.noun[1]} before and after ${variable.text.moved} moved ≥${threshold} ${variable.unit} in one ${settings.noun[0]}.`);
   if (study === null || tests === null) {
     return [intro, p(`Not enough data for a market-adjusted event study: fewer than 10 ${resolution} intervals in the market model’s sample fall outside the jump windows, so beta can’t be estimated without the jumps shaping it.`)];
   }

@@ -125,8 +125,10 @@ describe("the Research panel's markup is unchanged", () => {
     stubWorld([LIVE_MARKET]);
     const html = await marketMarkup("NVDA", LIVE_MARKET.ticker);
     expect(html).toContain("Same-hour correlation");
-    expect(sha(pinnedMarkup(html))).toBe("4fb1ec2127180f30");
-    expect(sha(pinnedMarkup(await marketMarkup("NVDA", LIVE_MARKET.ticker, LINKED)))).toBe("671d7a62f1a649b5");
+    // Re-taken 2026-10-26 for one intentional text fix, the event study's subtitle "the probability moved
+    // moved" → "the probability moved"; the markup differs from the original pins by that one word only.
+    expect(sha(pinnedMarkup(html))).toBe("4c723accd2cc4a7e");
+    expect(sha(pinnedMarkup(await marketMarkup("NVDA", LIVE_MARKET.ticker, LINKED)))).toBe("7cad7e81356388f7");
   });
 
   it("for a market settled before the archive cutoff, from the store, ending at its close", async () => {
@@ -134,7 +136,8 @@ describe("the Research panel's markup is unchanged", () => {
     await store([SETTLED_MARKET]);
     const html = await withStore(() => marketMarkup("TLT", SETTLED_MARKET.ticker));
     expect(html).toContain("in windows ending at the market&#x27;s close");
-    expect(sha(pinnedMarkup(html))).toBe("3c68d5ad63cc90a7");
+    // Re-taken 2026-10-26 for the same one-word subtitle fix, and nothing else.
+    expect(sha(pinnedMarkup(html))).toBe("ad384cfb0f2054ac");
   });
 
   it("for a live event, without the store", async () => {

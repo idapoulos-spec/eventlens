@@ -27,7 +27,7 @@ export interface KalshiVariable {
     value: string;
     /** "… tended to rise when {rose}": "the chance of YES rose". */
     rose: string;
-    /** The event study's subtitle: "… before and after {moved} ≥2 pp". */
+    /** What moves, for the event study's subtitle: "… before and after {moved} moved ≥2 pp". */
     moved: string;
     /** The event study's panel titles, before "≥2 pp": "Probability rose", "Probability fell". */
     rise: string;
@@ -56,7 +56,7 @@ export function probabilityVariable(yesLabel: string): KalshiVariable {
       subject: "Kalshi",
       value: "Kalshi's probability",
       rose: "the chance of YES rose",
-      moved: "the probability moved",
+      moved: "the probability",
       rise: "Probability rose",
       fall: "Probability fell",
       movesIn: `in the chance of YES (“${yesLabel}”)`,
