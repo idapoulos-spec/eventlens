@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderHtml } from "@/lib/report/html";
 import { renderMarkdown } from "@/lib/report/markdown";
 import type { Report } from "@/lib/report/model";
+import { asSentence } from "./analysisReport";
 import { cleanAuthor, readAuthor, writeAuthor, AUTHOR_STORAGE_KEY } from "./author";
 
 const report = (over: Partial<Report> = {}): Report => ({
@@ -78,5 +79,13 @@ describe("the report's options", () => {
         throw new Error("blocked");
       }),
     ).toBe("");
+  });
+});
+
+describe("asSentence", () => {
+  it("adds a period only where the text doesn't already end a sentence (Kalshi's titles are often questions)", () => {
+    expect(asSentence("Will the Fed hold at its December 2026 meeting?")).toBe("Will the Fed hold at its December 2026 meeting?");
+    expect(asSentence("Fed decision in December")).toBe("Fed decision in December.");
+    expect(asSentence("Rates “held.”")).toBe("Rates “held.”");
   });
 });

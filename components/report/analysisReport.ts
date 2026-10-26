@@ -97,6 +97,9 @@ export interface AnalysisReportInput {
   commit: string;
 }
 
+/** Text ending as a sentence: a period added unless it already ends in one, or in "?" or "!" (Kalshi's titles are often questions). */
+export const asSentence = (text: string) => (/[.?!]["”’)]?$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
+
 const pct = (share: number) => `${Math.round(share * 100)}%`;
 const enough = (n: number) => n >= MIN_TEST_EVENTS;
 const p = (text: string): Block => ({ kind: "paragraph", text });
@@ -142,7 +145,7 @@ function question(i: AnalysisReportInput): Section {
         `Did changes in ${what} move with ${i.stock}’s market-adjusted returns (net of ${i.benchmark}) in the same ${settings.noun[0]}, over the ${WINDOW_LABEL[i.choice]} window ending ${reportTime(i.asOf)}${span}?`,
       ),
       p("That is the primary test, chosen before looking at the data and judged on its own p-value. Everything else in this report is exploratory: leads to check, not findings."),
-      ...(i.sources.title ? [p(`Kalshi: ${i.sources.title}.`)] : []),
+      ...(i.sources.title ? [p(`Kalshi: ${asSentence(i.sources.title)}`)] : []),
     ],
   };
 }
