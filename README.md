@@ -462,6 +462,59 @@ The market model is fitted on all 90 days, so to reproduce β and α, use the 90
 - **The numbers are the page's.** Reports use the page's own formatters and wording. `components/report/accuracy.test.tsx` renders the page as the server does and builds its report from the same inputs: every table they share matches cell for cell (less the columns left out), the primary result reads the same, and every number in the results is on the page, for a market, an event, and a self-benchmark; `scan-report.test.tsx` does the same for a scan. (The longer windows' results come from the same results object; the static render can't show them, so they aren't in that test.)
 - **Version and commit** come from `package.json`'s version (bumped before each release is tagged) and `VERCEL_GIT_COMMIT_SHA`, or `git rev-parse HEAD` locally, set at build time by `next.config.ts`.
 
+## In plain English
+
+A card at the top of Research, and a summary at the top of a scan's results, say what the analysis found in short sentences and everyday words, for readers who don't read the statistics. They compute no new statistics: they read the page's own results (the primary test, the fragility diagnostics and leave-one-out check, the detectable size, the regression with the benchmark held fixed, and the corrected lead-lag results) and put them into words. They never give trading advice.
+
+### The evidence rating
+
+The one new piece of logic is a rating of how strong the evidence is: **Not enough data**, **No clear link**, **Weak**, **Moderate**, or **Strong** (`lib/analytics/evidence.ts`). These rules were fixed on 2026-10-27, written here before any simulation of them ran, and are not tuned to any result, simulated or real. They use only results the page already computes. The first rule that matches decides:
+
+| # | When | Rating |
+| --- | --- | --- |
+| R1 | No primary test: no market-adjusted returns (the stock is its own benchmark, or the benchmark is missing or has too few prices) | No rating (the card says why) |
+| R2 | The primary test has no p-value (fewer than 8 sessions or runs of days, too few pairs, no Kalshi movement, or unstable) | Not enough data |
+| R3 | A result the rating needs is still computing: the leave-one-out check when p < 0.05, the detectable size when p ≥ 0.05 | Checking… (no rating yet) |
+| R4 | p ≥ 0.05, and Kalshi's movement rests on fewer than 10 effective intervals (F1) | Not enough data |
+| R5 | p ≥ 0.05, and the smallest detectable correlation is missing, above the ±0.8 cap, or above **±0.30** (as the page shows it, to two decimals) | Not enough data |
+| R6 | p ≥ 0.05, in a window whose detectable size failed validation (its whole 95% range below the 80% it claims): 30D hourly (75.0%), 30D daily (45.0%), 180D daily (74.2%) | Not enough data |
+| R7 | p ≥ 0.05 otherwise | No clear link |
+| R8 | p < 0.05, and fragile: F1 or F3 (a leave-one-out rerun changes the decision) | Weak |
+| R9 | p < 0.05 without a confidence interval | Weak |
+| R10 | **p < 0.005**, not fragile, and not a daily window past 90 days (where the intervals covered 90.0% and false positives were 7.0% in validation) | Strong |
+| R11 | p < 0.05 otherwise | Moderate |
+
+- **±0.30** is Cohen's conventional "medium" correlation: "No clear link" says the test had a fair chance (80%) of finding a link of that size and didn't. In the committed simulations above, the median detectable size is 0.35 at 90 hourly days, 0.27 at 180, and 0.18 at a year, so at the default 90 days a result that isn't significant will usually read "Not enough data": 90 hourly days usually can't rule out a medium-sized link.
+- **0.005** is the threshold Benjamin et al. (2018) proposed for strong evidence. With the page's 999 draws the smallest p is 0.001, so it can be reached.
+- **A fragile result is never rated above Weak**, and a result that isn't significant with too few moves or too little power is "Not enough data", never "No clear link".
+- **A check that couldn't run counts as tripped:** if the fragility diagnostics or the leave-one-out check couldn't be computed for a result with a p-value, it's treated as fragile (F1 or F3) and rated accordingly.
+- **The calibration misses** in R6 and R10 are the validations in the tables above whose whole 95% range fell on the wrong side of the target. The card names the one that applies.
+- **Strong evidence isn't a big effect.** When the rating is Moderate or Strong and |r| is below 0.10 (as shown, to two decimals), the card adds that the evidence is convincing but the link itself is small.
+
+**A scan's strongest lead** (the top-ranked candidate that was tested) is rated on the scan's Benjamini–Hochberg-adjusted p, since it was picked from many. The scan computes no detectable size, so a lead that doesn't survive the correction isn't called "No clear link":
+
+| When | Rating |
+| --- | --- |
+| Doesn't survive BH, with F1 | Not enough data |
+| Doesn't survive BH, otherwise | **Nothing stood out** (its own page shows how large a link its data could detect) |
+| Survives BH, and fragile (F1, or F3 from its leave-one-out check) | Weak |
+| Survives BH, BH-adjusted p < 0.005, not fragile, and not a daily window past 90 days | Strong |
+| Survives BH otherwise | Moderate |
+
+With no relationship anywhere, a lead is rated Weak or above only when something survives BH, which the scan simulations (see [Scan](#scan)) put at 5.2%, 3.0%, and 4.0% of independent scans of 10, 30, and 100 candidates.
+
+### Checking the rating by simulation
+
+Set before any run (`lib/analytics/evidence-rates.sim.test.ts`, run with `pnpm test:sim`): each data set is rated exactly as the page rates it, with the primary test and leave-one-out check at 999 draws and the detectable size at 999 simulated samples and 200 resamples (leave-one-out only when p < 0.05 and the detectable size only when p ≥ 0.05, the only cases the rules use them).
+
+- **Design:** hourly, Kalshi tracking the benchmark (0.1% per pp), shared volatility (the stress case of the fragility simulations above). Windows of 21, 62, and 124 sessions (30, 90, and 180 days); the market model is fitted on 62 loaded sessions for 30 and 90 days and on the window itself for 180, as the page does.
+- **No relationship:** 500 data sets per window, seeds 7,000,000–7,000,499, 7,010,000–7,010,499, and 7,020,000–7,020,499.
+- **Real effects:** a same-hour effect of 0.1% per pp (seeds 7,100,000, 7,110,000, 7,120,000 + 0–199) and 0.3% per pp (seeds 7,200,000, 7,210,000, 7,220,000 + 0–199), 200 data sets per window. All seeds are fresh.
+- **The test fails, with no relationship, at any window, if** Moderate + Strong is above 6.0% (30 of 500), Strong is above 1.0% (5 of 500), or Weak + Moderate + Strong is above 7.5%.
+- **With the 0.3% per pp effect, it fails if** "No clear link" is above 20% at any window: the label must not hide a link larger than its ±0.30 threshold.
+- **Reported, without a bar:** every rating's share with no relationship and with both effects, the median sample correlation with each effect, and the run time.
+- **Each setting runs once.** Rates are given with their count, one Monte Carlo standard error, and a 95% Wilson range. If a bar is missed, the rules stay as they are, the measured rate is shown on the page and here, and only that bar is loosened, with this disclosure. Daily data, a year, and All use the same rules but aren't simulated, and the card says so.
+
 ## Event analysis
 
 A single outcome market of a multi-outcome event has an ambiguous sign: a rising "no change" probability is dovish when the alternative is a hike and hawkish when it's a cut. For Fed decision events (`KXFEDDECISION-26OCT`, and the legacy `FEDDECISION-…` ones), EventLens analyzes the whole event as one number, the **expected rate change** E = Σ pᵢ·vᵢ / Σ pᵢ over the outcomes open at the time, in basis points. The method is an exact port of the fed-history study's (`lib/expected/engine.ts`); `scripts/check-expected-value.ts` checks it against the study's marks (all 2,049 marks of its 27 meetings agree).
