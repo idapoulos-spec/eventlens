@@ -515,6 +515,34 @@ Set before any run (`lib/analytics/evidence-rates.sim.test.ts`, run with `pnpm t
 - **Reported, without a bar:** every rating's share with no relationship and with both effects, the median sample correlation with each effect, and the run time.
 - **Each setting runs once.** Rates are given with their count, one Monte Carlo standard error, and a 95% Wilson range. If a bar is missed, the rules stay as they are, the measured rate is shown on the page and here, and only that bar is loosened, with this disclosure. Daily data, a year, and All use the same rules but aren't simulated, and the card says so.
 
+**Results** (the single run, 2026-10-27; 287 s on an Apple-silicon Mac). With no relationship, 500 data sets per window; each cell is the share of data sets with that rating, with the count in brackets:
+
+| Window | Not enough data | No clear link | Weak | Moderate | Strong | Moderate + Strong (bar 6.0%) | Weak or above, i.e. p < 0.05 (bar 7.5%) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 30 days | 93.8% (469) | 0% (0) | 5.6% (28) | 0.6% (3) | 0% (0), range 0–0.8% | 0.6% (3) ± 0.3, range 0.2–1.7% | 6.2% (31) ± 1.1, range 4.4–8.7% |
+| 90 days | 67.6% (338) | 25.4% (127) | 3.8% (19) | 1.4% (7) | **1.8% (9) ± 0.6, range 0.9–3.4%** | 3.2% (16) ± 0.8, range 2.0–5.1% | 7.0% (35) ± 1.1, range 5.1–9.6% |
+| 180 days | 25.6% (128) | 69.0% (345) | 1.8% (9) | 3.0% (15) | 0.6% (3) ± 0.3, range 0.2–1.7% | 3.6% (18) ± 0.8, range 2.3–5.6% | 5.4% (27) ± 1.0, range 3.7–7.7% |
+
+- **One bar was missed: at 90 days, Strong came up in 1.8% of data sets with no relationship (9 of 500, range 0.9–3.4%), above the 1.0% bar** (5 of 500). The whole 95% range is above the 0.5% that a p-value below 0.005 should give, so in this design the primary test is somewhat liberal far out in its tail at 90 days. As decided beforehand, the rules are unchanged, the test's bar for that one setting is loosened to 2.0%, and the card says so whenever it rates a 90-day hourly result Strong. The other two windows passed (0 and 3 of 500).
+- **The primary test's false-positive rate is in the last column** (every result with p < 0.05 is rated Weak or above): 6.2%, 7.0%, and 5.4%, within the 7.5% bar. At 90 days the whole range (5.1–9.6%) is above 5%, unlike the earlier 4.7% (14 of 300) in [Statistical tests](#statistical-tests); those runs used 199 draws and other seeds, and the two figures are 1.4 standard errors apart.
+- **Moderate or Strong** came up in 0.6–3.6% of data sets with no relationship, all within the 6.0% bar: fragile results (Weak) take the rest of the chance rejections, most of all at 30 days, where few hours carry Kalshi's movement.
+- **What a result that isn't significant says** depends on the window: at 30 days it's always "Not enough data" (R4–R6), at 90 days mostly so (67.6%), and at 180 days mostly "No clear link" (69.0%).
+
+With real effects, 200 data sets per window (median sample correlation in brackets):
+
+| Effect | Window | Not enough data | No clear link | Weak | Moderate | Strong |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.1% per pp | 30 days (r 0.12) | 85.5% (171) | 0% (0) | 11.5% (23) | 2.5% (5) | 0.5% (1) |
+| 0.1% per pp | 90 days (r 0.13) | 56.0% (112) | 19.5% (39) | 9.5% (19) | 8.0% (16) | 7.0% (14) |
+| 0.1% per pp | 180 days (r 0.12) | 18.0% (36) | 49.0% (98) | 11.0% (22) | 12.5% (25) | 9.5% (19) |
+| 0.3% per pp | 30 days (r 0.36) | 57.5% (115) | 0% (0), range 0–1.9% | 33.5% (67) | 4.0% (8) | 5.0% (10) |
+| 0.3% per pp | 90 days (r 0.35) | 17.0% (34) | 0.5% (1), range 0.1–2.8% | 17.0% (34) | 11.5% (23) | 54.0% (108) |
+| 0.3% per pp | 180 days (r 0.33) | 4.5% (9) | 3.0% (6) ± 1.2, range 1.4–6.4% | 3.5% (7) | 12.0% (24) | 77.0% (154) |
+
+- **"No clear link" didn't hide the larger link** (correlations around 0.33–0.36, above its ±0.30 threshold): 0–3.0% of data sets, within the 20% bar.
+- **It does miss small links, as its wording says.** With a real correlation around 0.12, well under the ±0.30 the label is set at, the card said "No clear link" in 19.5% of data sets at 90 days and 49.0% at 180. That's why it says a strong link is unlikely but a weaker one can't be ruled out.
+- **Strong evidence isn't a big effect:** with a real correlation around 0.12, 7.0–9.5% of data sets were rated Strong at 90 and 180 days: strong evidence of a modest link. The headline's size word and the effect in percent say how big it is, and below |r| = 0.10 the card adds that the link itself is small.
+
 ## Event analysis
 
 A single outcome market of a multi-outcome event has an ambiguous sign: a rising "no change" probability is dovish when the alternative is a hike and hawkish when it's a cut. For Fed decision events (`KXFEDDECISION-26OCT`, and the legacy `FEDDECISION-…` ones), EventLens analyzes the whole event as one number, the **expected rate change** E = Σ pᵢ·vᵢ / Σ pᵢ over the outcomes open at the time, in basis points. The method is an exact port of the fed-history study's (`lib/expected/engine.ts`); `scripts/check-expected-value.ts` checks it against the study's marks (all 2,049 marks of its 27 meetings agree).
