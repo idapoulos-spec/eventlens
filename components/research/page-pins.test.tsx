@@ -2,7 +2,8 @@
 // world through the real loaders and components, rendered as the server renders them. Taken on
 // main at v0.12.0 (821869b), before saved studies and reports (feat/reports), so the existing
 // cards stay exactly as they were. Controls added later sit in one element marked
-// data-report-controls, which these pins leave out.
+// data-report-controls, and the plain-English summary (feat/plain-english) in one marked
+// data-plain-english, with no <section> inside either: these pins leave both out.
 
 import { createHash } from "node:crypto";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -44,7 +45,7 @@ const sha = (text: string) => createHash("sha256").update(text).digest("hex").sl
 
 /** The markup the pins cover: everything but the controls added for studies and reports. */
 export function pinnedMarkup(html: string): string {
-  return html.replace(/<section data-report-controls[\s\S]*?<\/section>/g, "");
+  return html.replace(/<section data-report-controls[\s\S]*?<\/section>/g, "").replace(/<section data-plain-english[\s\S]*?<\/section>/g, "");
 }
 
 let db: TestDb;
@@ -125,6 +126,8 @@ describe("the Research panel's markup is unchanged", () => {
     stubWorld([LIVE_MARKET]);
     const html = await marketMarkup("NVDA", LIVE_MARKET.ticker);
     expect(html).toContain("Same-hour correlation");
+    // The plain-English card is there, and left out of the pin.
+    expect(html).toContain("<section data-plain-english");
     // Re-taken 2026-10-26 for one intentional text fix, the event study's subtitle "the probability moved
     // moved" → "the probability moved"; the markup differs from the original pins by that one word only.
     expect(sha(pinnedMarkup(html))).toBe("4c723accd2cc4a7e");
@@ -144,6 +147,7 @@ describe("the Research panel's markup is unchanged", () => {
     stubWorld(LIVE_EVENT);
     const html = await eventMarkup("TLT", "KXFEDDECISION-26DEC");
     expect(html).toContain("ΔE");
+    expect(html).toContain("<section data-plain-english");
     expect(sha(pinnedMarkup(html))).toBe("0f5b2f50936244ea");
     expect(sha(pinnedMarkup(await eventMarkup("TLT", "KXFEDDECISION-26DEC", LINKED)))).toBe("e4b9bd8a5cc41e60");
   });

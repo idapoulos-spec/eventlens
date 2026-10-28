@@ -52,6 +52,8 @@ import { formatLag, LeadLagChart, type LagUnit } from "../charts/LeadLagChart";
 import { RollingCorrelationChart } from "../charts/RollingCorrelationChart";
 import { Card, Notice } from "../ui";
 import { MarketAdjustmentCard, modelSample, type ModelSample } from "./MarketAdjustmentCard";
+import { PlainEnglishCard } from "../plain/PlainEnglishCard";
+import { plainSummary } from "../plain/summary";
 import { partId, useDelayed, usePanelJobs } from "./panelJobs";
 import { Caption, Flag, fmtR, plural, Segmented, Table, ValuesTable } from "./parts";
 import {
@@ -374,6 +376,36 @@ export function ResearchPanel({
     },
   });
 
+  // The plain-English card: the same results in everyday words, rated once the parts it needs are in.
+  const hasPrimaryP = primary?.p != null;
+  const detectableValue = hasPrimaryP ? detectablePart?.value : null;
+  const looValue = hasPrimaryP ? looPart?.value : null;
+  const longDaily = resolution === "daily" && plan.kind === "long";
+  const plain = useMemo(
+    () =>
+      results &&
+      timed("plain", () =>
+        plainSummary({
+          stock: stockSymbol,
+          variable,
+          choice,
+          resolution,
+          benchmark: benchmark.active.symbol,
+          unavailable,
+          results,
+          detectable: detectableValue,
+          leaveOneOut: looValue,
+          longDaily,
+          windowNote: note,
+          sources,
+          windowEnd,
+          windowFrozen,
+          frozenAt,
+        }),
+      ),
+    [stockSymbol, variable, choice, resolution, benchmark.active.symbol, unavailable, results, detectableValue, looValue, longDaily, note, sources, windowEnd, windowFrozen, frozenAt],
+  );
+
   function downloadCsv() {
     if (!results) return;
     const closesByT = closes && new Map(closes.map((p) => [p.t, p.value]));
@@ -389,130 +421,135 @@ export function ResearchPanel({
 
   return (
     <div className="grid gap-4 sm:gap-5">
-      <Card
-        title="Research"
-        subtitle={`${variable.kind === "probability" ? "Kalshi probability changes" : variable.text.changes} vs. ${stockSymbol} returns, compared only where both have a real observation${
-          windowEnd === null
-            ? ""
-            : windowFrozen
-              ? `, in windows ending at the link’s as-of time (${formatDateTime(windowEnd, { withYear: true })})`
-              : `, in windows ending at the ${variable.kind === "probability" ? "market's" : "event's first"} close (${formatDateTime(windowEnd, { withYear: true })})`
-        }`}
-      >
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-          <Segmented
-            label="Window"
-            value={choice}
-            options={WINDOWS.map((w) => ({ value: w, label: WINDOW_LABEL[w] }))}
-            onChange={setChoice}
-          />
-          <Segmented
-            label="Resolution"
-            value={resolution}
-            options={[
-              { value: "hourly" as const, label: "Hourly" },
-              { value: "daily" as const, label: "Daily", disabled: choice === 7, title: "Seven days hold only about five daily closes" },
-            ]}
-            onChange={setResolution}
-          />
-          <Segmented
-            label="Returns"
-            value={returns}
-            options={[
-              { value: "raw" as const, label: "Raw" },
-              { value: "adjusted" as const, label: "Market-adjusted", disabled: !canAdjust, title: unavailable },
-            ]}
-            onChange={setReturns}
-          />
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-ink-secondary">Jump size (event study)</span>
-            <select
-              value={threshold}
-              onChange={(e) => setThresholds((t) => ({ ...t, [resolution]: Number(e.target.value) }))}
-              className="h-10 w-full rounded-lg border border-border bg-surface-raised px-3 text-base text-ink focus:border-series-kalshi focus:outline-none sm:h-8 sm:w-auto sm:text-xs"
+      {/* One child with the Research card, not a new one beside it: React's ids (the benchmark field's
+          useId) follow a component's place among its siblings, and the cards below must not change. */}
+      <>
+        {plain && <PlainEnglishCard summary={plain} />}
+        <Card
+          title="Research"
+          subtitle={`${variable.kind === "probability" ? "Kalshi probability changes" : variable.text.changes} vs. ${stockSymbol} returns, compared only where both have a real observation${
+            windowEnd === null
+              ? ""
+              : windowFrozen
+                ? `, in windows ending at the link’s as-of time (${formatDateTime(windowEnd, { withYear: true })})`
+                : `, in windows ending at the ${variable.kind === "probability" ? "market's" : "event's first"} close (${formatDateTime(windowEnd, { withYear: true })})`
+          }`}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+            <Segmented
+              label="Window"
+              value={choice}
+              options={WINDOWS.map((w) => ({ value: w, label: WINDOW_LABEL[w] }))}
+              onChange={setChoice}
+            />
+            <Segmented
+              label="Resolution"
+              value={resolution}
+              options={[
+                { value: "hourly" as const, label: "Hourly" },
+                { value: "daily" as const, label: "Daily", disabled: choice === 7, title: "Seven days hold only about five daily closes" },
+              ]}
+              onChange={setResolution}
+            />
+            <Segmented
+              label="Returns"
+              value={returns}
+              options={[
+                { value: "raw" as const, label: "Raw" },
+                { value: "adjusted" as const, label: "Market-adjusted", disabled: !canAdjust, title: unavailable },
+              ]}
+              onChange={setReturns}
+            />
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-medium text-ink-secondary">Jump size (event study)</span>
+              <select
+                value={threshold}
+                onChange={(e) => setThresholds((t) => ({ ...t, [resolution]: Number(e.target.value) }))}
+                className="h-10 w-full rounded-lg border border-border bg-surface-raised px-3 text-base text-ink focus:border-series-kalshi focus:outline-none sm:h-8 sm:w-auto sm:text-xs"
+              >
+                {variable.thresholds.map((t) => (
+                  <option key={t} value={t}>
+                    ≥ {t} {variable.unit} in one {settings.noun[0]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={downloadCsv}
+              disabled={!results}
+              className="h-10 disabled:cursor-not-allowed disabled:opacity-40 rounded-lg border border-border px-3 text-sm text-ink-secondary transition hover:bg-surface-raised hover:text-ink sm:ml-auto sm:h-8 sm:text-xs"
             >
-              {variable.thresholds.map((t) => (
-                <option key={t} value={t}>
-                  ≥ {t} {variable.unit} in one {settings.noun[0]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            onClick={downloadCsv}
-            disabled={!results}
-            className="h-10 disabled:cursor-not-allowed disabled:opacity-40 rounded-lg border border-border px-3 text-sm text-ink-secondary transition hover:bg-surface-raised hover:text-ink sm:ml-auto sm:h-8 sm:text-xs"
-          >
-            Download CSV
-          </button>
-        </div>
-        <section data-report-controls="" className="mt-3 border-t border-border pt-3 text-xs text-ink-secondary">
-          <ControlBar lead={freezeControl.lead} controls={[freezeControl, saveControl, reportControl]} notes={freezeControl.note} />
-        </section>
-        {note && (
-          <p role="status" className="mt-2 text-xs text-ink-secondary">
-            {note}
-          </p>
-        )}
-        {results && chosenReturns === "adjusted" && returns === "raw" && (
-          <p role="status" className="mt-2 text-xs text-ink-secondary">
-            Showing raw returns: {lowerFirst(unavailable)}, so market-adjusted returns can’t be computed.
-          </p>
-        )}
-
-        {!results ? (
-          <div className="mt-4" aria-busy={plan.kind !== "failed"}>
-            {plan.kind === "failed" ? (
-              <Notice tone="error" title="Longer windows couldn’t be loaded" message={`${plan.message} The 7, 30, and 90-day windows still work.`} />
-            ) : (
-              longPending && (
-                <Notice
-                  tone="info"
-                  title={plan.kind === "waiting" ? "Loading the longer history…" : `Computing the ${WINDOW_LABEL[choice]} window…`}
-                  message={
-                    plan.kind === "waiting"
-                      ? "It streams in after the page; the 7, 30, and 90-day windows are ready now."
-                      : "Longer windows are computed in the background so the page stays responsive; this usually takes under a second."
-                  }
-                />
-              )
-            )}
+              Download CSV
+            </button>
           </div>
-        ) : (
-          <>
-            <Summary
-              changes={results.view.changes}
-              excluded={results.series.excluded}
-              stats={results.view.sameInterval}
-              resolution={resolution}
-              settings={settings}
-              adjustment={adjustment}
-              rawR={results.rawSame.r}
-              variable={variable}
-            />
+          <section data-report-controls="" className="mt-3 border-t border-border pt-3 text-xs text-ink-secondary">
+            <ControlBar lead={freezeControl.lead} controls={[freezeControl, saveControl, reportControl]} notes={freezeControl.note} />
+          </section>
+          {note && (
+            <p role="status" className="mt-2 text-xs text-ink-secondary">
+              {note}
+            </p>
+          )}
+          {results && chosenReturns === "adjusted" && returns === "raw" && (
+            <p role="status" className="mt-2 text-xs text-ink-secondary">
+              Showing raw returns: {lowerFirst(unavailable)}, so market-adjusted returns can’t be computed.
+            </p>
+          )}
 
-            <PrimaryTest
-              primary={primary}
-              detectable={detectablePart?.value ?? null}
-              fragility={results.fragility}
-              leaveOneOut={looPart?.value ?? null}
-              pending={secondaryPending}
-              significant={significant}
-              fewRuns={resolution === "daily" && plan.kind === "loaded" && plan.days < 90}
-              longDaily={resolution === "daily" && plan.kind === "long"}
-              unavailable={unavailable}
-              benchmark={benchmark.active.symbol}
-              stockSymbol={stockSymbol}
-              settings={settings}
-              variable={variable}
-              resolution={resolution}
-            />
-          </>
-        )}
+          {!results ? (
+            <div className="mt-4" aria-busy={plan.kind !== "failed"}>
+              {plan.kind === "failed" ? (
+                <Notice tone="error" title="Longer windows couldn’t be loaded" message={`${plan.message} The 7, 30, and 90-day windows still work.`} />
+              ) : (
+                longPending && (
+                  <Notice
+                    tone="info"
+                    title={plan.kind === "waiting" ? "Loading the longer history…" : `Computing the ${WINDOW_LABEL[choice]} window…`}
+                    message={
+                      plan.kind === "waiting"
+                        ? "It streams in after the page; the 7, 30, and 90-day windows are ready now."
+                        : "Longer windows are computed in the background so the page stays responsive; this usually takes under a second."
+                    }
+                  />
+                )
+              )}
+            </div>
+          ) : (
+            <>
+              <Summary
+                changes={results.view.changes}
+                excluded={results.series.excluded}
+                stats={results.view.sameInterval}
+                resolution={resolution}
+                settings={settings}
+                adjustment={adjustment}
+                rawR={results.rawSame.r}
+                variable={variable}
+              />
 
-        <SignNote stockSymbol={stockSymbol} variable={variable} />
-      </Card>
+              <PrimaryTest
+                primary={primary}
+                detectable={detectablePart?.value ?? null}
+                fragility={results.fragility}
+                leaveOneOut={looPart?.value ?? null}
+                pending={secondaryPending}
+                significant={significant}
+                fewRuns={resolution === "daily" && plan.kind === "loaded" && plan.days < 90}
+                longDaily={resolution === "daily" && plan.kind === "long"}
+                unavailable={unavailable}
+                benchmark={benchmark.active.symbol}
+                stockSymbol={stockSymbol}
+                settings={settings}
+                variable={variable}
+                resolution={resolution}
+              />
+            </>
+          )}
+
+          <SignNote stockSymbol={stockSymbol} variable={variable} />
+        </Card>
+      </>
 
       {results && (
         <MarketAdjustmentCard

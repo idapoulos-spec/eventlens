@@ -18,7 +18,7 @@ import type { loadAnalysis as LoadAnalysis } from "@/lib/history/analysis";
 import type { loadEventAnalysis as LoadEventAnalysis } from "@/lib/expected/load";
 import type { Research as ResearchComponent } from "../Research";
 import type { EventResearch as EventResearchComponent } from "../event/EventDashboard";
-import { analysisReport, type ReportSources } from "./analysisReport";
+import { analysisReport, type AnalysisReportInput, type ReportSources } from "./analysisReport";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -72,14 +72,22 @@ export async function eventPage({ loadEventAnalysis, EventResearch }: PageDeps, 
   };
 }
 
+type LoadedView = { choice: 7 | 30 | 90; resolution: Resolution; returns?: Returns; jump?: number; benchmark?: string };
+type ReportOptions = { link?: string | null; preparedBy?: string | null; generatedAt?: number };
+
 /** The report for a view of a loaded window (7, 30, or 90 days), from the panel's own computations. */
-export function reportFor(
+export function reportFor(page: Loaded, stock: string, kalshi: string, view: LoadedView, options: ReportOptions = {}): Report {
+  return analysisReport(reportInputFor(page, stock, kalshi, view, options));
+}
+
+/** What the panel holds for that view, as a report (and the plain-English summary) reads it. */
+export function reportInputFor(
   page: Loaded,
   stock: string,
   kalshi: string,
-  view: { choice: 7 | 30 | 90; resolution: Resolution; returns?: Returns; jump?: number; benchmark?: string },
-  { link = null, preparedBy = null, generatedAt = Date.now() }: { link?: string | null; preparedBy?: string | null; generatedAt?: number } = {},
-): Report {
+  view: LoadedView,
+  { link = null, preparedBy = null, generatedAt = Date.now() }: ReportOptions = {},
+): AnalysisReportInput {
   const { hourly, daily, asOf } = lastRows(page.rows);
   const resolution: Resolution = view.choice === 7 ? "hourly" : view.resolution;
   const benchmark = view.benchmark ?? "SPY";
@@ -98,7 +106,7 @@ export function reportFor(
       if (m.kind === "leave_one_out") leaveOneOut = m.value;
     });
   }
-  return analysisReport({
+  return {
     stock,
     kalshi,
     variable: page.variable,
@@ -127,6 +135,6 @@ export function reportFor(
     generatedAt,
     version: "test",
     commit: "test",
-  });
+  };
 }
 
