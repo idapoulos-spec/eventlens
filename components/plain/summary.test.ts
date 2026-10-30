@@ -215,6 +215,9 @@ describe("a scan's summary", () => {
     expect(section(scans["scan nothing stood out"], "scan-lead")).toContain(
       "It didn’t survive the correction for testing many at once. A scan doesn’t check how big a link each one’s data could find; its own page does. On its own page it may look stronger, because that page doesn’t correct for the other 2 tests.",
     );
+    expect(section(scans["scan nothing stood out, two tested"], "scan-lead")).toContain("because that page doesn’t correct for the other test.");
+    expect(scans["scan nothing stood out, one tested"].level).toBe("nothing_stood_out");
+    expect(section(scans["scan nothing stood out, one tested"], "scan-lead")).not.toContain("On its own page");
     expect(scans["scan not enough data (F1)"].level).toBe("not_enough_data");
     for (const s of Object.values(scans).filter((s) => s.sections.some((x) => x.id === "scan-lead"))) {
       expect(section(s, "scan-lead")).toContain("Leads at the top of a scan are probably overstated, because they rank first partly by luck.");

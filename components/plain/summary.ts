@@ -24,8 +24,7 @@ import type { Provenance } from "@/lib/history/types";
 import { isLongWindow, type WindowChoice } from "@/lib/history/window";
 import { DEFAULT_BENCHMARK } from "@/lib/market-data/benchmark-series";
 import type { ScanCandidate } from "@/lib/scan/types";
-import { fmtR, plural } from "../research/parts";
-import { lowerFirst } from "../research/ResearchPanel";
+import { fmtR, lowerFirst, plural } from "../research/parts";
 import { formatCi, formatP } from "../research/stats";
 import type { CandidateState, ScanSnapshot } from "../scan/scanRunner";
 
@@ -552,10 +551,12 @@ function scanLeadItems(stock: string, c: ScanCandidate, state: Done, rating: Sca
       if (rating.rule === "few_moves") {
         text.push(`Also, ${who.owner} movement was bunched into a few ${w.unit[1]}, so a real link could easily be missed.`);
       } else {
-        derived.push(String(tested - 1));
+        // With one candidate tested there are no other tests for its own page to leave uncorrected.
+        const others = tested - 1;
+        if (others > 1) derived.push(String(others));
         text.push(
           "A scan doesn’t check how big a link each one’s data could find; its own page does.",
-          `On its own page it may look stronger, because that page doesn’t correct for the other ${tested - 1} tests.`,
+          others === 0 ? "" : `On its own page it may look stronger, because that page doesn’t correct for ${others === 1 ? "the other test" : `the other ${others} tests`}.`,
         );
       }
       break;

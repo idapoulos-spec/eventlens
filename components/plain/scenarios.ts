@@ -211,6 +211,14 @@ export function scanScenarios(): Scenario[] {
   ];
   const out = cases.map(([name, snap, over]) => ({ name: `scan ${name}`, summary: scanPlainSummary({ ...settings, ...over, snap }) }));
   const none = scanSnap({ bh: 0.02, holm: 0.03 });
+  // Fewer candidates tested: the others couldn't be.
+  const fewer = (snap: ScanSnapshot, keep: number): ScanSnapshot => ({
+    ...snap,
+    states: snap.states.map((s, i) => (i < keep ? s : { status: "untested" as const, reason: "Kalshi has no history in this window" })),
+    corrections: snap.corrections.map((c, i) => (i < keep ? c : null)),
+  });
+  out.push({ name: "scan nothing stood out, two tested", summary: scanPlainSummary({ ...settings, snap: fewer(scanSnap({ bh: 0.3, holm: 0.6, p: 0.03, estimate: 0.15 }), 2) }) });
+  out.push({ name: "scan nothing stood out, one tested", summary: scanPlainSummary({ ...settings, snap: fewer(scanSnap({ bh: 0.3, holm: 0.6, p: 0.3, estimate: 0.15 }), 1) }) });
   out.push({ name: "scan nothing tested", summary: scanPlainSummary({ ...settings, snap: { ...none, states: none.states.map(() => ({ status: "untested" as const, reason: "x" })), corrections: none.states.map(() => null) } }) });
   out.push({ name: "scan just started", summary: scanPlainSummary({ ...settings, snap: { ...none, phase: "running", states: none.states.map(() => ({ status: "loading" as const })), corrections: none.states.map(() => null) } }) });
   return out;

@@ -56,7 +56,7 @@ import { PlainEnglishCard } from "../plain/PlainEnglishCard";
 import { Term } from "../plain/Term";
 import { plainSummary } from "../plain/summary";
 import { partId, useDelayed, usePanelJobs } from "./panelJobs";
-import { Caption, Flag, fmtR, plural, Segmented, Table, ValuesTable } from "./parts";
+import { Caption, Flag, fmtR, lowerFirst, plural, Segmented, Table, ValuesTable } from "./parts";
 import {
   eventFamilyText,
   formatCi,
@@ -757,9 +757,6 @@ function useFreezeControl({
 }
 
 // ---- Summary and flags ----
-
-/** Lowercases a sentence's first letter to continue a sentence, unless it starts a ticker (e.g. "TLT is …"). */
-export const lowerFirst = (text: string) => (/^[A-Z][a-z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text);
 
 /** How to read the sign of a correlation, for one market's YES side or an event's expected value. */
 function SignNote({ stockSymbol, variable }: { stockSymbol: string; variable: KalshiVariable }) {

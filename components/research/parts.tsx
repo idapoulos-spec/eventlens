@@ -5,6 +5,8 @@ import { formatSigned } from "@/lib/format";
 
 export const plural = (n: number, [one, many]: [string, string]) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 export const fmtR = (r: number | null) => (r === null ? "—" : formatSigned(r, 2));
+/** Lowercases a sentence's first letter to continue a sentence, unless it starts a ticker (e.g. "TLT is …"). */
+export const lowerFirst = (text: string) => (/^[A-Z][a-z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text);
 
 interface SegmentOption<T> {
   value: T;

@@ -21,7 +21,7 @@ import { MAY_DIFFER, REPRODUCED } from "../analysis/reproducibility";
 import { formatLag } from "../charts/LeadLagChart";
 import { DISCLAIMER } from "../Disclaimer";
 import { formatAlpha, intervalNoun, modelSample, NEAR_DUPLICATE_R2, NEWEY_WEST_NOTE, verdictText, type ModelSample } from "../research/MarketAdjustmentCard";
-import { fmtR, plural } from "../research/parts";
+import { fmtR, lowerFirst, plural } from "../research/parts";
 import {
   adjustmentNote,
   betaFrom,
@@ -31,7 +31,6 @@ import {
   intervalText,
   LONG_DAILY_COVERAGE,
   LONG_DAILY_FALSE_POSITIVES,
-  lowerFirst,
   REASON_TEXT,
   ROLLING_EXTRA,
   sampleFlags,
