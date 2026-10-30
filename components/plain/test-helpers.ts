@@ -16,9 +16,9 @@ import { NOT_ADVICE } from "./summary";
 export const MARKET = probabilityVariable("Fed maintains rate");
 export const EVENT = expectedVariable({ unit: "bp", label: "the expected rate change" });
 
-/** One window's panel results from simulated hourly rows, as the panel computes them, with its leave-one-out check. */
+/** One window's panel results from simulated hourly rows, as the panel computes them, with its leave-one-out check (62 sessions simulated, or the window's own when it's longer). */
 export function simulated({ seed = 4_242, effect = 0, window = 62, returns = "adjusted" as Returns } = {}): { results: PanelResults; loo: LeaveOneOut | null } {
-  const { rows: full, closesByT } = simulateMarketRows({ sessions: 62, resolution: "hourly", seed, effect, sharedVolatility: true, kalshiInMarket: 0.1 });
+  const { rows: full, closesByT } = simulateMarketRows({ sessions: Math.max(62, window), resolution: "hourly", seed, effect, sharedVolatility: true, kalshiInMarket: 0.1 });
   const first = lastSessions(full, window, "hourly")[0].t;
   const input: PanelInput = { full, from: first - 1, resolution: "hourly", scale: 100, closes: [...closesByT].map(([t, value]) => ({ t, value })), returns };
   const core = panelCore(input);

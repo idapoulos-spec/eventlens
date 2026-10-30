@@ -4,7 +4,8 @@ import { formatSigned } from "@/lib/format";
 import { WARNING_BY_CHANCE } from "../research/ResearchPanel";
 import { analysisScenarios, base, ruleInput, RULES, SCAN_CANDIDATES, scanScenarios, scanSnap } from "./scenarios";
 import { LEVEL_LABEL, plainSummary, RATING_METHOD, RATING_METHOD_NUMBERS, scanPlainSummary, smallLinkText, STRONG_MISS_90, WARNING_RATE, type PlainSummary } from "./summary";
-import { EVENT, MARKET, plainInput, summaryText, withParts } from "./test-helpers";
+import { fmtR } from "../research/parts";
+import { EVENT, MARKET, plainInput, simulated, summaryText, withParts } from "./test-helpers";
 import { numbersIn } from "../report/test-helpers";
 
 const section = (s: PlainSummary, id: string) => s.sections.find((x) => x.id === id)!.items.join("\n");
@@ -237,5 +238,28 @@ describe("how the rating works", () => {
     expect(new Set(numbersIn(text))).toEqual(new Set(numbersIn(RATING_METHOD_NUMBERS.join(" "))));
     expect(text).toContain(`Strong came up in ${STRONG_MISS_90} of 90-day windows, more than the 1% aimed for.`);
     expect(summaryText(summary("strong"))).not.toContain("simulations with no real link, hourly data");
+  });
+});
+
+describe("a 180-day window", () => {
+  // The page computes 180D, 1Y, and All only after an effect loads their rows, so accuracy.test.tsx can't
+  // render them. This summarizes a 124-session window's own results, computed as the panel computes them.
+  const { results, loo } = simulated({ window: 124, effect: 0.3 });
+  const primary = results.market!.primary!;
+  const s = plainSummary(plainInput(results, { choice: 180, leaveOneOut: loo, detectable: null }));
+
+  it("rates it and quotes its own numbers", () => {
+    expect(primary.resampling?.units).toBe(124);
+    expect(primary.p).toBeLessThan(0.05);
+    expect(["weak", "moderate", "strong"]).toContain(s.level);
+    expect(section(s, "evidence")).toContain(`Main test: correlation r = ${fmtR(primary.estimate)}`);
+    expect(section(s, "trust")).toContain(
+      `Based on ${results.fragility!.movement.intervals.toLocaleString("en-US")} trading hours in a 180-day window; Kalshi moved in ${results.fragility!.movement.moves.toLocaleString("en-US")} of them, across 124 trading days.`,
+    );
+  });
+
+  it("says nothing about settings that weren't simulated, since 180 days hourly was", () => {
+    expect(summaryText(s)).not.toContain("wasn’t simulated");
+    expect(summaryText(s)).not.toContain("rated Strong 1.8%");
   });
 });
