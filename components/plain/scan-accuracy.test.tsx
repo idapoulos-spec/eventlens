@@ -2,7 +2,8 @@
 // fake world (its routes answered by their loaders, as in scan-report.test.tsx), its card rendered
 // as the page renders it: the summary there must be the builder's for the same snapshot, and every
 // number in it must be printed elsewhere on the card, unless the builder declares it (the count of
-// other tests, or the rating's own threshold), each checked against its source.
+// other tests, or the rating's own threshold), each checked against its source. The scan's report
+// opens with the same text, part by part, and ends with its glossary.
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,7 +16,9 @@ import type { loadCandidateKalshi as LoadCandidateKalshi } from "@/lib/scan/load
 import type { tickerCandidates as TickerCandidates } from "@/lib/scan/candidates";
 import type { ScanRun as ScanRunClass, ScanSnapshot } from "../scan/scanRunner";
 import type { ScanResults as ScanResultsComponent } from "../scan/ScanPage";
+import { scanReport } from "../report/scanReport";
 import { numbersNotOn, textOf } from "../report/test-helpers";
+import { cardGlossary, cardParts, reportParts } from "./test-helpers";
 import { ScanPlainSummary } from "./PlainEnglishCard";
 import { scanPlainSummary, type PlainSummary } from "./summary";
 
@@ -105,12 +108,19 @@ async function scanned(choice: 30 | 90, resolution: "hourly" | "daily", { stock 
   expect(snap.phase).toBe("done");
   const html = renderToStaticMarkup(<ScanResults run={run} {...settings} />);
   run.dispose();
-  return { html, snap, summary: scanPlainSummary({ ...settings, snap }) };
+  const report = scanReport({ ...settings, snap, asOf: null, selection: "a custom list", link: null, preparedBy: null, generatedAt: NOW, version: "test", commit: "test" });
+  return { html, snap, summary: scanPlainSummary({ ...settings, snap }), report };
 }
 
-function expectSummaryMatchesCard(html: string, snap: ScanSnapshot, summary: PlainSummary) {
+function expectSummaryMatchesCard(html: string, snap: ScanSnapshot, summary: PlainSummary, report: ReturnType<typeof scanReport>) {
   const card = CARD.exec(html)?.[0];
   if (!card) throw new Error("expected the plain-English summary");
+  // The report opens with the card's parts (the card's own title first) and ends with its glossary.
+  expect(report.sections[0].id).toBe("plain-english");
+  expect(["In plain English", ...reportParts(report.sections[0])]).toEqual(cardParts(card));
+  const terms = report.sections.at(-1)!;
+  expect(terms.id).toBe("terms");
+  expect(terms.blocks[0].kind === "facts" && terms.blocks[0].rows.map(([k, v]) => `${k}: ${v}`)).toEqual(cardGlossary(card));
   // It's the results card's first part, and it's the builder's.
   expect(html.indexOf(card)).toBeLessThan(html.indexOf("Exploratory leads, not findings."));
   expect(textOf(card)).toBe(textOf(renderToStaticMarkup(<ScanPlainSummary summary={summary} />)));
@@ -125,15 +135,15 @@ function expectSummaryMatchesCard(html: string, snap: ScanSnapshot, summary: Pla
 
 describe("the scan's plain-English summary is its results card's", () => {
   it("for a market and an event at 90 days hourly", async () => {
-    const { html, snap, summary } = await scanned(90, "hourly");
+    const { html, snap, summary, report } = await scanned(90, "hourly");
     expect(["pending", "none"]).not.toContain(summary.level);
     expect(summary.headline).toMatch(/^Out of 2 markets and events tested/);
-    expectSummaryMatchesCard(html, snap, summary);
+    expectSummaryMatchesCard(html, snap, summary, report);
   });
 
   it("for a market and an event at 30 days daily", async () => {
-    const { html, snap, summary } = await scanned(30, "daily");
-    expectSummaryMatchesCard(html, snap, summary);
+    const { html, snap, summary, report } = await scanned(30, "daily");
+    expectSummaryMatchesCard(html, snap, summary, report);
   });
 
   // The fake world's stocks don't move with Kalshi; these do, with one market (linkSymbol), at strengths
@@ -142,25 +152,25 @@ describe("the scan's plain-English summary is its results card's", () => {
 
   it("for a lead that doesn't survive the correction and has enough moves: Nothing stood out", async () => {
     linkSymbol("LINKU", MOVING_MARKET, 0.0015);
-    const { html, snap, summary } = await scanned(90, "hourly", { stock: "LINKU", tickers: THREE });
+    const { html, snap, summary, report } = await scanned(90, "hourly", { stock: "LINKU", tickers: THREE });
     expect(summary.level).toBe("nothing_stood_out");
     expect(resultsText(summary)).toContain("doesn’t correct for the other 2 tests");
-    expectSummaryMatchesCard(html, snap, summary);
+    expectSummaryMatchesCard(html, snap, summary, report);
   });
 
   it("for a lead that survives the correction but is fragile: Weak", async () => {
     linkSymbol("LINKW", MOVING_MARKET, 0.0005);
-    const { html, snap, summary } = await scanned(90, "hourly", { stock: "LINKW", tickers: THREE });
+    const { html, snap, summary, report } = await scanned(90, "hourly", { stock: "LINKW", tickers: THREE });
     expect(summary.level).toBe("weak");
     expect(resultsText(summary)).toContain("It survives the correction, but it’s fragile.");
-    expectSummaryMatchesCard(html, snap, summary);
+    expectSummaryMatchesCard(html, snap, summary, report);
   });
 
   it("for a lead that survives the correction with a corrected p-value under 0.005: Strong", async () => {
     linkSymbol("LINKA", MOVING_MARKET, 0.004);
-    const { html, snap, summary } = await scanned(90, "hourly", { stock: "LINKA", tickers: THREE });
+    const { html, snap, summary, report } = await scanned(90, "hourly", { stock: "LINKA", tickers: THREE });
     expect(summary.level).toBe("strong");
     expect(resultsText(summary)).toContain("The strongest lead is “");
-    expectSummaryMatchesCard(html, snap, summary);
+    expectSummaryMatchesCard(html, snap, summary, report);
   });
 });

@@ -17,7 +17,9 @@ import { fmtR } from "../research/parts";
 import { formatCi } from "../research/stats";
 import type { CandidateState, ScanSnapshot } from "../scan/scanRunner";
 import { chanceLine, correlationNote, medianAbs, SCOPE_NOTE, survivorsLine, WINNERS_CURSE } from "../scan/text";
+import { scanPlainSummary } from "../plain/summary";
 import { caveatsSection, reproducibilitySection } from "./analysisReport";
+import { plainSection, termsSection } from "./plainReport";
 
 /** p-values down to the finer p's resolution, as the scan page shows them (ScanPage's formatSmallP). */
 export const formatSmallP = (p: number | null) => (p === null ? "—" : p >= 0.001 ? p.toFixed(3) : p.toExponential(1));
@@ -115,6 +117,7 @@ export function scanReport(i: ScanReportInput): Report {
     kind: "EventLens scan report",
     preparedBy: i.preparedBy,
     sections: [
+      plainSection(scanPlainSummary({ stock: i.stock, choice: i.choice, resolution, candidates, snap }), { method: false }),
       {
         id: "question",
         title: "Question",
@@ -205,6 +208,7 @@ export function scanReport(i: ScanReportInput): Report {
         "Candidates in the same series or event tend to move together, so several similar results there are not independent confirmations.",
         SCOPE_NOTE,
       ]),
+      termsSection(),
     ],
     footer: { version: i.version, commit: i.commit, link: i.link, generatedAt: i.generatedAt },
   };

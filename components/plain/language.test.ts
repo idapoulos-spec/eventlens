@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { sectionText } from "@/lib/report/model";
+import { plainSection, termsSection } from "../report/plainReport";
 import { GLOSSARY } from "./glossary";
 import { analysisScenarios, scanScenarios } from "./scenarios";
 import { NOT_ADVICE, RATING_METHOD } from "./summary";
@@ -7,7 +9,8 @@ import { bannedIn, gradeLevel, longest, sentences, summaryText } from "./test-he
 // The plain-English summary never uses trading language, and stays short and simple: no sentence
 // over 25 words, and a Flesch–Kincaid grade of at most 9 (numbers, tickers, and quoted Kalshi labels
 // count as one plain word each). Every wording path is checked (scenarios.ts): each rating rule for a
-// market and an event at six settings, a scan in every state, the glossary, and how the rating works.
+// market and an event at six settings, a scan in every state, the glossary, and how the rating works,
+// and the same in a report's "In plain English" and "Terms used" sections.
 
 const MAX_WORDS = 25;
 const MAX_GRADE = 9;
@@ -24,6 +27,16 @@ describe("the plain-English summary's language", () => {
     for (const s of scenarios) expect(bannedIn(summaryText(s.summary)), s.name).toEqual([]);
     for (const e of GLOSSARY) expect(bannedIn(`${e.term} ${e.definition}`), e.id).toEqual([]);
     expect(bannedIn(RATING_METHOD.join(" "))).toEqual([]);
+  });
+
+  it("is the same in reports: their plain-English and terms sections add only headings and the level", () => {
+    for (const s of scenarios) {
+      const text = sectionText(plainSection(s.summary, { method: !s.name.startsWith("scan ") }));
+      expect(bannedIn(text), s.name).toEqual([]);
+      expect(text.split(NOT_ADVICE).length - 1, s.name).toBe(1);
+      expect(longest(text).words, `${s.name}: ${longest(text).sentence}`).toBeLessThanOrEqual(MAX_WORDS);
+    }
+    expect(bannedIn(sectionText(termsSection()))).toEqual([]);
   });
 
   it("says once, word for word, that it isn't a prediction, a cause, or a recommendation", () => {

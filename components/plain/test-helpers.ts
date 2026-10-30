@@ -1,6 +1,6 @@
 // Fixtures and checks for the plain-English summary's tests: real panel results from simulated rows,
-// with the parts each rating rule reads swapped for hand-made ones, and the language checks (trading
-// words, sentence length, reading level).
+// with the parts each rating rule reads swapped for hand-made ones, the language checks (trading
+// words, sentence length, reading level), and reading a rendered card back part by part.
 
 import type { DetectableCorrelation, TestResult } from "@/lib/analytics";
 import type { Fragility, LeaveOneOut } from "@/lib/analytics/fragility";
@@ -8,6 +8,8 @@ import { leaveOneOut } from "@/lib/analytics/fragility";
 import { panelCore, panelEvents, panelResults, type PanelInput, type PanelResults, type Returns } from "@/lib/analytics/panel";
 import { lastSessions, simulateMarketRows } from "@/lib/analytics/test-helpers";
 import { expectedVariable, probabilityVariable } from "@/lib/analytics/variable";
+import type { Section } from "@/lib/report/model";
+import { textOf } from "../report/test-helpers";
 import type { PlainInput, PlainSummary } from "./summary";
 import { NOT_ADVICE } from "./summary";
 
@@ -136,3 +138,22 @@ export function longest(text: string): { words: number; sentence: string } {
     return n > best.words ? { words: n, sentence: s } : best;
   }, { words: 0, sentence: "" });
 }
+
+// ---- Reading a rendered card back ----
+
+/** Text without its markup: glossary markers and hidden labels read as the words they hold. */
+export const plainText = (html: string) => textOf(html.replace(/<[^>]+>/g, ""));
+
+/** The card's parts in reading order (headings, paragraphs, list items), less its header and its folded notes. */
+export function cardParts(card: string): string[] {
+  const body = card.replace(/<header[\s\S]*?<\/header>/, "").replace(/<details[\s\S]*?<\/details>/g, "");
+  return [...body.matchAll(/<(h3|p|li)\b[^>]*>([\s\S]*?)<\/\1>/g)].map((m) => plainText(m[2]));
+}
+
+/** A report section's parts in order: its headings, paragraphs, and list items. */
+export function reportParts(section: Section): string[] {
+  return section.blocks.flatMap((b) => (b.kind === "list" ? b.items : b.kind === "paragraph" || b.kind === "heading" ? [b.text] : [])).map(plainText);
+}
+
+/** The glossary as the card's "What the terms mean" lists it: "Term: definition". */
+export const cardGlossary = (card: string) => [...card.matchAll(/<div><dt\b[\s\S]*?<\/dd><\/div>/g)].map(([d]) => plainText(d));

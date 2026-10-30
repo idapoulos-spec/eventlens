@@ -6,7 +6,8 @@
 // rescaled to 10 pp or 25 bp (recomputed here, and consistent with the page's per-unit figure), a
 // lag's count of hours or days (the page prints that lag), or a constant of the rating's own rules
 // and simulations. The fake world's stocks don't move with Kalshi, so the rated cases also use
-// symbols linked to one market (linkSymbol), picked for the rule each reaches. 180D, 1Y, and All can't be rendered statically (their rows load in an effect, as
+// symbols linked to one market (linkSymbol), picked for the rule each reaches. The report built from
+// the same state opens with the card's text, part by part, and ends with its glossary. 180D, 1Y, and All can't be rendered statically (their rows load in an effect, as
 // for reports); summary.test.ts covers the builder on long-window results.
 
 import { renderToStaticMarkup } from "react-dom/server";
@@ -16,10 +17,13 @@ import type { PanelMessage } from "@/lib/analytics/panel-jobs";
 import { formatSigned } from "@/lib/format";
 import { linkSymbol, stubWorld, worldEvent, worldMarket } from "@/lib/history/test-world";
 import { formatLag } from "../charts/LeadLagChart";
+import { analysisReport, type AnalysisReportInput } from "../report/analysisReport";
 import { eventPage, marketPage, reportInputFor, type Loaded, type PageDeps } from "../report/test-build";
 import { numbersIn, numbersNotOn, textOf } from "../report/test-helpers";
+import { GLOSSARY } from "./glossary";
 import { PlainEnglishCard } from "./PlainEnglishCard";
 import { RATING_METHOD_NUMBERS, plainSummary, type PlainInput, type PlainSummary } from "./summary";
+import { cardGlossary, cardParts, plainText, reportParts } from "./test-helpers";
 
 vi.setConfig({ testTimeout: 120_000 });
 vi.mock("server-only", () => ({}));
@@ -77,7 +81,7 @@ function split(html: string): { card: string; rest: string } {
 }
 
 /** The summary of the view's results, built from what the panel holds. */
-function summaryFor(page: Loaded, stock: string, kalshi: string, view: Parameters<typeof reportInputFor>[3]): { input: PlainInput; summary: PlainSummary } {
+function summaryFor(page: Loaded, stock: string, kalshi: string, view: Parameters<typeof reportInputFor>[3]): { input: AnalysisReportInput; summary: PlainSummary } {
   const input = reportInputFor(page, stock, kalshi, view);
   return { input, summary: plainSummary(input) };
 }
@@ -118,9 +122,29 @@ function expectMarkersInText(html: string) {
   }
 }
 
+/** The report from the same state opens with the card's text and ends with its glossary. */
+function expectReportMatchesCard(html: string, input: AnalysisReportInput) {
+  const { card } = split(html);
+  const report = analysisReport(input);
+  const first = report.sections[0];
+  expect(first.id).toBe("plain-english");
+  const parts = reportParts(first);
+  const method = parts.indexOf("How the rating works");
+  expect(method).toBeGreaterThan(4);
+  expect(parts.slice(0, method)).toEqual(cardParts(card));
+  const notes = /<details[\s\S]*?<\/details>/.exec(card)![0];
+  expect(parts.slice(method + 1)).toEqual([...notes.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/g)].map((m) => plainText(m[1])));
+  const terms = report.sections.at(-1)!;
+  expect(terms.id).toBe("terms");
+  const rows = terms.blocks[0].kind === "facts" ? terms.blocks[0].rows : [];
+  expect(rows.map(([k, v]) => `${k}: ${v}`)).toEqual(cardGlossary(card));
+  expect(rows).toHaveLength(GLOSSARY.length);
+}
+
 /** The card says what the builder says, and every number in it is the page's or a checked derived one. */
-function expectCardMatchesPage(html: string, input: PlainInput, summary: PlainSummary) {
+function expectCardMatchesPage(html: string, input: AnalysisReportInput, summary: PlainSummary) {
   expectMarkersInText(html);
+  expectReportMatchesCard(html, input);
   const { card, rest } = split(html);
   expect(textOf(card)).toBe(textOf(renderToStaticMarkup(<PlainEnglishCard summary={summary} />)));
   const missing = numbersNotOn(resultsText(summary), rest);

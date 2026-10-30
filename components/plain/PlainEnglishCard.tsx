@@ -14,31 +14,33 @@ import { markTerms } from "./Term";
 /**
  * How strong the evidence is, as a meter of three steps (Weak, Moderate, Strong) in the correlation
  * charts' hue, its track a lighter step of the same hue: No clear link fills none; Not enough data
- * is hatched, since it's no reading at all. The level is always written beside it.
+ * is hatched, since it's no reading at all. The level is always written beside it, as the text a
+ * screen reader reads ("Evidence: Strong"); the bar itself is decoration.
  */
 export function EvidenceMeter({ level }: { level: PlainLevel }) {
-  const label = LEVEL_LABEL[level];
-  if (level === "none") return <p className="text-sm font-semibold text-ink">{label}</p>;
   const filled = METER_STEP[level];
   const unknown = level === "not_enough_data" || level === "pending";
   return (
-    <div role="img" aria-label={`Evidence: ${label}`} className="flex items-center gap-3">
-      <div aria-hidden className="flex w-36 gap-0.5">
-        {[1, 2, 3].map((step) => (
-          <span
-            key={step}
-            className={`h-2.5 flex-1 rounded-[2px] ${filled !== null && step <= filled ? "bg-series-correlation" : "bg-series-correlation/20"}`}
-            style={
-              unknown
-                ? { backgroundImage: "repeating-linear-gradient(45deg, var(--ink-muted) 0 1.5px, transparent 1.5px 5px)", opacity: 0.6 }
-                : undefined
-            }
-          />
-        ))}
-      </div>
-      <span aria-hidden className="text-sm font-semibold text-ink">
-        {label}
-      </span>
+    <div className="flex items-center gap-3">
+      {level !== "none" && (
+        <div aria-hidden className="flex w-36 gap-0.5">
+          {[1, 2, 3].map((step) => (
+            <span
+              key={step}
+              className={`h-2.5 flex-1 rounded-[2px] ${filled !== null && step <= filled ? "bg-series-correlation" : "bg-series-correlation/20"}`}
+              style={
+                unknown
+                  ? { backgroundImage: "repeating-linear-gradient(45deg, var(--ink-muted) 0 1.5px, transparent 1.5px 5px)", opacity: 0.6 }
+                  : undefined
+              }
+            />
+          ))}
+        </div>
+      )}
+      <p className="text-sm font-semibold text-ink">
+        <span className="sr-only">Evidence: </span>
+        {LEVEL_LABEL[level]}
+      </p>
     </div>
   );
 }
