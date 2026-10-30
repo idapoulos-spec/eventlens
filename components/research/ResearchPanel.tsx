@@ -53,6 +53,7 @@ import { RollingCorrelationChart } from "../charts/RollingCorrelationChart";
 import { Card, Notice } from "../ui";
 import { MarketAdjustmentCard, modelSample, type ModelSample } from "./MarketAdjustmentCard";
 import { PlainEnglishCard } from "../plain/PlainEnglishCard";
+import { Term } from "../plain/Term";
 import { plainSummary } from "../plain/summary";
 import { partId, useDelayed, usePanelJobs } from "./panelJobs";
 import { Caption, Flag, fmtR, plural, Segmented, Table, ValuesTable } from "./parts";
@@ -609,7 +610,7 @@ export function ResearchPanel({
         ))}
 
       <p className="text-xs text-ink-muted">
-        Correlation, not causation: these figures describe how the two series moved together in this sample. They are
+        <Term id="correlation">Correlation</Term>, not causation: these figures describe how the two series moved together in this sample. They are
         not predictions or trading signals. Other news can move both at once.
       </p>
     </div>
@@ -869,7 +870,7 @@ function Summary({
       </p>
       {adjustment && (
         <p className="mt-1 text-xs text-ink-secondary">
-          Market-adjusted returns use {betaFrom(adjustment.model, resolution, adjustment.sample)}.
+          <Term id="market-adjusted">Market-adjusted</Term> returns use {betaFrom(adjustment.model, resolution, adjustment.sample)}.
         </p>
       )}
       {left.length > 0 && <p className="mt-1 text-xs text-ink-muted">Left out: {left.join(" · ")}.</p>}
@@ -970,7 +971,7 @@ function PrimaryTest({
           )}
           <p className="mt-1 text-xs text-ink-muted">
             {missing ?? methodText(primary)} This is the question the page is set up to answer, chosen before looking at the data,
-            so it’s judged on its own p-value. Everything else on the page is exploratory: corrected for the other tests in its
+            so it’s judged on its own <Term id="p-value">p-value</Term>. Everything else on the page is exploratory: corrected for the other tests in its
             chart, and best treated as leads to check, not findings. Switching window, resolution, or benchmark until something
             looks significant isn’t corrected for.
             {longDaily && primary.p !== null && (
@@ -1046,7 +1047,9 @@ export function FragilityBlock({
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium text-ink">How much it rests on a few {intervals[1]}</span>
         {reasons.length > 0 ? (
-          <Flag>Fragile: {reasons.map((r) => REASON_TEXT[r]).join("; ")}</Flag>
+          <Flag>
+            <Term id="fragile">Fragile</Term>: {reasons.map((r) => REASON_TEXT[r]).join("; ")}
+          </Flag>
         ) : (
           loo && <span className="text-xs text-ink-muted">No fragility warning</span>
         )}
@@ -1124,8 +1127,8 @@ export function FragilityBlock({
       </details>
       <p className="mt-2 text-xs text-ink-muted">
         Diagnostics, not tests: they say how much this result rests on a few {intervals[1]}, not whether it’s right. An {intervals[0]}’s share
-        is its part of {mover}’s variation (its weight in the correlation); a {blocks[0]}’s is its part of the variance of the
-        bootstrap’s score under the null. “As concentrated as” counts are Kish’s effective numbers, (Σw)² / Σw². The warning uses
+        is its part of {mover}’s variation (its weight in the correlation); a {blocks[0]}’s is its part of the variance of the{" "}
+        <Term id="bootstrap">bootstrap</Term>’s score under the null. “As concentrated as” counts are Kish’s effective numbers, (Σw)² / Σw². The warning uses
         thresholds fixed before any results were seen: fewer than {FRAGILE.minEffectiveMoves} equal {intervals[1]} of movement (where
         the page already says a few moves decide), or a decision at 5% that changes when one of the {FRAGILE.leaveOut} most influential{" "}
         {blocks[1]} is left out (alpha and beta refitted without it). A p-value near 0.05 can also cross it from Monte Carlo error
@@ -1250,7 +1253,7 @@ function LeadLagCard({
   }
 
   return (
-    <Card title="Lead-lag" subtitle={`Correlation of ${variable.kind === "probability" ? "Kalshi changes" : "ΔE"} with ${stockSymbol} ${returnNoun}s, shifted by ${settings.noun[1]}`}>
+    <Card title={<Term id="lead-lag">Lead-lag</Term>} subtitle={`Correlation of ${variable.kind === "probability" ? "Kalshi changes" : "ΔE"} with ${stockSymbol} ${returnNoun}s, shifted by ${settings.noun[1]}`}>
       {measured.length === 0 ? (
         <Notice tone="info" title="Not enough data" message="Each lag needs at least 10 matching intervals, with some movement in both series." />
       ) : (
@@ -1267,7 +1270,7 @@ function LeadLagCard({
               Exploratory: corrected as one family, the {family.length} exploratory lags on this chart
               {adjustedBy && " (lag 0 is the primary test, judged on its own)"}.
             </strong>{" "}
-            Holm keeps the chance of any false positive among them at 5%; Benjamini–Hochberg (BH) keeps the expected share of
+            <Term id="holm-bh">Holm</Term> keeps the chance of any false positive among them at 5%; Benjamini–Hochberg (BH) keeps the expected share of
             false positives among those that pass at 5%. Neighboring lags share most of their data, which makes Holm cautious.{" "}
             {withMethod && withMethod.test.p !== null && methodText(withMethod.test)}{" "}
             {variable.kind === "probability" ? "Kalshi’s changes" : "ΔE values"} are left as observed, zeros and all. {variable.text.sign}

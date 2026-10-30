@@ -21,6 +21,7 @@ import { Card, Notice, Stat } from "../ui";
 import { Caption, Flag, fmtR, plural, Table } from "./parts";
 import { formatCi, formatP, methodText, RoleBadge, unavailableText } from "./stats";
 import type { Benchmark, BenchmarkChoice } from "./useBenchmark";
+import { Term } from "../plain/Term";
 
 // From market-model.test.ts ("simulations: false positives for the primary test and the regression").
 export const NEWEY_WEST_NOTE =
@@ -261,7 +262,7 @@ function ModelStats({
       </dl>
       <p className="mt-3 text-xs text-ink-secondary">
         <span className="font-medium text-ink">
-          Beta and alpha are estimated from {sample.kind === "loaded" ? "the full 90 days" : `the whole ${sample.label} window`}
+          <Term id="beta">Beta</Term> and alpha are estimated from {sample.kind === "loaded" ? "the full 90 days" : `the whole ${sample.label} window`}
         </span>
         {sample.kind === "loaded" && sample.days < 90 && <>, not only the selected {sample.days}-day window</>}: {plural(model.n, intervalNoun(resolution))}{" "}
         where both {stockSymbol} and {bench} have prices (Kalshi isn’t needed). Market-adjusted return = {stockSymbol}’s return − (alpha +

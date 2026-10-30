@@ -110,8 +110,17 @@ function allowedDerived(input: PlainInput, rest: string): Set<string> {
   return allowed;
 }
 
+/** Glossary markers sit only in text: never inside a <summary>, an <option>, or another button. */
+function expectMarkersInText(html: string) {
+  expect(html).toContain("data-term");
+  for (const tag of ["summary", "option", "button"]) {
+    for (const [inner] of html.matchAll(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?</${tag}>`, "g"))) expect(inner, tag).not.toContain("data-term");
+  }
+}
+
 /** The card says what the builder says, and every number in it is the page's or a checked derived one. */
 function expectCardMatchesPage(html: string, input: PlainInput, summary: PlainSummary) {
+  expectMarkersInText(html);
   const { card, rest } = split(html);
   expect(textOf(card)).toBe(textOf(renderToStaticMarkup(<PlainEnglishCard summary={summary} />)));
   const missing = numbersNotOn(resultsText(summary), rest);
