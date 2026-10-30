@@ -190,7 +190,7 @@ describe("a scan's summary", () => {
 
   it("counts survivors after correction, and puts what chance alone gives next to the uncorrected count", () => {
     expect(scans["scan strong"].headline).toBe(
-      "Out of 3 markets and events tested, 1 still looked related after correcting for testing many at once. 1 also passed the stricter check. Before correcting, 1 had p-values under 0.05, where about 0.2 would be expected by chance alone even if none were related.",
+      "Out of 3 markets and events tested, 1 still looked related after correcting for testing many at once. 1 also passed the stricter check. Before correcting, 1 had a p-value under 0.05, where about 0.2 would be expected by chance alone even if none were related.",
     );
     expect(scans["scan moderate small link, market lead"].headline).toContain("None passed the stricter check.");
     expect(scans["scan nothing stood out"].headline).toMatch(/^Out of 3 markets and events tested, none still looked related after correcting for testing many at once\. Before correcting/);

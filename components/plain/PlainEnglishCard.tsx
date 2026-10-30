@@ -21,9 +21,9 @@ export function EvidenceMeter({ level }: { level: PlainLevel }) {
   const filled = METER_STEP[level];
   const unknown = level === "not_enough_data" || level === "pending";
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
       {level !== "none" && (
-        <div aria-hidden className="flex w-36 gap-0.5">
+        <div aria-hidden className="flex w-24 shrink-0 gap-0.5 sm:w-36">
           {[1, 2, 3].map((step) => (
             <span
               key={step}
@@ -37,7 +37,7 @@ export function EvidenceMeter({ level }: { level: PlainLevel }) {
           ))}
         </div>
       )}
-      <p className="text-sm font-semibold text-ink">
+      <p className="whitespace-nowrap text-sm font-semibold text-ink">
         <span className="sr-only">Evidence: </span>
         {LEVEL_LABEL[level]}
       </p>

@@ -132,7 +132,7 @@ export function Term({ id, children }: { id: TermId; children: ReactNode }) {
         onFocus={() => dispatch("focus")}
         onBlur={() => dispatch("blur")}
         onClick={() => dispatch("press")}
-        className="cursor-help underline decoration-dotted decoration-ink-muted underline-offset-2 hover:decoration-ink focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-series-kalshi"
+        className="cursor-help whitespace-nowrap text-left underline decoration-dotted decoration-ink-muted underline-offset-2 hover:decoration-ink focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-series-kalshi"
       >
         {children}
       </button>

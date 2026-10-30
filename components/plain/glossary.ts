@@ -21,7 +21,10 @@ export interface GlossaryEntry {
   /** The term as the glossary lists it. */
   term: string;
   definition: string;
-  /** Phrases in the plain-English card that mark the term, first match only (case-sensitive). */
+  /**
+   * Phrases in the plain-English card that mark the term, first match only (case-sensitive). Kept to a
+   * few words: a marker is a button, which a browser never breaks across lines.
+   */
   phrases: string[];
 }
 
@@ -84,7 +87,7 @@ export const GLOSSARY: GlossaryEntry[] = [
     term: "Holm and Benjamini–Hochberg",
     definition:
       "Corrections for testing many things at once, since some will look related by chance alone. Holm keeps the chance of even one false alarm at 5%. Benjamini–Hochberg keeps false alarms to about 5% of the results that pass.",
-    phrases: ["correcting for testing many at once", "correcting for checking"],
+    phrases: ["correcting"],
   },
   {
     id: "fragile",
@@ -103,7 +106,7 @@ export const GLOSSARY: GlossaryEntry[] = [
     term: "Expected rate change",
     definition:
       "Kalshi’s prices for every possible Fed decision, put together into one number. It’s the change in the Fed’s rate that the market expects, in basis points.",
-    phrases: ["the expected rate change"],
+    phrases: ["expected rate change"],
   },
 ];
 

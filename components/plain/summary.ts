@@ -510,7 +510,7 @@ export function scanPlainSummary({ stock, choice, resolution, candidates, snap }
   const first = `${final ? "Out" : "So far, out"} of ${plural(tested.length, noun)} tested, ${bh === 0 ? "none" : bh} still looked related after correcting for testing many at once.${
     bh === 0 ? "" : holm === 0 ? " None passed the stricter check." : ` ${holm} also passed the stricter check.`
   }`;
-  const second = `Before correcting, ${under} had p-values under 0.05, where about ${expected} would be expected by chance alone even if none were related.`;
+  const second = `Before correcting, ${under} had ${under === 1 ? "a p-value" : "p-values"} under 0.05, where about ${expected} would be expected by chance alone even if none were related.`;
 
   const index = snap.order.find((i) => snap.states[i].status === "done")!;
   const state = snap.states[index] as Done;
