@@ -109,14 +109,17 @@ export function Term({ id, children }: { id: TermId; children: ReactNode }) {
     };
   }, [state.open]);
 
-  // Keep the popover inside the viewport: no sideways scrolling, even at 320 px.
+  // Keep the popover inside the visible screen: no sideways scrolling, even at 320 px. It moves by its
+  // position, not a transform, so the page's scrollable width follows it; and it fits the visual viewport,
+  // which is narrower than the layout's when something else on the page overflows.
   useLayoutEffect(() => {
     const el = popover.current;
     if (!state.open || !el) return;
-    el.style.transform = "";
+    el.style.left = "";
     const box = el.getBoundingClientRect();
-    const shift = popoverShift(box.left, box.width, document.documentElement.clientWidth);
-    if (shift > 0) el.style.transform = `translateX(-${shift}px)`;
+    const vv = window.visualViewport;
+    const shift = popoverShift(box.left, box.width, vv ? vv.offsetLeft + vv.width : document.documentElement.clientWidth);
+    if (shift > 0) el.style.left = `-${shift}px`;
   }, [state.open]);
 
   return (
