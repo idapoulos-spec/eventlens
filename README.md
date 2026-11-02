@@ -10,6 +10,7 @@ Pick a stock or ETF (search by ticker or name, e.g. `NVDA` or "nvidia") and a Ka
 - **Whole events:** for a Fed decision event ticker (`KXFEDDECISION-26OCT`), the expected rate change across every outcome instead of one market's probability; see [Event analysis](#event-analysis)
 - **Research:** how Kalshi probability changes relate to stock returns over 7, 30, 90, or 180 days, a year, or the market's whole life (up to 540 days; hourly or daily; 90 days hourly by default): lead-lag correlation, rolling correlation, and an event study around Kalshi jumps, on raw or market-adjusted returns (net of SPY or another benchmark), with significance tests built for this data (one primary test, with diagnostics of how much it rests on a few hours or sessions; p-values and 95% intervals for every lag and event-study bar; Holm and Benjamini–Hochberg corrections), sample sizes, caveats, and a CSV export of the aligned data
 
+- **In plain English:** a short summary at the top of Research and of a scan's results, in everyday words, with an evidence rating (Not enough data, No clear link, Weak, Moderate, or Strong) and definitions of the terms it uses; see [In plain English](#in-plain-english)
 - **Scan:** one stock against many Kalshi events at once (a series, every stored event, or a list), the same primary test on each, ranked with Holm and Benjamini–Hochberg corrections across the whole scan, as exploratory leads; see [Scan](#scan)
 
 > Experimental market-research tool. Metrics are informational and are not investment recommendations.
@@ -455,12 +456,124 @@ The market model is fitted on all 90 days, so to reproduce β and α, use the 90
 
 **Report…** in Research's controls (and on a finished scan) exports what's on screen, to attach to an application or walk through: a **printable page** (a standalone HTML document opened in a new tab: print it, or save it as PDF from the browser's print dialog) or **Markdown** (`eventlens-report_NVDA_KXFEDDECISION-26OCT-H25_90d-hourly_2026-10-07.md`). It's built in the browser from the page's own results, so it costs no requests, and it needs no new dependencies (`lib/report`, `components/report`).
 
-- **An analysis's report:** the question and the inputs (every setting, the window's dates, and whether it's frozen); data sources with fetch times and how far stored Kalshi history reaches; the methods in plain language (the primary test, the wild cluster bootstrap, Holm and Benjamini–Hochberg families, the market model and its sample, the detectable size, the fragility thresholds); the results (the primary test with its interval and p, the detectable size when it isn't significant, the fragility diagnostics and warning, the market adjustment and its cross-check, lead-lag, rolling correlation, and the event study, with charts); what a frozen link reproduces; the caveats and the disclaimer; and the app's version and commit, the link, and the generation time.
-- **A scan's report:** the same around the scan: how its candidates were chosen, each candidate's Kalshi source, the exploratory-leads banner, the ranked table with both corrections and F1/F3, and the candidates that couldn't be tested.
+- **An analysis's report:** the plain-English summary (see [In plain English](#in-plain-english)); the question and the inputs (every setting, the window's dates, and whether it's frozen); data sources with fetch times and how far stored Kalshi history reaches; the methods in plain language (the primary test, the wild cluster bootstrap, Holm and Benjamini–Hochberg families, the market model and its sample, the detectable size, the fragility thresholds); the results (the primary test with its interval and p, the detectable size when it isn't significant, the fragility diagnostics and warning, the market adjustment and its cross-check, lead-lag, rolling correlation, and the event study, with charts); what a frozen link reproduces; the caveats and the disclaimer; the terms used; and the app's version and commit, the link, and the generation time.
+- **A scan's report:** the same around the scan: its plain-English summary, how its candidates were chosen, each candidate's Kalshi source, the exploratory-leads banner, the ranked table with both corrections and F1/F3, and the candidates that couldn't be tested.
 - **Options:** **Prepared by** (optional, remembered in this browser only), and **Include the reproducible link** (on by default; it opens behind this site's sign-in). The Inputs list every setting either way.
 - **No stock prices.** Twelve Data's free plan doesn't allow showing its data outside the app, and a report attached to an application is outside it. So reports carry statistics (correlations, betas, p-values, counts) and Kalshi data, but no stock price, price series, or price chart. They also leave out each influential hour's abnormal return, and the event study's averages for rises or falls with fewer than 5 events (close to one event's return path): their counts and the page's warning stay. The charts (lead-lag intervals, the rolling correlation, and event-study paths for groups of at least 5) plot only those statistics. `components/report/licensing.test.tsx` builds every kind of report from a fake world whose stock and benchmark trade near 98,765 and 87,654, and fails if any bar's price appears in any form; a positive control proves the search finds one.
 - **The numbers are the page's.** Reports use the page's own formatters and wording. `components/report/accuracy.test.tsx` renders the page as the server does and builds its report from the same inputs: every table they share matches cell for cell (less the columns left out), the primary result reads the same, and every number in the results is on the page, for a market, an event, and a self-benchmark; `scan-report.test.tsx` does the same for a scan. (The longer windows' results come from the same results object; the static render can't show them, so they aren't in that test.)
 - **Version and commit** come from `package.json`'s version (bumped before each release is tagged) and `VERCEL_GIT_COMMIT_SHA`, or `git rev-parse HEAD` locally, set at build time by `next.config.ts`.
+
+## In plain English
+
+A card at the top of Research, and a summary at the top of a scan's results, say what the analysis found in short sentences and everyday words, for readers who don't read the statistics. They compute no new statistics: they read the page's own results (the primary test, the fragility diagnostics and leave-one-out check, the detectable size, the regression with the benchmark held fixed, and the corrected lead-lag results) and put them into words. They never give trading advice.
+
+### The evidence rating
+
+The one new piece of logic is a rating of how strong the evidence is: **Not enough data**, **No clear link**, **Weak**, **Moderate**, or **Strong** (`lib/analytics/evidence.ts`). These rules were fixed on 2026-10-27, written here before any simulation of them ran, and are not tuned to any result, simulated or real. They use only results the page already computes. The first rule that matches decides:
+
+| # | When | Rating |
+| --- | --- | --- |
+| R1 | No primary test: no market-adjusted returns (the stock is its own benchmark, or the benchmark is missing or has too few prices) | No rating (the card says why) |
+| R2 | The primary test has no p-value (fewer than 8 sessions or runs of days, too few pairs, no Kalshi movement, or unstable) | Not enough data |
+| R3 | A result the rating needs is still computing: the leave-one-out check when p < 0.05, the detectable size when p ≥ 0.05 | Checking… (no rating yet) |
+| R4 | p ≥ 0.05, and Kalshi's movement rests on fewer than 10 effective intervals (F1) | Not enough data |
+| R5 | p ≥ 0.05, and the smallest detectable correlation is missing, above the ±0.8 cap, or above **±0.30** (as the page shows it, to two decimals) | Not enough data |
+| R6 | p ≥ 0.05, in a window whose detectable size failed validation (its whole 95% range below the 80% it claims): 30D hourly (75.0%), 30D daily (45.0%), 180D daily (74.2%) | Not enough data |
+| R7 | p ≥ 0.05 otherwise | No clear link |
+| R8 | p < 0.05, and fragile: F1 or F3 (a leave-one-out rerun changes the decision) | Weak |
+| R9 | p < 0.05 without a confidence interval | Weak |
+| R10 | **p < 0.005**, not fragile, and not a daily window past 90 days (where the intervals covered 90.0% and false positives were 7.0% in validation) | Strong |
+| R11 | p < 0.05 otherwise | Moderate |
+
+- **±0.30** is Cohen's conventional "medium" correlation: "No clear link" says the test had a fair chance (80%) of finding a link of that size and didn't. In the committed simulations above, the median detectable size is 0.35 at 90 hourly days, 0.27 at 180, and 0.18 at a year, so at the default 90 days a result that isn't significant will usually read "Not enough data": 90 hourly days usually can't rule out a medium-sized link.
+- **0.005** is the threshold Benjamin et al. (2018) proposed for strong evidence. With the page's 999 draws the smallest p is 0.001, so it can be reached.
+- **A fragile result is never rated above Weak**, and a result that isn't significant with too few moves or too little power is "Not enough data", never "No clear link".
+- **A check that couldn't run counts as tripped:** if the fragility diagnostics or the leave-one-out check couldn't be computed for a result with a p-value, it's treated as fragile (F1 or F3) and rated accordingly.
+- **The calibration misses** in R6 and R10 are the validations in the tables above whose whole 95% range fell on the wrong side of the target. The card names the one that applies.
+- **Strong evidence isn't a big effect.** When the rating is Moderate or Strong and |r| is below 0.10 (as shown, to two decimals), the card adds that the evidence is convincing but the link itself is small.
+
+**A scan's strongest lead** (the top-ranked candidate that was tested) is rated on the scan's Benjamini–Hochberg-adjusted p, since it was picked from many. The scan computes no detectable size, so a lead that doesn't survive the correction isn't called "No clear link":
+
+| When | Rating |
+| --- | --- |
+| Doesn't survive BH, with F1 | Not enough data |
+| Doesn't survive BH, otherwise | **Nothing stood out** (its own page shows how large a link its data could detect) |
+| Survives BH, and fragile (F1, or F3 from its leave-one-out check) | Weak |
+| Survives BH, BH-adjusted p < 0.005, not fragile, and not a daily window past 90 days | Strong |
+| Survives BH otherwise | Moderate |
+
+With no relationship anywhere, a lead is rated Weak or above only when something survives BH, which the scan simulations (see [Scan](#scan)) put at 5.2%, 3.0%, and 4.0% of independent scans of 10, 30, and 100 candidates.
+
+### Checking the rating by simulation
+
+Set before any run (`lib/analytics/evidence-rates.sim.test.ts`, run with `pnpm test:sim`): each data set is rated exactly as the page rates it, with the primary test and leave-one-out check at 999 draws and the detectable size at 999 simulated samples and 200 resamples (leave-one-out only when p < 0.05 and the detectable size only when p ≥ 0.05, the only cases the rules use them).
+
+- **Design:** hourly, Kalshi tracking the benchmark (0.1% per pp), shared volatility (the stress case of the fragility simulations above). Windows of 21, 62, and 124 sessions (30, 90, and 180 days); the market model is fitted on 62 loaded sessions for 30 and 90 days and on the window itself for 180, as the page does.
+- **No relationship:** 500 data sets per window, seeds 7,000,000–7,000,499, 7,010,000–7,010,499, and 7,020,000–7,020,499.
+- **Real effects:** a same-hour effect of 0.1% per pp (seeds 7,100,000, 7,110,000, 7,120,000 + 0–199) and 0.3% per pp (seeds 7,200,000, 7,210,000, 7,220,000 + 0–199), 200 data sets per window. All seeds are fresh.
+- **The test fails, with no relationship, at any window, if** Moderate + Strong is above 6.0% (30 of 500), Strong is above 1.0% (5 of 500), or Weak + Moderate + Strong is above 7.5%.
+- **With the 0.3% per pp effect, it fails if** "No clear link" is above 20% at any window: the label must not hide a link larger than its ±0.30 threshold.
+- **Reported, without a bar:** every rating's share with no relationship and with both effects, the median sample correlation with each effect, and the run time.
+- **Each setting runs once.** Rates are given with their count, one Monte Carlo standard error, and a 95% Wilson range. If a bar is missed, the rules stay as they are, the measured rate is shown on the page and here, and only that bar is loosened, with this disclosure. Daily data, a year, and All use the same rules but aren't simulated, and the card says so.
+
+**Results** (the single run, 2026-10-27; 287 s on an Apple-silicon Mac). With no relationship, 500 data sets per window; each cell is the share of data sets with that rating, with the count in brackets:
+
+| Window | Not enough data | No clear link | Weak | Moderate | Strong | Moderate + Strong (bar 6.0%) | Weak or above, i.e. p < 0.05 (bar 7.5%) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 30 days | 93.8% (469) | 0% (0) | 5.6% (28) | 0.6% (3) | 0% (0), range 0–0.8% | 0.6% (3) ± 0.3, range 0.2–1.7% | 6.2% (31) ± 1.1, range 4.4–8.7% |
+| 90 days | 67.6% (338) | 25.4% (127) | 3.8% (19) | 1.4% (7) | **1.8% (9) ± 0.6, range 0.9–3.4%** | 3.2% (16) ± 0.8, range 2.0–5.1% | 7.0% (35) ± 1.1, range 5.1–9.6% |
+| 180 days | 25.6% (128) | 69.0% (345) | 1.8% (9) | 3.0% (15) | 0.6% (3) ± 0.3, range 0.2–1.7% | 3.6% (18) ± 0.8, range 2.3–5.6% | 5.4% (27) ± 1.0, range 3.7–7.7% |
+
+- **One bar was missed: at 90 days, Strong came up in 1.8% of data sets with no relationship (9 of 500, range 0.9–3.4%), above the 1.0% bar** (5 of 500). The whole 95% range is above the 0.5% that a p-value below 0.005 should give, so in this design the primary test is somewhat liberal far out in its tail at 90 days. As decided beforehand, the rules are unchanged, the test's bar for that one setting is loosened to 2.0%, and the card says so whenever it rates a 90-day hourly result Strong. The other two windows passed (0 and 3 of 500).
+- **The primary test's false-positive rate is in the last column** (every result with p < 0.05 is rated Weak or above): 6.2%, 7.0%, and 5.4%, within the 7.5% bar. At 90 days the whole range (5.1–9.6%) is above 5%, unlike the earlier 4.7% (14 of 300) in [Statistical tests](#statistical-tests); those runs used 199 draws and other seeds, and the two figures are 1.4 standard errors apart.
+- **Moderate or Strong** came up in 0.6–3.6% of data sets with no relationship, all within the 6.0% bar: fragile results (Weak) take the rest of the chance rejections, most of all at 30 days, where few hours carry Kalshi's movement.
+- **What a result that isn't significant says** depends on the window: at 30 days it's always "Not enough data" (R4–R6), at 90 days mostly so (67.6%), and at 180 days mostly "No clear link" (69.0%).
+
+With real effects, 200 data sets per window (median sample correlation in brackets):
+
+| Effect | Window | Not enough data | No clear link | Weak | Moderate | Strong |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.1% per pp | 30 days (r 0.12) | 85.5% (171) | 0% (0) | 11.5% (23) | 2.5% (5) | 0.5% (1) |
+| 0.1% per pp | 90 days (r 0.13) | 56.0% (112) | 19.5% (39) | 9.5% (19) | 8.0% (16) | 7.0% (14) |
+| 0.1% per pp | 180 days (r 0.12) | 18.0% (36) | 49.0% (98) | 11.0% (22) | 12.5% (25) | 9.5% (19) |
+| 0.3% per pp | 30 days (r 0.36) | 57.5% (115) | 0% (0), range 0–1.9% | 33.5% (67) | 4.0% (8) | 5.0% (10) |
+| 0.3% per pp | 90 days (r 0.35) | 17.0% (34) | 0.5% (1), range 0.1–2.8% | 17.0% (34) | 11.5% (23) | 54.0% (108) |
+| 0.3% per pp | 180 days (r 0.33) | 4.5% (9) | 3.0% (6) ± 1.2, range 1.4–6.4% | 3.5% (7) | 12.0% (24) | 77.0% (154) |
+
+- **"No clear link" didn't hide the larger link** (correlations around 0.33–0.36, above its ±0.30 threshold): 0–3.0% of data sets, within the 20% bar.
+- **It does miss small links, as its wording says.** With a real correlation around 0.12, well under the ±0.30 the label is set at, the card said "No clear link" in 19.5% of data sets at 90 days and 49.0% at 180. That's why it says a strong link is unlikely but a weaker one can't be ruled out.
+- **Strong evidence isn't a big effect:** with a real correlation around 0.12, 7.0–9.5% of data sets were rated Strong at 90 and 180 days: strong evidence of a modest link. The headline's size word and the effect in percent say how big it is, and below |r| = 0.10 the card adds that the link itself is small.
+
+### What the card says
+
+The card sits above the Research card, for a single market and for a whole event (`components/plain/`). In order:
+
+- **A headline** in one sentence: which way the stock tended to move when Kalshi's probability (or the expected rate change) rose, by how much ("slightly" below |r| = 0.10, "somewhat" up to 0.30, "clearly" from there), beyond what moves in the benchmark explain. A Weak rating starts "A weak sign"; the others say there's no clear link, or not enough data to tell.
+- **How strong is the evidence?** The rating on a three-step meter (Weak, Moderate, Strong; No clear link fills none, and Not enough data is hatched), always written out in words, then the reason and the main test's r, 95% range, and p-value as the page prints them. While the leave-one-out check or the detectable size that the rating needs is still computing, it says "Checking…".
+- **How big is it?** The regression's Kalshi coefficient with the benchmark held fixed, for a 10-percentage-point rise in a market's probability or a 25-basis-point rise in an event's expected rate change, with its likely range. It says when the range includes zero, and when the size points the other way from the main test.
+- **Does Kalshi move first?** From the corrected lead-lag results: a lag counts when its Benjamini–Hochberg p is under 0.05. It always adds that moving together in the same hour isn't predicting.
+- **How much to trust it:** the fragility result, and how often its warning comes on by chance at this window; the sample (intervals, Kalshi moves, trading days); a short window or few moves; where Kalshi's history came from; whether the numbers are live or frozen; and any calibration note that applies (Strong at 90 days hourly, daily data over long windows, and settings that weren't simulated).
+- **What this can't tell you:** one fixed sentence: it isn't a prediction, it doesn't show cause and effect, and it isn't a recommendation to buy or sell anything.
+
+Folded away under it are **How the rating works** (the rules and the simulation results, in words) and **What the terms mean** (the glossary).
+
+**The scan's summary** opens a scan's results. It says how many candidates still looked related after correcting for testing many at once, how many had p under 0.05 before correcting against how many chance alone would give (5% of those tested), and what the strongest lead is, rated by the scan lead rules above. While the scan runs it says "so far", the lead's rating waits for the leave-one-out check, and it always adds that leads at the top of a scan are probably overstated.
+
+**In reports,** an analysis's or a scan's report opens with **In plain English** (the card's text part by part, its level as "Evidence: Strong", and, for an analysis, how the rating works) and ends with **Terms used** (the glossary), before the footer.
+
+### Terms
+
+Twelve terms have definitions of one or two sentences (`components/plain/glossary.ts`): correlation, p-value, confidence interval, market-adjusted, beta, percentage points, basis points, bootstrap, Holm and Benjamini–Hochberg, fragile, lead-lag, and expected rate change. The first use of each in the card is marked with a dotted underline, as are a few places on the rest of the page where the term is plain text: beta, market-adjusted, the primary test's p-value, the fragile flag and the bootstrap, the lead-lag card's title and Holm, and correlation. The event panel's and the scan banner's wording is built in code, so it isn't marked; the card marks "expected rate change" itself. A marker is a few words at most, since a browser never breaks a button across lines.
+
+- **Hover or focus** shows the definition; **a tap or click** keeps it open; **Escape, a tap elsewhere, or moving focus away** closes it. The open and close rules are a pure reducer (`components/plain/Term.tsx`), tested without a browser.
+- **The definition is in a live region,** so a screen reader announces it when it opens, and the marked term is a real button, reachable with Tab.
+- **The popover stays inside the viewport,** so nothing scrolls sideways, down to 320 px.
+
+### How it's checked
+
+- **The numbers are the page's.** `components/plain/accuracy.test.tsx` renders 14 analysis pages from the fake world: markets and events, at the default 90 days hourly and other settings, at 7 days, and with a stock that is its own benchmark. The card must be the summary built from the same rows and settings, and every number in it must be printed elsewhere on the page. The only exceptions are declared, and each is checked against its source: a size rescaled to 10 pp or 25 bp (consistent with the page's per-unit figure), a lag's count of hours, and the rating's own thresholds and simulation figures. The fake world's stocks don't move with Kalshi, so test symbols whose price follows one market (`linkSymbol` in `lib/history/test-world.ts`) reach Strong, Moderate, Weak, and the lead-lag sentences on the real page. `scan-accuracy.test.tsx` does the same for 5 scans, reaching Not enough data, Nothing stood out, Weak, and Strong. Both check that the report's sections say what the card says. 180D, 1Y, and All can't be rendered statically (their rows load in an effect), so `summary.test.ts` summarizes a 180-day window's own results (124 sessions, computed as the panel computes them), and the wording tests cover the 1Y and All settings.
+- **No trading language, and short sentences.** `components/plain/language.test.ts` runs every wording path: each rating rule for a market and an event at six settings, a scan in every state, the glossary, how the rating works, and the report sections. None may use "buy", "sell", "signal", "opportunity", "recommend", "profit", or "should invest", in any form, except the one fixed sentence that says this isn't a recommendation to buy or sell, which must appear exactly once. No sentence may run over 25 words, and each card must be at a Flesch–Kincaid grade of 9 or lower (numbers, tickers, and Kalshi's labels count as one plain word).
+- **The rest of the page is unchanged.** The card sits in its own `<section data-plain-english>` in the Research card's place among the panel's children, so React's ids for the cards below don't move. The page pins (`components/research/page-pins.test.tsx`) leave the card out and read a closed term marker back as its text, and every pin passes unchanged.
 
 ## Event analysis
 
@@ -650,6 +763,7 @@ components/           UI components (cards, form, panels)
   charts/             Recharts client components
   event/              A whole event's dashboard: its panel, E over time, outcome probabilities, Research with ΔE
   research/           Research panel (window, resolution, raw or market-adjusted returns, benchmark, analyses, CSV download)
+  plain/              The plain-English card and the scan's summary, their wording, the glossary, and term markers
   search/             Stock and Kalshi search fields (comboboxes)
   scan/               The scan page and its runner (results as they finish, computed in slices)
 lib/

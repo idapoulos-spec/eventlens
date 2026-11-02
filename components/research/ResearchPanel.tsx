@@ -52,8 +52,11 @@ import { formatLag, LeadLagChart, type LagUnit } from "../charts/LeadLagChart";
 import { RollingCorrelationChart } from "../charts/RollingCorrelationChart";
 import { Card, Notice } from "../ui";
 import { MarketAdjustmentCard, modelSample, type ModelSample } from "./MarketAdjustmentCard";
+import { PlainEnglishCard } from "../plain/PlainEnglishCard";
+import { Term } from "../plain/Term";
+import { plainSummary } from "../plain/summary";
 import { partId, useDelayed, usePanelJobs } from "./panelJobs";
-import { Caption, Flag, fmtR, plural, Segmented, Table, ValuesTable } from "./parts";
+import { Caption, Flag, fmtR, lowerFirst, plural, Segmented, Table, ValuesTable } from "./parts";
 import {
   eventFamilyText,
   formatCi,
@@ -374,6 +377,36 @@ export function ResearchPanel({
     },
   });
 
+  // The plain-English card: the same results in everyday words, rated once the parts it needs are in.
+  const hasPrimaryP = primary?.p != null;
+  const detectableValue = hasPrimaryP ? detectablePart?.value : null;
+  const looValue = hasPrimaryP ? looPart?.value : null;
+  const longDaily = resolution === "daily" && plan.kind === "long";
+  const plain = useMemo(
+    () =>
+      results &&
+      timed("plain", () =>
+        plainSummary({
+          stock: stockSymbol,
+          variable,
+          choice,
+          resolution,
+          benchmark: benchmark.active.symbol,
+          unavailable,
+          results,
+          detectable: detectableValue,
+          leaveOneOut: looValue,
+          longDaily,
+          windowNote: note,
+          sources,
+          windowEnd,
+          windowFrozen,
+          frozenAt,
+        }),
+      ),
+    [stockSymbol, variable, choice, resolution, benchmark.active.symbol, unavailable, results, detectableValue, looValue, longDaily, note, sources, windowEnd, windowFrozen, frozenAt],
+  );
+
   function downloadCsv() {
     if (!results) return;
     const closesByT = closes && new Map(closes.map((p) => [p.t, p.value]));
@@ -389,130 +422,135 @@ export function ResearchPanel({
 
   return (
     <div className="grid gap-4 sm:gap-5">
-      <Card
-        title="Research"
-        subtitle={`${variable.kind === "probability" ? "Kalshi probability changes" : variable.text.changes} vs. ${stockSymbol} returns, compared only where both have a real observation${
-          windowEnd === null
-            ? ""
-            : windowFrozen
-              ? `, in windows ending at the link’s as-of time (${formatDateTime(windowEnd, { withYear: true })})`
-              : `, in windows ending at the ${variable.kind === "probability" ? "market's" : "event's first"} close (${formatDateTime(windowEnd, { withYear: true })})`
-        }`}
-      >
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-          <Segmented
-            label="Window"
-            value={choice}
-            options={WINDOWS.map((w) => ({ value: w, label: WINDOW_LABEL[w] }))}
-            onChange={setChoice}
-          />
-          <Segmented
-            label="Resolution"
-            value={resolution}
-            options={[
-              { value: "hourly" as const, label: "Hourly" },
-              { value: "daily" as const, label: "Daily", disabled: choice === 7, title: "Seven days hold only about five daily closes" },
-            ]}
-            onChange={setResolution}
-          />
-          <Segmented
-            label="Returns"
-            value={returns}
-            options={[
-              { value: "raw" as const, label: "Raw" },
-              { value: "adjusted" as const, label: "Market-adjusted", disabled: !canAdjust, title: unavailable },
-            ]}
-            onChange={setReturns}
-          />
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-ink-secondary">Jump size (event study)</span>
-            <select
-              value={threshold}
-              onChange={(e) => setThresholds((t) => ({ ...t, [resolution]: Number(e.target.value) }))}
-              className="h-10 w-full rounded-lg border border-border bg-surface-raised px-3 text-base text-ink focus:border-series-kalshi focus:outline-none sm:h-8 sm:w-auto sm:text-xs"
+      {/* One child with the Research card, not a new one beside it: React's ids (the benchmark field's
+          useId) follow a component's place among its siblings, and the cards below must not change. */}
+      <>
+        {plain && <PlainEnglishCard summary={plain} />}
+        <Card
+          title="Research"
+          subtitle={`${variable.kind === "probability" ? "Kalshi probability changes" : variable.text.changes} vs. ${stockSymbol} returns, compared only where both have a real observation${
+            windowEnd === null
+              ? ""
+              : windowFrozen
+                ? `, in windows ending at the link’s as-of time (${formatDateTime(windowEnd, { withYear: true })})`
+                : `, in windows ending at the ${variable.kind === "probability" ? "market's" : "event's first"} close (${formatDateTime(windowEnd, { withYear: true })})`
+          }`}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+            <Segmented
+              label="Window"
+              value={choice}
+              options={WINDOWS.map((w) => ({ value: w, label: WINDOW_LABEL[w] }))}
+              onChange={setChoice}
+            />
+            <Segmented
+              label="Resolution"
+              value={resolution}
+              options={[
+                { value: "hourly" as const, label: "Hourly" },
+                { value: "daily" as const, label: "Daily", disabled: choice === 7, title: "Seven days hold only about five daily closes" },
+              ]}
+              onChange={setResolution}
+            />
+            <Segmented
+              label="Returns"
+              value={returns}
+              options={[
+                { value: "raw" as const, label: "Raw" },
+                { value: "adjusted" as const, label: "Market-adjusted", disabled: !canAdjust, title: unavailable },
+              ]}
+              onChange={setReturns}
+            />
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-medium text-ink-secondary">Jump size (event study)</span>
+              <select
+                value={threshold}
+                onChange={(e) => setThresholds((t) => ({ ...t, [resolution]: Number(e.target.value) }))}
+                className="h-10 w-full rounded-lg border border-border bg-surface-raised px-3 text-base text-ink focus:border-series-kalshi focus:outline-none sm:h-8 sm:w-auto sm:text-xs"
+              >
+                {variable.thresholds.map((t) => (
+                  <option key={t} value={t}>
+                    ≥ {t} {variable.unit} in one {settings.noun[0]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={downloadCsv}
+              disabled={!results}
+              className="h-10 disabled:cursor-not-allowed disabled:opacity-40 rounded-lg border border-border px-3 text-sm text-ink-secondary transition hover:bg-surface-raised hover:text-ink sm:ml-auto sm:h-8 sm:text-xs"
             >
-              {variable.thresholds.map((t) => (
-                <option key={t} value={t}>
-                  ≥ {t} {variable.unit} in one {settings.noun[0]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            onClick={downloadCsv}
-            disabled={!results}
-            className="h-10 disabled:cursor-not-allowed disabled:opacity-40 rounded-lg border border-border px-3 text-sm text-ink-secondary transition hover:bg-surface-raised hover:text-ink sm:ml-auto sm:h-8 sm:text-xs"
-          >
-            Download CSV
-          </button>
-        </div>
-        <section data-report-controls="" className="mt-3 border-t border-border pt-3 text-xs text-ink-secondary">
-          <ControlBar lead={freezeControl.lead} controls={[freezeControl, saveControl, reportControl]} notes={freezeControl.note} />
-        </section>
-        {note && (
-          <p role="status" className="mt-2 text-xs text-ink-secondary">
-            {note}
-          </p>
-        )}
-        {results && chosenReturns === "adjusted" && returns === "raw" && (
-          <p role="status" className="mt-2 text-xs text-ink-secondary">
-            Showing raw returns: {lowerFirst(unavailable)}, so market-adjusted returns can’t be computed.
-          </p>
-        )}
-
-        {!results ? (
-          <div className="mt-4" aria-busy={plan.kind !== "failed"}>
-            {plan.kind === "failed" ? (
-              <Notice tone="error" title="Longer windows couldn’t be loaded" message={`${plan.message} The 7, 30, and 90-day windows still work.`} />
-            ) : (
-              longPending && (
-                <Notice
-                  tone="info"
-                  title={plan.kind === "waiting" ? "Loading the longer history…" : `Computing the ${WINDOW_LABEL[choice]} window…`}
-                  message={
-                    plan.kind === "waiting"
-                      ? "It streams in after the page; the 7, 30, and 90-day windows are ready now."
-                      : "Longer windows are computed in the background so the page stays responsive; this usually takes under a second."
-                  }
-                />
-              )
-            )}
+              Download CSV
+            </button>
           </div>
-        ) : (
-          <>
-            <Summary
-              changes={results.view.changes}
-              excluded={results.series.excluded}
-              stats={results.view.sameInterval}
-              resolution={resolution}
-              settings={settings}
-              adjustment={adjustment}
-              rawR={results.rawSame.r}
-              variable={variable}
-            />
+          <section data-report-controls="" className="mt-3 border-t border-border pt-3 text-xs text-ink-secondary">
+            <ControlBar lead={freezeControl.lead} controls={[freezeControl, saveControl, reportControl]} notes={freezeControl.note} />
+          </section>
+          {note && (
+            <p role="status" className="mt-2 text-xs text-ink-secondary">
+              {note}
+            </p>
+          )}
+          {results && chosenReturns === "adjusted" && returns === "raw" && (
+            <p role="status" className="mt-2 text-xs text-ink-secondary">
+              Showing raw returns: {lowerFirst(unavailable)}, so market-adjusted returns can’t be computed.
+            </p>
+          )}
 
-            <PrimaryTest
-              primary={primary}
-              detectable={detectablePart?.value ?? null}
-              fragility={results.fragility}
-              leaveOneOut={looPart?.value ?? null}
-              pending={secondaryPending}
-              significant={significant}
-              fewRuns={resolution === "daily" && plan.kind === "loaded" && plan.days < 90}
-              longDaily={resolution === "daily" && plan.kind === "long"}
-              unavailable={unavailable}
-              benchmark={benchmark.active.symbol}
-              stockSymbol={stockSymbol}
-              settings={settings}
-              variable={variable}
-              resolution={resolution}
-            />
-          </>
-        )}
+          {!results ? (
+            <div className="mt-4" aria-busy={plan.kind !== "failed"}>
+              {plan.kind === "failed" ? (
+                <Notice tone="error" title="Longer windows couldn’t be loaded" message={`${plan.message} The 7, 30, and 90-day windows still work.`} />
+              ) : (
+                longPending && (
+                  <Notice
+                    tone="info"
+                    title={plan.kind === "waiting" ? "Loading the longer history…" : `Computing the ${WINDOW_LABEL[choice]} window…`}
+                    message={
+                      plan.kind === "waiting"
+                        ? "It streams in after the page; the 7, 30, and 90-day windows are ready now."
+                        : "Longer windows are computed in the background so the page stays responsive; this usually takes under a second."
+                    }
+                  />
+                )
+              )}
+            </div>
+          ) : (
+            <>
+              <Summary
+                changes={results.view.changes}
+                excluded={results.series.excluded}
+                stats={results.view.sameInterval}
+                resolution={resolution}
+                settings={settings}
+                adjustment={adjustment}
+                rawR={results.rawSame.r}
+                variable={variable}
+              />
 
-        <SignNote stockSymbol={stockSymbol} variable={variable} />
-      </Card>
+              <PrimaryTest
+                primary={primary}
+                detectable={detectablePart?.value ?? null}
+                fragility={results.fragility}
+                leaveOneOut={looPart?.value ?? null}
+                pending={secondaryPending}
+                significant={significant}
+                fewRuns={resolution === "daily" && plan.kind === "loaded" && plan.days < 90}
+                longDaily={resolution === "daily" && plan.kind === "long"}
+                unavailable={unavailable}
+                benchmark={benchmark.active.symbol}
+                stockSymbol={stockSymbol}
+                settings={settings}
+                variable={variable}
+                resolution={resolution}
+              />
+            </>
+          )}
+
+          <SignNote stockSymbol={stockSymbol} variable={variable} />
+        </Card>
+      </>
 
       {results && (
         <MarketAdjustmentCard
@@ -572,7 +610,7 @@ export function ResearchPanel({
         ))}
 
       <p className="text-xs text-ink-muted">
-        Correlation, not causation: these figures describe how the two series moved together in this sample. They are
+        <Term id="correlation">Correlation</Term>, not causation: these figures describe how the two series moved together in this sample. They are
         not predictions or trading signals. Other news can move both at once.
       </p>
     </div>
@@ -720,9 +758,6 @@ function useFreezeControl({
 
 // ---- Summary and flags ----
 
-/** Lowercases a sentence's first letter to continue a sentence, unless it starts a ticker (e.g. "TLT is …"). */
-export const lowerFirst = (text: string) => (/^[A-Z][a-z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text);
-
 /** How to read the sign of a correlation, for one market's YES side or an event's expected value. */
 function SignNote({ stockSymbol, variable }: { stockSymbol: string; variable: KalshiVariable }) {
   if (variable.kind === "expected") {
@@ -832,7 +867,7 @@ function Summary({
       </p>
       {adjustment && (
         <p className="mt-1 text-xs text-ink-secondary">
-          Market-adjusted returns use {betaFrom(adjustment.model, resolution, adjustment.sample)}.
+          <Term id="market-adjusted">Market-adjusted</Term> returns use {betaFrom(adjustment.model, resolution, adjustment.sample)}.
         </p>
       )}
       {left.length > 0 && <p className="mt-1 text-xs text-ink-muted">Left out: {left.join(" · ")}.</p>}
@@ -933,7 +968,7 @@ function PrimaryTest({
           )}
           <p className="mt-1 text-xs text-ink-muted">
             {missing ?? methodText(primary)} This is the question the page is set up to answer, chosen before looking at the data,
-            so it’s judged on its own p-value. Everything else on the page is exploratory: corrected for the other tests in its
+            so it’s judged on its own <Term id="p-value">p-value</Term>. Everything else on the page is exploratory: corrected for the other tests in its
             chart, and best treated as leads to check, not findings. Switching window, resolution, or benchmark until something
             looks significant isn’t corrected for.
             {longDaily && primary.p !== null && (
@@ -1009,7 +1044,9 @@ export function FragilityBlock({
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium text-ink">How much it rests on a few {intervals[1]}</span>
         {reasons.length > 0 ? (
-          <Flag>Fragile: {reasons.map((r) => REASON_TEXT[r]).join("; ")}</Flag>
+          <Flag>
+            <Term id="fragile">Fragile</Term>: {reasons.map((r) => REASON_TEXT[r]).join("; ")}
+          </Flag>
         ) : (
           loo && <span className="text-xs text-ink-muted">No fragility warning</span>
         )}
@@ -1087,8 +1124,8 @@ export function FragilityBlock({
       </details>
       <p className="mt-2 text-xs text-ink-muted">
         Diagnostics, not tests: they say how much this result rests on a few {intervals[1]}, not whether it’s right. An {intervals[0]}’s share
-        is its part of {mover}’s variation (its weight in the correlation); a {blocks[0]}’s is its part of the variance of the
-        bootstrap’s score under the null. “As concentrated as” counts are Kish’s effective numbers, (Σw)² / Σw². The warning uses
+        is its part of {mover}’s variation (its weight in the correlation); a {blocks[0]}’s is its part of the variance of the{" "}
+        <Term id="bootstrap">bootstrap</Term>’s score under the null. “As concentrated as” counts are Kish’s effective numbers, (Σw)² / Σw². The warning uses
         thresholds fixed before any results were seen: fewer than {FRAGILE.minEffectiveMoves} equal {intervals[1]} of movement (where
         the page already says a few moves decide), or a decision at 5% that changes when one of the {FRAGILE.leaveOut} most influential{" "}
         {blocks[1]} is left out (alpha and beta refitted without it). A p-value near 0.05 can also cross it from Monte Carlo error
@@ -1213,7 +1250,7 @@ function LeadLagCard({
   }
 
   return (
-    <Card title="Lead-lag" subtitle={`Correlation of ${variable.kind === "probability" ? "Kalshi changes" : "ΔE"} with ${stockSymbol} ${returnNoun}s, shifted by ${settings.noun[1]}`}>
+    <Card title={<Term id="lead-lag">Lead-lag</Term>} subtitle={`Correlation of ${variable.kind === "probability" ? "Kalshi changes" : "ΔE"} with ${stockSymbol} ${returnNoun}s, shifted by ${settings.noun[1]}`}>
       {measured.length === 0 ? (
         <Notice tone="info" title="Not enough data" message="Each lag needs at least 10 matching intervals, with some movement in both series." />
       ) : (
@@ -1230,7 +1267,7 @@ function LeadLagCard({
               Exploratory: corrected as one family, the {family.length} exploratory lags on this chart
               {adjustedBy && " (lag 0 is the primary test, judged on its own)"}.
             </strong>{" "}
-            Holm keeps the chance of any false positive among them at 5%; Benjamini–Hochberg (BH) keeps the expected share of
+            <Term id="holm-bh">Holm</Term> keeps the chance of any false positive among them at 5%; Benjamini–Hochberg (BH) keeps the expected share of
             false positives among those that pass at 5%. Neighboring lags share most of their data, which makes Holm cautious.{" "}
             {withMethod && withMethod.test.p !== null && methodText(withMethod.test)}{" "}
             {variable.kind === "probability" ? "Kalshi’s changes" : "ΔE values"} are left as observed, zeros and all. {variable.text.sign}

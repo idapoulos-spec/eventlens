@@ -18,10 +18,11 @@ import type { Block, Report, Section } from "@/lib/report/model";
 import { eventStudyChart, leadLagChart, rollingChart } from "@/lib/report/charts";
 import { reportInstant, reportTime } from "@/lib/report/format";
 import { MAY_DIFFER, REPRODUCED } from "../analysis/reproducibility";
+import { plainSummary } from "../plain/summary";
 import { formatLag } from "../charts/LeadLagChart";
 import { DISCLAIMER } from "../Disclaimer";
 import { formatAlpha, intervalNoun, modelSample, NEAR_DUPLICATE_R2, NEWEY_WEST_NOTE, verdictText, type ModelSample } from "../research/MarketAdjustmentCard";
-import { fmtR, plural } from "../research/parts";
+import { fmtR, lowerFirst, plural } from "../research/parts";
 import {
   adjustmentNote,
   betaFrom,
@@ -31,7 +32,6 @@ import {
   intervalText,
   LONG_DAILY_COVERAGE,
   LONG_DAILY_FALSE_POSITIVES,
-  lowerFirst,
   REASON_TEXT,
   ROLLING_EXTRA,
   sampleFlags,
@@ -43,6 +43,7 @@ import {
   type Adjustment,
 } from "../research/ResearchPanel";
 import { eventFamilyText, formatCi, formatN, formatP, methodText, TEST_COLUMNS, testCells, unavailableText } from "../research/stats";
+import { plainSection, termsSection } from "./plainReport";
 
 /** Where the analysis's data came from, as the page loaded it. */
 export interface ReportSources {
@@ -625,6 +626,7 @@ export function analysisReport(i: AnalysisReportInput): Report {
     kind: "EventLens analysis report",
     preparedBy: i.preparedBy,
     sections: [
+      plainSection(plainSummary(i), { method: true }),
       question(i),
       inputs(i),
       sources(i),
@@ -635,6 +637,7 @@ export function analysisReport(i: AnalysisReportInput): Report {
         sign,
         "Only the primary test is a confirmatory question; everything else is exploratory and corrected only within its own chart. Switching window, resolution, or benchmark until something looks significant isn’t corrected for.",
       ]),
+      termsSection(),
     ],
     footer: { version: i.version, commit: i.commit, link: i.link, generatedAt: i.generatedAt },
   };

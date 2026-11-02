@@ -6,6 +6,8 @@
 
 export type Block =
   | { kind: "paragraph"; text: string }
+  /** A heading within a section, for a section in parts (the plain-English summary). */
+  | { kind: "heading"; text: string }
   | { kind: "list"; items: string[] }
   /** Label and value pairs. */
   | { kind: "facts"; rows: [string, string][] }
@@ -49,6 +51,7 @@ export function sectionText(section: Section): string {
     .map((b) => {
       switch (b.kind) {
         case "paragraph":
+        case "heading":
           return b.text;
         case "list":
           return b.items.join("\n");

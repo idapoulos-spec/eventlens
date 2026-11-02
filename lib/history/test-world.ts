@@ -56,18 +56,43 @@ const factor = (() => {
   return SESSION_OPENS.map(() => Array.from({ length: 13 }, (_, i) => (i === 0 ? 0.005 : 0.0012) * normal(rng)));
 })();
 
+/**
+ * Opt-in symbols whose log price also carries a Kalshi market's mid (cents) `lagHours` before each
+ * bar's close, times `perCent`, so a test can see a real link on the page, in the same hour or a
+ * later one (components/plain/accuracy.test.tsx). Every other symbol is unchanged.
+ */
+const LINKED = new Map<string, { quotes: Quote[]; perCent: number; lagMs: number }>();
+export function linkSymbol(symbol: string, market: WorldMarket, perCent: number, lagHours = 0): void {
+  LINKED.set(symbol, { quotes: market.quotes, perCent, lagMs: lagHours * HOUR_MS });
+  halfHourly.delete(symbol);
+}
+
+/** The mid (cents) of the last quote at or before `t`; the first quote's before it. */
+function midAt(quotes: Quote[], t: number): number {
+  let lo = 0;
+  let hi = quotes.length - 1;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (quotes[mid].t <= t) lo = mid;
+    else hi = mid - 1;
+  }
+  return (quotes[lo].bid + quotes[lo].ask) / 2;
+}
+
 const halfHourly = new Map<string, Bar[]>();
 function barsOf(symbol: string): Bar[] {
   let bars = halfHourly.get(symbol);
   if (!bars) {
     const rng = mulberry32(seedOf(symbol));
     const beta = BETA[symbol] ?? 1;
+    const link = LINKED.get(symbol);
     let price = CANARY_START[symbol] ?? 100;
     bars = SESSION_OPENS.flatMap((open, s) =>
       factor[s].map((m, i) => {
         const own = symbol === "SPY" ? 0 : (i === 0 ? 0.008 : 0.0025) * normal(rng);
         price *= Math.exp(beta * m + own);
-        return { open: open + i * HALF_HOUR_MS, close: Number(price.toFixed(2)) };
+        const level = link ? Math.exp(link.perCent * midAt(link.quotes, open + (i + 1) * HALF_HOUR_MS - link.lagMs)) : 1;
+        return { open: open + i * HALF_HOUR_MS, close: Number((price * level).toFixed(2)) };
       }),
     );
     halfHourly.set(symbol, bars);

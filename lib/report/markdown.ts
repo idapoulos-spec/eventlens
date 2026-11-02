@@ -12,6 +12,8 @@ function block(b: Block): string {
   switch (b.kind) {
     case "paragraph":
       return text(b.text);
+    case "heading":
+      return `### ${text(b.text)}`;
     case "list":
       return b.items.map((i) => `- ${text(i)}`).join("\n");
     case "facts":

@@ -16,6 +16,7 @@ const report = (over: Partial<Report> = {}): Report => ({
       blocks: [
         { kind: "facts", rows: [["Stock", "TLT"]] },
         { kind: "paragraph", text: "A <script>alert(1)</script> title & more" },
+        { kind: "heading", text: "How big is it? <b>#1</b>" },
         { kind: "table", id: "t", head: ["Lag", "r"], rows: [["+1h", "a|b"]], note: "Note" },
         { kind: "callout", title: "Fragile", items: ["one"] },
       ],
@@ -30,6 +31,7 @@ describe("renderMarkdown", () => {
     const md = renderMarkdown(report());
     expect(md).toContain("# EventLens analysis report: TLT vs. KXFED\\*\\[x\\]");
     expect(md).toContain("| +1h | a\\|b |");
+    expect(md).toContain("\n### How big is it? \\<b\\>\\#1\\</b\\>\n");
     expect(md).toContain("A \\<script\\>alert(1)\\</script\\> title & more");
     expect(md).toContain("EventLens v0.13.0, commit abcdef123456. Generated Oct 25, 2026, 12:00 PM EDT (2026-10-25T16:00:00Z).");
     expect(md).toContain("Reproducible link (opens behind this EventLens site's sign-in): <http://localhost/?stock=TLT&kalshi=X\"onload=1>");
@@ -42,6 +44,7 @@ describe("renderHtml", () => {
     expect(html.startsWith("<!doctype html>")).toBe(true);
     expect(html).toContain("<title>EventLens analysis report: TLT vs. KXFED*[x]</title>");
     expect(html).toContain("A &lt;script&gt;alert(1)&lt;/script&gt; title &amp; more");
+    expect(html).toContain("<h3>How big is it? &lt;b&gt;#1&lt;/b&gt;</h3>");
     expect(html).not.toContain("<script>");
     expect(html).toContain("Prepared by Ida &lt;b&gt;&amp;&lt;/b&gt; co");
     expect(html).toContain('href="http://localhost/?stock=TLT&amp;kalshi=X&quot;onload=1"');

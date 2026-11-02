@@ -15,6 +15,7 @@ const STYLE = `
   main { max-width: 760px; margin: 0 auto; padding: 32px 20px 48px; }
   h1 { font-size: 22px; margin: 0 0 4px; }
   h2 { font-size: 16px; margin: 28px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #d9dde3; break-after: avoid; }
+  h3 { font-size: 14px; margin: 16px 0 4px; break-after: avoid; }
   p, ul { margin: 0 0 10px; }
   ul { padding-left: 20px; }
   .kind { color: #5b6470; font-size: 13px; margin: 0 0 2px; text-transform: uppercase; letter-spacing: .06em; }
@@ -43,6 +44,8 @@ function block(b: Block): string {
   switch (b.kind) {
     case "paragraph":
       return `<p>${escapeHtml(b.text)}</p>`;
+    case "heading":
+      return `<h3>${escapeHtml(b.text)}</h3>`;
     case "list":
       return `<ul>${b.items.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}</ul>`;
     case "facts":
