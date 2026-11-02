@@ -28,7 +28,7 @@ export default async function Scan({ searchParams }: PageProps<"/scan">) {
 
   return (
     <div className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:py-10">
-      <header className="mb-5 flex items-start justify-between gap-4 sm:mb-6">
+      <header className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0">
           <h1 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight">
             <Link href="/" className="flex items-center gap-2.5">
@@ -38,7 +38,7 @@ export default async function Scan({ searchParams }: PageProps<"/scan">) {
           </h1>
           <p className="mt-1 text-sm text-ink-secondary">Scan: exploratory leads across many Kalshi events, corrected for testing them all.</p>
         </div>
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2">
           <Link href="/studies" className="text-sm text-ink-secondary hover:text-ink">
             Saved studies
           </Link>
