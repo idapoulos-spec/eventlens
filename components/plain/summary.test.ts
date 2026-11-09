@@ -7,6 +7,7 @@ import { LEVEL_LABEL, bottomLine, RATING_METHOD, RATING_METHOD_NUMBERS, REASON, 
 import { fmtR } from "../research/parts";
 import { EVENT, MARKET, bottomLineInput, simulated, summaryText, withParts } from "./test-helpers";
 import { numbersIn } from "../report/test-helpers";
+import { bottomLineSection } from "../report/bottomLineReport";
 
 const section = (s: BottomLine, id: string) => s.sections.find((x) => x.id === id)!.items.join("\n");
 const tile = (s: BottomLine, id: string) => s.tiles.find((t) => t.id === id)!;
@@ -238,6 +239,8 @@ describe("a scan's summary", () => {
     expect(scans["scan nothing stood out, one tested"].level).toBe("nothing_stood_out");
     expect(leadWords(scans["scan nothing stood out, one tested"])).not.toContain("On its own page");
     expect(scans["scan not enough data (F1)"].level).toBe("not_enough_data");
+    // Its folded reasons open on their own, after the lead shown above them.
+    expect(section(scans["scan not enough data (F1)"], "scan-why")).toMatch(/^The expected rate change’s movement was bunched into a few hours, so a real link could easily be missed\./);
     for (const s of Object.values(scans).filter((s) => s.sections.some((x) => x.id === "scan-lead"))) {
       expect(leadWords(s)).toContain("Leads at the top of a scan are probably overstated, because they rank first partly by luck.");
     }
@@ -454,5 +457,21 @@ describe("a 180-day window", () => {
   it("says nothing about settings that weren't simulated, since 180 days hourly was", () => {
     expect(summaryText(s)).not.toContain("wasn’t simulated");
     expect(summaryText(s)).not.toContain("rated Strong 1.8%");
+  });
+});
+
+describe("the tiles in a report", () => {
+  it("read as one line each, a question's label running straight on", () => {
+    const lines = (s: BottomLine) => {
+      const block = bottomLineSection(s, { method: false }).blocks.find((b) => b.kind === "list")!;
+      return block.kind === "list" ? block.items : [];
+    };
+    expect(lines(summary("fragile_loo"))[0]).toBe("How sure? Weak. Fragile result.");
+    const scans = Object.fromEntries(scanScenarios().map((s) => [s.name, s.summary]));
+    expect(lines(scans["scan strong"])).toEqual([
+      "Tested: 3 markets and events.",
+      "Still related after correcting: 1. 1 also passed the stricter check.",
+      "Expected by chance before correcting: About 0.2. 1 had a p-value under 0.05 before correcting.",
+    ]);
   });
 });

@@ -696,7 +696,8 @@ function scanLeadParts(stock: string, c: ScanCandidate, state: Done, rating: Sca
     case "few_moves":
       shown.push(`Closest to standing out: ${name}, with ${numbers}.`, "It didn’t survive the correction for testing many at once.");
       if (rating.rule === "few_moves") {
-        text.push(`Also, ${who.owner} movement was bunched into a few ${w.unit[1]}, so a real link could easily be missed.`);
+        // The first of the folded reasons: it stands on its own, after the lead shown above it.
+        text.push(`${upper(who.owner)} movement was bunched into a few ${w.unit[1]}, so a real link could easily be missed.`);
       } else {
         // With one candidate tested there are no other tests for its own page to leave uncorrected.
         const others = tested - 1;

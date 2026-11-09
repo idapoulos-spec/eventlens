@@ -149,10 +149,10 @@ export function longest(text: string): { words: number; sentence: string } {
 /** Text without its markup: glossary markers and hidden labels read as the words they hold. */
 export const plainText = (html: string) => textOf(html.replace(/<[^>]+>/g, ""));
 
-/** A tile read back from the card as a report writes it: "How sure?: Weak. Fragile result." */
+/** A tile read back from the card as a report writes it: "How sure? Weak. Fragile result." */
 function tileLine(_: string, label: string, value: string, note: string): string {
   const name = plainText(label);
-  return `<p>${name}: ${tileText({ id: name === "Tested" ? "tested" : "sure", value: plainText(value), note: plainText(note) })}</p>`;
+  return `<p>${tileText({ id: name === "Tested" ? "tested" : "sure", label: name, value: plainText(value), note: plainText(note) })}</p>`;
 }
 
 /**
@@ -169,11 +169,9 @@ export function cardParts(card: string): string[] {
     .filter((part) => part !== "" && part !== "The bottom line");
 }
 
-/** A report section's parts in order: its headings, paragraphs, list items, and facts. */
+/** A report section's parts in order: its headings, paragraphs, and list items. */
 export function reportParts(section: Section): string[] {
-  return section.blocks
-    .flatMap((b) => (b.kind === "list" ? b.items : b.kind === "paragraph" || b.kind === "heading" ? [b.text] : b.kind === "facts" ? b.rows.map(([k, v]) => `${k}: ${v}`) : []))
-    .map(plainText);
+  return section.blocks.flatMap((b) => (b.kind === "list" ? b.items : b.kind === "paragraph" || b.kind === "heading" ? [b.text] : [])).map(plainText);
 }
 
 /** A rating's line: the card's badge, or a report's "Evidence:" line. They sit in different places, so they're compared apart. */

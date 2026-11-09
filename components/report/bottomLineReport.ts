@@ -6,9 +6,12 @@ import type { Block, Section } from "@/lib/report/model";
 import { GLOSSARY } from "../plain/glossary";
 import { LEVEL_LABEL, RATING_METHOD, type BottomLine, type BottomLineTile } from "../plain/summary";
 
-/** A tile as a line of text: its bold answer and its note ("Tested" reads straight on, "3 markets and events"). */
-export function tileText({ id, value, note }: Pick<BottomLineTile, "id" | "value" | "note">): string {
-  return `${value}${id === "tested" ? " " : ". "}${note}${/[.?!]$/.test(note) ? "" : "."}`;
+/**
+ * A tile as one line of text: "How sure? Weak. Fragile result.", or "Tested: 3 markets and events."
+ * (a label that isn't a question takes a colon, and "Tested" reads straight on into its note).
+ */
+export function tileText({ id, label, value, note }: Pick<BottomLineTile, "id" | "label" | "value" | "note">): string {
+  return `${label}${label.endsWith("?") ? "" : ":"} ${value}${id === "tested" ? " " : ". "}${note}${/[.?!]$/.test(note) ? "" : "."}`;
 }
 
 /** "The bottom line": the question, the answer, the tiles, then the reasons, in the card's order, with the limits last. */
@@ -18,7 +21,7 @@ export function bottomLineSection(summary: BottomLine, { method }: { method: boo
   // An analysis's rating is the card's badge, in its header; a scan's sits with the lead it rates.
   if (summary.sections.some((s) => s.id === "evidence") && summary.level !== "none") blocks.push(evidence);
   blocks.push({ kind: "paragraph", text: `${summary.verdict} ${summary.headline}` });
-  if (summary.tiles.length > 0) blocks.push({ kind: "facts", rows: summary.tiles.map((t) => [t.label, tileText(t)]) });
+  if (summary.tiles.length > 0) blocks.push({ kind: "list", items: summary.tiles.map(tileText) });
   for (const s of summary.sections) {
     if (s.id === "limits") continue;
     blocks.push({ kind: "heading", text: s.title });
