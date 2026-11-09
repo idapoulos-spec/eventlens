@@ -3,13 +3,13 @@ import type { LagCorrelation } from "@/lib/analytics";
 import { formatSigned } from "@/lib/format";
 import { WARNING_BY_CHANCE } from "../research/ResearchPanel";
 import { analysisScenarios, base, ruleInput, RULES, SCAN_CANDIDATES, scanScenarios, scanSnap } from "./scenarios";
-import { LEVEL_LABEL, plainSummary, RATING_METHOD, RATING_METHOD_NUMBERS, scanPlainSummary, smallLinkText, STRONG_MISS_90, WARNING_RATE, type PlainSummary } from "./summary";
+import { LEVEL_LABEL, bottomLine, RATING_METHOD, RATING_METHOD_NUMBERS, scanBottomLine, smallLinkText, STRONG_MISS_90, WARNING_RATE, type BottomLine } from "./summary";
 import { fmtR } from "../research/parts";
-import { EVENT, MARKET, plainInput, simulated, summaryText, withParts } from "./test-helpers";
+import { EVENT, MARKET, bottomLineInput, simulated, summaryText, withParts } from "./test-helpers";
 import { numbersIn } from "../report/test-helpers";
 
-const section = (s: PlainSummary, id: string) => s.sections.find((x) => x.id === id)!.items.join("\n");
-const summary = (name: (typeof RULES)[number], over = {}) => plainSummary(ruleInput(name, over));
+const section = (s: BottomLine, id: string) => s.sections.find((x) => x.id === id)!.items.join("\n");
+const summary = (name: (typeof RULES)[number], over = {}) => bottomLine(ruleInput(name, over));
 
 describe("the headline and the evidence, rule by rule", () => {
   it("says which way the stock moved, how much, and that returns are market-adjusted, for Moderate and Strong", () => {
@@ -71,7 +71,7 @@ describe("the headline and the evidence, rule by rule", () => {
 
   it("gives no rating without a primary test, and says why", () => {
     const { results } = base();
-    const s = plainSummary(plainInput({ ...results, market: { ...results.market!, primary: null, kalshi: null } }, { unavailable: "TLT is the benchmark itself" }));
+    const s = bottomLine(bottomLineInput({ ...results, market: { ...results.market!, primary: null, kalshi: null } }, { unavailable: "TLT is the benchmark itself" }));
     expect(s.level).toBe("none");
     expect(s.headline).toBe("No main test in this view: TLT is the benchmark itself.");
     expect(section(s, "evidence")).toBe("No rating: the main test can’t run here (TLT is the benchmark itself).");
@@ -106,25 +106,25 @@ describe("how big", () => {
     const { results } = base();
     const fit = results.market!.kalshi!;
     for (const [variable, scale] of [[MARKET, 10], [EVENT, 25]] as const) {
-      const s = plainSummary(plainInput(results, { variable, leaveOneOut: base().loo }));
+      const s = bottomLine(bottomLineInput(results, { variable, leaveOneOut: base().loo }));
       const size = section(s, "size");
       expect(size).toContain(`went with about a ${formatSigned(fit.coef * scale, 2, "%")} move in TLT in the same hour.`);
       expect(size).toContain(`The likely range is ${formatSigned(fit.test.ci![0] * scale, 2, "%")} to ${formatSigned(fit.test.ci![1] * scale, 2, "%")}.`);
       expect(s.derived).toEqual(expect.arrayContaining([formatSigned(fit.coef * scale, 2, "%"), String(scale)]));
     }
-    expect(section(plainSummary(plainInput(results, { variable: MARKET })), "size")).toContain("Take a 10-percentage-point rise in the chance of “Fed maintains rate”, say from 40% to 50%.");
-    expect(section(plainSummary(plainInput(results, { variable: EVENT })), "size")).toContain("Take a 25-basis-point rise in the expected rate change, the size of one usual Fed move.");
+    expect(section(bottomLine(bottomLineInput(results, { variable: MARKET })), "size")).toContain("Take a 10-percentage-point rise in the chance of “Fed maintains rate”, say from 40% to 50%.");
+    expect(section(bottomLine(bottomLineInput(results, { variable: EVENT })), "size")).toContain("Take a 25-basis-point rise in the expected rate change, the size of one usual Fed move.");
   });
 
   it("says when the range includes zero, when the size points the other way, and when there's no size", () => {
     const { results } = base();
     const at = (coef: number, ci: [number, number] | null, r: number) =>
-      section(plainSummary(plainInput(withParts(results, { kalshi: { coef, test: { ...results.market!.kalshi!.test, ci } }, primary: { ...results.market!.primary!, estimate: r } }))), "size");
+      section(bottomLine(bottomLineInput(withParts(results, { kalshi: { coef, test: { ...results.market!.kalshi!.test, ci } }, primary: { ...results.market!.primary!, estimate: r } }))), "size");
     expect(at(0.01, [-0.005, 0.02], 0.1)).toContain("The range includes zero, so the true effect could be none at all.");
     expect(at(0.01, [0.004, 0.02], 0.1)).not.toContain("includes zero");
     expect(at(0.01, [0.004, 0.02], -0.1)).toContain("points the other way from the main test");
     expect(at(0.01, null, 0.1)).toContain("The test couldn’t give a range for it.");
-    expect(section(plainSummary(plainInput(withParts(results, { kalshi: null }))), "size")).toBe("There’s too little data to put a size on it.");
+    expect(section(bottomLine(bottomLineInput(withParts(results, { kalshi: null }))), "size")).toBe("There’s too little data to put a size on it.");
   });
 });
 
@@ -134,7 +134,7 @@ describe("does Kalshi move first", () => {
     const lags: LagCorrelation[] = results.view.lags.map((l) =>
       l.test.role === "primary" ? l : { ...l, test: { ...l.test, p: passing[l.lag] ?? 0.5, bh: passing[l.lag] ?? 0.8, holm: passing[l.lag] ?? 1 } },
     );
-    return section(plainSummary(plainInput({ ...results, view: { ...results.view, lags } })), "lead");
+    return section(bottomLine(bottomLineInput({ ...results, view: { ...results.view, lags } })), "lead");
   };
 
   it("names a lag that passes correction as a lead to check, either way, and always says moving together isn't predicting", () => {
@@ -228,7 +228,7 @@ describe("a scan's summary", () => {
   it("says when nothing could be tested, or nothing has finished", () => {
     expect(scans["scan nothing tested"].headline).toBe("None of the candidates could be tested.");
     expect(scans["scan just started"].headline).toBe("Results appear here as each candidate finishes.");
-    expect(scanPlainSummary({ ...settings, snap: scanSnap({ bh: 0.02, holm: 0.03 }) }).level).toBe("moderate");
+    expect(scanBottomLine({ ...settings, snap: scanSnap({ bh: 0.02, holm: 0.03 }) }).level).toBe("moderate");
   });
 });
 
@@ -246,7 +246,7 @@ describe("a 180-day window", () => {
   // render them. This summarizes a 124-session window's own results, computed as the panel computes them.
   const { results, loo } = simulated({ window: 124, effect: 0.3 });
   const primary = results.market!.primary!;
-  const s = plainSummary(plainInput(results, { choice: 180, leaveOneOut: loo, detectable: null }));
+  const s = bottomLine(bottomLineInput(results, { choice: 180, leaveOneOut: loo, detectable: null }));
 
   it("rates it and quotes its own numbers", () => {
     expect(primary.resampling?.units).toBe(124);

@@ -1,4 +1,4 @@
-// Fixtures and checks for the plain-English summary's tests: real panel results from simulated rows,
+// Fixtures and checks for the bottom-line summary's tests: real panel results from simulated rows,
 // with the parts each rating rule reads swapped for hand-made ones, the language checks (trading
 // words, sentence length, reading level), and reading a rendered card back part by part.
 
@@ -10,7 +10,7 @@ import { lastSessions, simulateMarketRows } from "@/lib/analytics/test-helpers";
 import { expectedVariable, probabilityVariable } from "@/lib/analytics/variable";
 import type { Section } from "@/lib/report/model";
 import { textOf } from "../report/test-helpers";
-import type { PlainInput, PlainSummary } from "./summary";
+import type { BottomLineInput, BottomLine } from "./summary";
 import { NOT_ADVICE } from "./summary";
 
 export const MARKET = probabilityVariable("Fed maintains rate");
@@ -53,7 +53,7 @@ export const fragilityWith = (f: Fragility, effective: number): Fragility => ({ 
 export const looWith = (loo: LeaveOneOut, flips: number): LeaveOneOut => ({ ...loo, flips });
 export const detectableAt = (r: number | null): DetectableCorrelation => ({ r, max: 0.8, slope: null, power: 0.8, samples: 999, unit: "session", units: 62 });
 
-export function plainInput(results: PanelResults, over: Partial<PlainInput> = {}): PlainInput {
+export function bottomLineInput(results: PanelResults, over: Partial<BottomLineInput> = {}): BottomLineInput {
   return {
     stock: "TLT",
     variable: MARKET,
@@ -75,7 +75,7 @@ export function plainInput(results: PanelResults, over: Partial<PlainInput> = {}
 }
 
 /** Everything the summary says, as one text: the headline and every section's items. */
-export const summaryText = (s: PlainSummary) => [s.headline, ...s.sections.flatMap((x) => x.items)].join("\n");
+export const summaryText = (s: BottomLine) => [s.headline, ...s.sections.flatMap((x) => x.items)].join("\n");
 
 // ---- Language ----
 

@@ -10,7 +10,7 @@ Pick a stock or ETF (search by ticker or name, e.g. `NVDA` or "nvidia") and a Ka
 - **Whole events:** for a Fed decision event ticker (`KXFEDDECISION-26OCT`), the expected rate change across every outcome instead of one market's probability; see [Event analysis](#event-analysis)
 - **Research:** how Kalshi probability changes relate to stock returns over 7, 30, 90, or 180 days, a year, or the market's whole life (up to 540 days; hourly or daily; 90 days hourly by default): lead-lag correlation, rolling correlation, and an event study around Kalshi jumps, on raw or market-adjusted returns (net of SPY or another benchmark), with significance tests built for this data (one primary test, with diagnostics of how much it rests on a few hours or sessions; p-values and 95% intervals for every lag and event-study bar; Holm and Benjamini–Hochberg corrections), sample sizes, caveats, and a CSV export of the aligned data
 
-- **In plain English:** a short summary at the top of Research and of a scan's results, in everyday words, with an evidence rating (Not enough data, No clear link, Weak, Moderate, or Strong) and definitions of the terms it uses; see [In plain English](#in-plain-english)
+- **The bottom line:** a short summary at the top of Research and of a scan's results, in everyday words, with an evidence rating (Not enough data, No clear link, Weak, Moderate, or Strong) and definitions of the terms it uses; see [The bottom line](#the-bottom-line)
 - **Scan:** one stock against many Kalshi events at once (a series, every stored event, or a list), the same primary test on each, ranked with Holm and Benjamini–Hochberg corrections across the whole scan, as exploratory leads; see [Scan](#scan)
 
 > Experimental market-research tool. Metrics are informational and are not investment recommendations.
@@ -456,14 +456,14 @@ The market model is fitted on all 90 days, so to reproduce β and α, use the 90
 
 **Report…** in Research's controls (and on a finished scan) exports what's on screen, to attach to an application or walk through: a **printable page** (a standalone HTML document opened in a new tab: print it, or save it as PDF from the browser's print dialog) or **Markdown** (`eventlens-report_NVDA_KXFEDDECISION-26OCT-H25_90d-hourly_2026-10-07.md`). It's built in the browser from the page's own results, so it costs no requests, and it needs no new dependencies (`lib/report`, `components/report`).
 
-- **An analysis's report:** the plain-English summary (see [In plain English](#in-plain-english)); the question and the inputs (every setting, the window's dates, and whether it's frozen); data sources with fetch times and how far stored Kalshi history reaches; the methods in plain language (the primary test, the wild cluster bootstrap, Holm and Benjamini–Hochberg families, the market model and its sample, the detectable size, the fragility thresholds); the results (the primary test with its interval and p, the detectable size when it isn't significant, the fragility diagnostics and warning, the market adjustment and its cross-check, lead-lag, rolling correlation, and the event study, with charts); what a frozen link reproduces; the caveats and the disclaimer; the terms used; and the app's version and commit, the link, and the generation time.
-- **A scan's report:** the same around the scan: its plain-English summary, how its candidates were chosen, each candidate's Kalshi source, the exploratory-leads banner, the ranked table with both corrections and F1/F3, and the candidates that couldn't be tested.
+- **An analysis's report:** the bottom-line summary (see [The bottom line](#the-bottom-line)); the question and the inputs (every setting, the window's dates, and whether it's frozen); data sources with fetch times and how far stored Kalshi history reaches; the methods in plain language (the primary test, the wild cluster bootstrap, Holm and Benjamini–Hochberg families, the market model and its sample, the detectable size, the fragility thresholds); the results (the primary test with its interval and p, the detectable size when it isn't significant, the fragility diagnostics and warning, the market adjustment and its cross-check, lead-lag, rolling correlation, and the event study, with charts); what a frozen link reproduces; the caveats and the disclaimer; the terms used; and the app's version and commit, the link, and the generation time.
+- **A scan's report:** the same around the scan: its bottom-line summary, how its candidates were chosen, each candidate's Kalshi source, the exploratory-leads banner, the ranked table with both corrections and F1/F3, and the candidates that couldn't be tested.
 - **Options:** **Prepared by** (optional, remembered in this browser only), and **Include the reproducible link** (on by default; it opens behind this site's sign-in). The Inputs list every setting either way.
 - **No stock prices.** Twelve Data's free plan doesn't allow showing its data outside the app, and a report attached to an application is outside it. So reports carry statistics (correlations, betas, p-values, counts) and Kalshi data, but no stock price, price series, or price chart. They also leave out each influential hour's abnormal return, and the event study's averages for rises or falls with fewer than 5 events (close to one event's return path): their counts and the page's warning stay. The charts (lead-lag intervals, the rolling correlation, and event-study paths for groups of at least 5) plot only those statistics. `components/report/licensing.test.tsx` builds every kind of report from a fake world whose stock and benchmark trade near 98,765 and 87,654, and fails if any bar's price appears in any form; a positive control proves the search finds one.
 - **The numbers are the page's.** Reports use the page's own formatters and wording. `components/report/accuracy.test.tsx` renders the page as the server does and builds its report from the same inputs: every table they share matches cell for cell (less the columns left out), the primary result reads the same, and every number in the results is on the page, for a market, an event, and a self-benchmark; `scan-report.test.tsx` does the same for a scan. (The longer windows' results come from the same results object; the static render can't show them, so they aren't in that test.)
 - **Version and commit** come from `package.json`'s version (bumped before each release is tagged) and `VERCEL_GIT_COMMIT_SHA`, or `git rev-parse HEAD` locally, set at build time by `next.config.ts`.
 
-## In plain English
+## The bottom line
 
 A card at the top of Research, and a summary at the top of a scan's results, say what the analysis found in short sentences and everyday words, for readers who don't read the statistics. They compute no new statistics: they read the page's own results (the primary test, the fragility diagnostics and leave-one-out check, the detectable size, the regression with the benchmark held fixed, and the corrected lead-lag results) and put them into words. They never give trading advice.
 
@@ -559,7 +559,7 @@ Folded away under it are **How the rating works** (the rules and the simulation 
 
 **The scan's summary** opens a scan's results. It says how many candidates still looked related after correcting for testing many at once, how many had p under 0.05 before correcting against how many chance alone would give (5% of those tested), and what the strongest lead is, rated by the scan lead rules above. While the scan runs it says "so far", the lead's rating waits for the leave-one-out check, and it always adds that leads at the top of a scan are probably overstated.
 
-**In reports,** an analysis's or a scan's report opens with **In plain English** (the card's text part by part, its level as "Evidence: Strong", and, for an analysis, how the rating works) and ends with **Terms used** (the glossary), before the footer.
+**In reports,** an analysis's or a scan's report opens with **The bottom line** (the card's text part by part, its level as "Evidence: Strong", and, for an analysis, how the rating works) and ends with **Terms used** (the glossary), before the footer.
 
 ### Terms
 
@@ -763,7 +763,7 @@ components/           UI components (cards, form, panels)
   charts/             Recharts client components
   event/              A whole event's dashboard: its panel, E over time, outcome probabilities, Research with ΔE
   research/           Research panel (window, resolution, raw or market-adjusted returns, benchmark, analyses, CSV download)
-  plain/              The plain-English card and the scan's summary, their wording, the glossary, and term markers
+  plain/              The bottom-line card and the scan's summary, their wording, the glossary, and term markers
   search/             Stock and Kalshi search fields (comboboxes)
   scan/               The scan page and its runner (results as they finish, computed in slices)
 lib/

@@ -2,10 +2,10 @@
 
 import type { ReactNode } from "react";
 import { GLOSSARY } from "./glossary";
-import { LEVEL_LABEL, METER_STEP, RATING_METHOD, type PlainLevel, type PlainSection, type PlainSummary } from "./summary";
+import { LEVEL_LABEL, METER_STEP, RATING_METHOD, type BottomLineLevel, type BottomLineSection, type BottomLine } from "./summary";
 import { markTerms } from "./Term";
 
-// The plain-English summary on the page: the analysis card at the top of Research, and the scan's
+// The bottom-line summary on the page: the analysis card at the top of Research, and the scan's
 // version at the top of its results. Everything sits in one element marked data-plain-english (with no
 // <section> inside it), which the markup pins leave out, so the cards below stay exactly as they were.
 // The first use of each glossary term in a card is marked (<Term>): its definition shows on hover,
@@ -17,7 +17,7 @@ import { markTerms } from "./Term";
  * is hatched, since it's no reading at all. The level is always written beside it, as the text a
  * screen reader reads ("Evidence: Strong"); the bar itself is decoration.
  */
-export function EvidenceMeter({ level }: { level: PlainLevel }) {
+export function EvidenceMeter({ level }: { level: BottomLineLevel }) {
   const filled = METER_STEP[level];
   const unknown = level === "not_enough_data" || level === "pending";
   return (
@@ -45,7 +45,7 @@ export function EvidenceMeter({ level }: { level: PlainLevel }) {
   );
 }
 
-function Section({ section, nodes, rated, level }: { section: PlainSection; nodes: ReactNode[]; rated: boolean; level: PlainLevel }) {
+function Section({ section, nodes, rated, level }: { section: BottomLineSection; nodes: ReactNode[]; rated: boolean; level: BottomLineLevel }) {
   const list = section.id === "trust";
   return (
     <div className="mt-4">
@@ -80,7 +80,7 @@ function Section({ section, nodes, rated, level }: { section: PlainSection; node
 }
 
 /** The terms and how the rating works, folded away under the summary. */
-export function PlainNotes({ method }: { method: ReactNode[] | null }) {
+export function BottomLineNotes({ method }: { method: ReactNode[] | null }) {
   return (
     <div className="mt-4 grid gap-2 border-t border-border pt-3 text-xs text-ink-secondary">
       {method && (
@@ -109,7 +109,7 @@ export function PlainNotes({ method }: { method: ReactNode[] | null }) {
 }
 
 /** The summary's texts with their terms marked: the headline, each section's items, and the method notes. */
-function marked(summary: PlainSummary, method: boolean) {
+function marked(summary: BottomLine, method: boolean) {
   const texts = [summary.headline, ...summary.sections.flatMap((s) => s.items), ...(method ? RATING_METHOD : [])];
   const nodes = markTerms(texts);
   let at = 1;
@@ -122,34 +122,34 @@ function marked(summary: PlainSummary, method: boolean) {
 }
 
 /** The analysis card at the top of Research. */
-export function PlainEnglishCard({ summary }: { summary: PlainSummary }) {
+export function BottomLineCard({ summary }: { summary: BottomLine }) {
   const nodes = marked(summary, true);
   return (
-    <section data-plain-english="" aria-label="In plain English" className="min-w-0 rounded-xl border border-border bg-surface p-5">
+    <section data-plain-english="" aria-label="The bottom line" className="min-w-0 rounded-xl border border-border bg-surface p-5">
       <header className="mb-3">
-        <h2 className="text-sm font-semibold tracking-wide text-ink">In plain English</h2>
+        <h2 className="text-sm font-semibold tracking-wide text-ink">The bottom line</h2>
         <p className="mt-1 text-xs text-ink-muted">What this analysis found, in everyday words, from the results below.</p>
       </header>
       <p className="text-base font-medium text-ink">{nodes.headline}</p>
       {summary.sections.map((s, k) => (
         <Section key={s.id} section={s} nodes={nodes.sections[k]} rated={s.id === "evidence" || s.id === "scan-lead"} level={summary.level} />
       ))}
-      <PlainNotes method={nodes.method} />
+      <BottomLineNotes method={nodes.method} />
     </section>
   );
 }
 
 /** The scan's summary, at the top of its results card. */
-export function ScanPlainSummary({ summary }: { summary: PlainSummary }) {
+export function ScanBottomLine({ summary }: { summary: BottomLine }) {
   const nodes = marked(summary, false);
   return (
-    <section data-plain-english="" aria-label="In plain English" className="mb-4 rounded-lg border border-border bg-surface-raised p-4">
-      <h3 className="text-xs font-medium uppercase tracking-wider text-ink-muted">In plain English</h3>
+    <section data-plain-english="" aria-label="The bottom line" className="mb-4 rounded-lg border border-border bg-surface-raised p-4">
+      <h3 className="text-xs font-medium uppercase tracking-wider text-ink-muted">The bottom line</h3>
       <p className="mt-1.5 text-sm font-medium text-ink">{nodes.headline}</p>
       {summary.sections.map((s, k) => (
         <Section key={s.id} section={s} nodes={nodes.sections[k]} rated={s.id === "scan-lead"} level={summary.level} />
       ))}
-      <PlainNotes method={null} />
+      <BottomLineNotes method={null} />
     </section>
   );
 }

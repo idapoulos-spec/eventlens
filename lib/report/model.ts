@@ -6,7 +6,7 @@
 
 export type Block =
   | { kind: "paragraph"; text: string }
-  /** A heading within a section, for a section in parts (the plain-English summary). */
+  /** A heading within a section, for a section in parts (the bottom-line summary). */
   | { kind: "heading"; text: string }
   | { kind: "list"; items: string[] }
   /** Label and value pairs. */

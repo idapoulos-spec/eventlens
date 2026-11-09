@@ -1,5 +1,5 @@
 // Short definitions of the statistical terms used across Research and the scan, in everyday words.
-// Shown by <Term> (on hover or focus, or a tap), listed in full under the plain-English card, and
+// Shown by <Term> (on hover or focus, or a tap), listed in full under the bottom-line card, and
 // in a report’s "Terms used". language.test.ts checks them for trading language and reading level.
 
 export type TermId =
@@ -22,7 +22,7 @@ export interface GlossaryEntry {
   term: string;
   definition: string;
   /**
-   * Phrases in the plain-English card that mark the term, first match only (case-sensitive). Kept to a
+   * Phrases in the bottom-line card that mark the term, first match only (case-sensitive). Kept to a
    * few words: a marker is a button, which a browser never breaks across lines.
    */
   phrases: string[];

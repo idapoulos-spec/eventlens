@@ -1,4 +1,4 @@
-// The plain-English summary: what an analysis or a scan found, in short sentences and everyday words,
+// The bottom-line summary: what an analysis or a scan found, in short sentences and everyday words,
 // from exactly what its page already holds. Nothing here computes a statistic: the rating comes from
 // lib/analytics/evidence.ts, and every number is the page’s, written by the page’s own formatters
 // (accuracy.test.tsx checks them), except the few listed in `derived`, which rescale one the page shows
@@ -28,9 +28,9 @@ import { fmtR, lowerFirst, plural } from "../research/parts";
 import { formatCi, formatP } from "../research/stats";
 import type { CandidateState, ScanSnapshot } from "../scan/scanRunner";
 
-export type PlainLevel = EvidenceLevel | ScanLeadLevel | "pending" | "none";
+export type BottomLineLevel = EvidenceLevel | ScanLeadLevel | "pending" | "none";
 
-export const LEVEL_LABEL: Record<PlainLevel, string> = {
+export const LEVEL_LABEL: Record<BottomLineLevel, string> = {
   not_enough_data: "Not enough data",
   no_clear_link: "No clear link",
   nothing_stood_out: "Nothing stood out",
@@ -42,7 +42,7 @@ export const LEVEL_LABEL: Record<PlainLevel, string> = {
 };
 
 /** Where a level sits on the meter, from No clear link (0) to Strong (3); null when it's off the scale. */
-export const METER_STEP: Record<PlainLevel, number | null> = {
+export const METER_STEP: Record<BottomLineLevel, number | null> = {
   no_clear_link: 0,
   nothing_stood_out: 0,
   weak: 1,
@@ -53,17 +53,17 @@ export const METER_STEP: Record<PlainLevel, number | null> = {
   none: null,
 };
 
-export interface PlainSection {
+export interface BottomLineSection {
   /** "evidence" and "scan-lead" carry the rating (the card's meter, a report's "Evidence:" line). */
   id: "evidence" | "size" | "lead" | "trust" | "limits" | "scan-lead";
   title: string;
   items: string[];
 }
 
-export interface PlainSummary {
+export interface BottomLine {
   headline: string;
-  level: PlainLevel;
-  sections: PlainSection[];
+  level: BottomLineLevel;
+  sections: BottomLineSection[];
   /**
    * Numbers in the text that aren't printed elsewhere on the page as written, because they rescale one
    * that is (a size per 10 pp or 25 bp, a lag's count of hours) or quote the rating's own rules and
@@ -191,7 +191,7 @@ export const smallLinkText = (owner: string, stock: string) =>
 // ---- One analysis ----
 
 /** What the summary reads from the Research panel (or a report's input, which holds the same). */
-export interface PlainInput {
+export interface BottomLineInput {
   stock: string;
   variable: KalshiVariable;
   choice: WindowChoice;
@@ -212,7 +212,7 @@ export interface PlainInput {
   frozenAt: number | null;
 }
 
-export function plainSummary(i: PlainInput): PlainSummary {
+export function bottomLine(i: BottomLineInput): BottomLine {
   const w = words(i.resolution);
   const who = mover(i.variable.kind);
   const primary = i.results.market?.primary ?? null;
@@ -238,7 +238,7 @@ export function plainSummary(i: PlainInput): PlainSummary {
   };
 }
 
-function headline(i: PlainInput, rating: EvidenceRating, primary: TestResult | null, w: Words): string {
+function headline(i: BottomLineInput, rating: EvidenceRating, primary: TestResult | null, w: Words): string {
   const subject = subjectOf(i.variable);
   const r = primary?.estimate ?? 0;
   const unit = w.unit[0];
@@ -259,7 +259,7 @@ function headline(i: PlainInput, rating: EvidenceRating, primary: TestResult | n
   }
 }
 
-function evidenceItems(i: PlainInput, rating: EvidenceRating, primary: TestResult | null, w: Words, who: Mover, derived: string[]): string[] {
+function evidenceItems(i: BottomLineInput, rating: EvidenceRating, primary: TestResult | null, w: Words, who: Mover, derived: string[]): string[] {
   if (primary === null) return [`No rating: the main test can’t run here (${lowerFirst(i.unavailable)}).`];
   const p = primary.p === null ? "—" : formatP(primary.p);
   const noLink = `The main test found no clear link (p-value ${p}).`;
@@ -339,7 +339,7 @@ function evidenceItems(i: PlainInput, rating: EvidenceRating, primary: TestResul
 }
 
 /** The regression's Kalshi coefficient for a 10 pp rise (a market) or a 25 bp one (an event in bp). */
-function sizeItems(i: PlainInput, primary: TestResult | null, w: Words, derived: string[]): string[] {
+function sizeItems(i: BottomLineInput, primary: TestResult | null, w: Words, derived: string[]): string[] {
   const fit = i.results.market?.kalshi ?? null;
   if (!fit) return [i.results.market ? "There’s too little data to put a size on it." : "There’s no size to give without a benchmark."];
   const { variable, stock, benchmark } = i;
@@ -390,7 +390,7 @@ function leadText(lags: LagCorrelation[], shown: PanelResults["shown"], stock: s
   return parts.join(" ");
 }
 
-function trustItems(i: PlainInput, rating: EvidenceRating, primary: TestResult | null, w: Words, who: Mover, derived: string[]): string[] {
+function trustItems(i: BottomLineInput, rating: EvidenceRating, primary: TestResult | null, w: Words, who: Mover, derived: string[]): string[] {
   const items: string[] = [];
   const { results, choice, resolution } = i;
   const stats = results.view.sameInterval;
@@ -466,7 +466,7 @@ function trustItems(i: PlainInput, rating: EvidenceRating, primary: TestResult |
 
 // ---- A scan ----
 
-export interface ScanPlainInput {
+export interface ScanBottomLineInput {
   stock: string;
   choice: WindowChoice;
   resolution: Resolution;
@@ -490,13 +490,13 @@ function candidateNoun(candidates: ScanCandidate[]): [string, string] {
   return ["market or event", "markets and events"];
 }
 
-export function scanPlainSummary({ stock, choice, resolution, candidates, snap }: ScanPlainInput): PlainSummary {
+export function scanBottomLine({ stock, choice, resolution, candidates, snap }: ScanBottomLineInput): BottomLine {
   const w = words(resolution);
   const derived: string[] = [];
   const tested = snap.states.flatMap((s, i) => (s.status === "done" ? [{ s, i }] : []));
   const untested = snap.states.filter((s) => s.status === "untested").length;
   const final = tested.length + untested === snap.states.length;
-  const limits: PlainSection = { id: "limits", title: "What this can’t tell you", items: [SCAN_LIMITS] };
+  const limits: BottomLineSection = { id: "limits", title: "What this can’t tell you", items: [SCAN_LIMITS] };
 
   if (tested.length === 0) {
     return { headline: final ? "None of the candidates could be tested." : "Results appear here as each candidate finishes.", level: final ? "none" : "pending", sections: [limits], derived };

@@ -1,13 +1,13 @@
-// The plain-English summary and the glossary in a report: the first section says what the page's
-// "In plain English" card says, part by part, and the last lists every term the card defines. Both
+// The bottom-line summary and the glossary in a report: the first section says what the page's
+// "The bottom line" card says, part by part, and the last lists every term the card defines. Both
 // are built from the same summary as the card (components/plain/summary.ts), so they read the same.
 
 import type { Block, Section } from "@/lib/report/model";
 import { GLOSSARY } from "../plain/glossary";
-import { LEVEL_LABEL, RATING_METHOD, type PlainSummary } from "../plain/summary";
+import { LEVEL_LABEL, RATING_METHOD, type BottomLine } from "../plain/summary";
 
-/** "In plain English": the headline, then each part under its own heading, the rating's part with its level. */
-export function plainSection(summary: PlainSummary, { method }: { method: boolean }): Section {
+/** "The bottom line": the headline, then each part under its own heading, the rating's part with its level. */
+export function bottomLineSection(summary: BottomLine, { method }: { method: boolean }): Section {
   const blocks: Block[] = [{ kind: "paragraph", text: summary.headline }];
   for (const s of summary.sections) {
     blocks.push({ kind: "heading", text: s.title });
@@ -19,7 +19,7 @@ export function plainSection(summary: PlainSummary, { method }: { method: boolea
     blocks.push({ kind: "heading", text: "How the rating works" });
     for (const text of RATING_METHOD) blocks.push({ kind: "paragraph", text });
   }
-  return { id: "plain-english", title: "In plain English", blocks };
+  return { id: "bottom-line", title: "The bottom line", blocks };
 }
 
 /** "Terms used": the glossary, as the card's "What the terms mean" lists it. */
