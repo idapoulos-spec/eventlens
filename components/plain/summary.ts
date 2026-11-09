@@ -1,5 +1,6 @@
-// The bottom-line summary: what an analysis or a scan found, in short sentences and everyday words,
-// from exactly what its page already holds. Nothing here computes a statistic: the rating comes from
+// The bottom line: what an analysis or a scan found, answered first (a question, a fixed verdict, the
+// plain finding, and three tiles), with the reasoning folded away in its sections, in short sentences
+// and everyday words, from exactly what its page already holds. Nothing here computes a statistic: the rating comes from
 // lib/analytics/evidence.ts, and every number is the page’s, written by the page’s own formatters
 // (accuracy.test.tsx checks them), except the few listed in `derived`, which rescale one the page shows
 // or quote the rating’s own rules and simulations. Pure, so the card, the scan, and the reports say the
@@ -13,6 +14,7 @@ import {
   scanLeadRating,
   type EvidenceLevel,
   type EvidenceRating,
+  type EvidenceRule,
   type FragileChecks,
   type ScanLeadLevel,
   type ScanLeadRating,
@@ -54,15 +56,31 @@ export const METER_STEP: Record<BottomLineLevel, number | null> = {
 };
 
 export interface BottomLineSection {
-  /** "evidence" and "scan-lead" carry the rating (the card's meter, a report's "Evidence:" line). */
-  id: "evidence" | "size" | "lead" | "trust" | "limits" | "scan-lead";
+  /** "evidence" opens an analysis's folded reasons, "scan-why" a scan's; "scan-lead" shows above them, and "limits" is the footer. */
+  id: "evidence" | "size" | "lead" | "trust" | "limits" | "scan-lead" | "scan-why";
   title: string;
   items: string[];
 }
 
+/** One tile under the answer: its label, one bold answer, and a short note. */
+export interface BottomLineTile {
+  id: "sure" | "big" | "first" | "tested" | "related" | "chance";
+  label: string;
+  value: string;
+  note: string;
+}
+
 export interface BottomLine {
+  /** What was asked, built from the inputs. */
+  question: string;
+  /** The fixed start of the answer, by level (see VERDICT). */
+  verdict: string;
+  /** The plain finding after the verdict. */
   headline: string;
   level: BottomLineLevel;
+  tiles: BottomLineTile[];
+  /** The title of the folded reasons: "Why it's rated Weak". */
+  why: string;
   sections: BottomLineSection[];
   /**
    * Numbers in the text that aren't printed elsewhere on the page as written, because they rescale one
@@ -80,6 +98,51 @@ export const SCAN_LIMITS = `This describes how the stock moved with each candida
 
 export const WINNERS_CURSE_PLAIN =
   "Leads at the top of a scan are probably overstated, because they rank first partly by luck. Expect a smaller link if one is checked again on new data.";
+
+/** The fixed start of an analysis's answer. Each stays within what its rating's rules can claim. */
+export const VERDICT: Record<BottomLineLevel, string> = {
+  strong: "Yes, in this window.",
+  moderate: "Probably, in this window.",
+  weak: "Maybe, but it’s shaky.",
+  no_clear_link: "Not clearly.",
+  nothing_stood_out: "Nothing stood out.",
+  not_enough_data: "Can’t tell yet.",
+  pending: "Still checking.",
+  none: "Can’t say here.",
+};
+
+/** A scan finds leads to check, not findings, so its rated verdicts say so. */
+export const SCAN_VERDICT: Record<BottomLineLevel, string> = {
+  ...VERDICT,
+  strong: "Yes, as a lead to check.",
+  moderate: "Probably, as a lead to check.",
+  weak: "Maybe, but the lead is shaky.",
+};
+
+/** Strong evidence isn't a big effect: Moderate or Strong with a small link says so from the first words. */
+const SMALL_LINK_VERDICT: Partial<Record<BottomLineLevel, string>> = {
+  strong: "Yes, but the link is small.",
+  moderate: "Probably, but the link is small.",
+};
+
+/** The "How sure?" tile's reason, by the rule that decided the rating: two to four words. */
+export const REASON: Record<EvidenceRule, string> = {
+  no_primary: "No main test",
+  no_p: "Main test can’t run",
+  pending: "Still computing",
+  few_moves: "Too few moves",
+  low_power: "Could miss a link",
+  power_miss: "Could miss a link",
+  no_link: "Strong link unlikely",
+  fragile: "Fragile result",
+  no_interval: "No range for it",
+  strong: "Low p-value, stable",
+  moderate: "Passes test, stable",
+};
+
+/** The folded reasons' title, for each level. */
+const whyTitle = (level: BottomLineLevel) =>
+  level === "none" ? "Why there’s no rating" : level === "pending" ? "What’s still being checked" : `Why it’s rated ${LEVEL_LABEL[level]}`;
 
 // How often the fragile warning comes on with no real link, by window, from fragility-rates.sim.test.ts
 // (the page quotes the same figures in WARNING_BY_CHANCE).
@@ -224,14 +287,23 @@ export function bottomLine(i: BottomLineInput): BottomLine {
     calibration: calibrationFor(i.resolution, i.choice, i.longDaily),
   });
   const derived: string[] = [];
+  const why = whyTitle(rating.level);
   return {
+    question: `Did ${i.stock} move with ${subjectOf(i.variable)}?`,
+    verdict: (rating.smallLink && SMALL_LINK_VERDICT[rating.level]) || VERDICT[rating.level],
     headline: headline(i, rating, primary, w),
     level: rating.level,
+    tiles: [
+      { id: "sure", label: "How sure?", value: LEVEL_LABEL[rating.level], note: REASON[rating.rule] },
+      bigTile(i, primary, derived),
+      firstTile(i.results.view.lags, i.results.shown, i.stock, w, who, derived),
+    ],
+    why,
     sections: [
-      { id: "evidence", title: "How strong is the evidence?", items: evidenceItems(i, rating, primary, w, who, derived) },
+      { id: "evidence", title: why, items: evidenceItems(i, rating, primary, w, who, derived) },
+      { id: "trust", title: "How much to trust it", items: trustItems(i, rating, primary, w, who, derived) },
       { id: "size", title: "How big is it?", items: sizeItems(i, primary, w, derived) },
       { id: "lead", title: `Does ${who.name} move first?`, items: [leadText(i.results.view.lags, i.results.shown, i.stock, w, who, derived)] },
-      { id: "trust", title: "How much to trust it", items: trustItems(i, rating, primary, w, who, derived) },
       { id: "limits", title: "What this can’t tell you", items: [ANALYSIS_LIMITS] },
     ],
     derived,
@@ -252,7 +324,6 @@ function headline(i: BottomLineInput, rating: EvidenceRating, primary: TestResul
     case "no_clear_link":
       return `No clear link between ${subject} and ${i.stock} in the same ${unit}, ${beyond(i.benchmark)}.`;
     case "weak":
-      return `A weak sign: ${tended(subject, i.stock, r, unit)}, ${beyond(i.benchmark)}.`;
     case "moderate":
     case "strong":
       return `${upper(tended(subject, i.stock, r, unit))}, ${beyond(i.benchmark)}.`;
@@ -338,12 +409,37 @@ function evidenceItems(i: BottomLineInput, rating: EvidenceRating, primary: Test
   return items;
 }
 
+/** What a size is quoted per: a 10 pp rise for a market, 25 bp for an event in bp, 1 of its unit otherwise. */
+const sizeScale = (variable: KalshiVariable) => (variable.kind === "probability" ? 10 : variable.unit === "bp" ? 25 : 1);
+
+/** The size points the other way from the main test. */
+const againstMainTest = (coef: number, primary: TestResult | null) => {
+  const r = primary?.estimate ?? null;
+  return r !== null && r !== 0 && coef !== 0 && Math.sign(coef) !== Math.sign(r);
+};
+
+/** The "How big?" tile: the size as one number, per what it's quoted for, and whether it could be zero. */
+function bigTile(i: BottomLineInput, primary: TestResult | null, derived: string[]): BottomLineTile {
+  const tile = (value: string, note: string): BottomLineTile => ({ id: "big", label: "How big?", value, note });
+  const fit = i.results.market?.kalshi ?? null;
+  if (!fit) return tile("Unknown", i.results.market ? "Too little data." : "No benchmark to hold fixed.");
+  const { variable, stock } = i;
+  const scale = sizeScale(variable);
+  const fmt = (v: number) => formatSigned(v * scale, 2, "%");
+  const per = variable.kind === "probability" ? "10-point rise in the chance" : variable.unit === "bp" ? "25 bp rise" : `1 ${variable.unit} rise`;
+  const ci = fit.test.ci;
+  derived.push(fmt(fit.coef), String(scale));
+  if (ci) derived.push(fmt(ci[0]), fmt(ci[1]));
+  const range = !ci ? "No range, so it could be zero." : `${ci[0] <= 0 && ci[1] >= 0 ? "Could be zero: range" : "Range"} ${fmt(ci[0])} to ${fmt(ci[1])}.`;
+  return tile(fmt(fit.coef), [`${stock}’s move per ${per}.`, range, againstMainTest(fit.coef, primary) ? "Direction unclear." : ""].filter(Boolean).join(" "));
+}
+
 /** The regression's Kalshi coefficient for a 10 pp rise (a market) or a 25 bp one (an event in bp). */
 function sizeItems(i: BottomLineInput, primary: TestResult | null, w: Words, derived: string[]): string[] {
   const fit = i.results.market?.kalshi ?? null;
   if (!fit) return [i.results.market ? "There’s too little data to put a size on it." : "There’s no size to give without a benchmark."];
   const { variable, stock, benchmark } = i;
-  const scale = variable.kind === "probability" ? 10 : variable.unit === "bp" ? 25 : 1;
+  const scale = sizeScale(variable);
   const step =
     variable.kind === "probability"
       ? `Take a 10-percentage-point rise in ${subjectOf(variable)}, say from 40% to 50%.`
@@ -361,22 +457,47 @@ function sizeItems(i: BottomLineInput, primary: TestResult | null, w: Words, der
     text.push(`The likely range is ${fmt(ci[0])} to ${fmt(ci[1])}.`);
     if (ci[0] <= 0 && ci[1] >= 0) text.push("The range includes zero, so the true effect could be none at all.");
   }
-  const r = primary?.estimate ?? null;
-  if (r !== null && r !== 0 && fit.coef !== 0 && Math.sign(fit.coef) !== Math.sign(r)) text.push("This size points the other way from the main test, so its direction is unclear.");
+  if (againstMainTest(fit.coef, primary)) text.push("This size points the other way from the main test, so its direction is unclear.");
   return [text.join(" "), "It comes from the “Kalshi, with the market held fixed” check under Market adjustment."];
 }
 
-function leadText(lags: LagCorrelation[], shown: PanelResults["shown"], stock: string, w: Words, who: Mover, derived: string[]): string {
+/** The corrected lags: how many could be tested, and the strongest that passes on each side. */
+function moveFirst(lags: LagCorrelation[], w: Words, derived: string[]) {
   const tested = lags.filter((l) => l.test.role === "exploratory" && l.test.p !== null);
-  if (tested.length === 0) return `There isn’t enough data to check which moved first. ${notPredicting(w.unit[0])}`;
   const passing = tested.filter((l) => l.lag !== 0 && passes(l.test, "bh")).sort((a, b) => a.test.p! - b.test.p!);
-  const checked = `${tested.length} time ${tested.length === 1 ? "shift" : "shifts"}`;
-  const span = (lag: number) => {
-    derived.push(String(Math.abs(lag)));
-    return plural(Math.abs(lag), w.unit);
+  return {
+    tested,
+    checked: `${tested.length} time ${tested.length === 1 ? "shift" : "shifts"}`,
+    kalshiFirst: passing.find((l) => l.lag > 0),
+    stockFirst: passing.find((l) => l.lag < 0),
+    span: (lag: number) => {
+      derived.push(String(Math.abs(lag)));
+      return plural(Math.abs(lag), w.unit);
+    },
   };
-  const kalshiFirst = passing.find((l) => l.lag > 0);
-  const stockFirst = passing.find((l) => l.lag < 0);
+}
+
+const RAW_NOTE = "Uses raw returns.";
+
+/** The "Does Kalshi move first?" tile: one of four answers, the same for an event, whose number comes from Kalshi's prices. */
+function firstTile(lags: LagCorrelation[], shown: PanelResults["shown"], stock: string, w: Words, who: Mover, derived: string[]): BottomLineTile {
+  const { tested, checked, kalshiFirst, stockFirst, span } = moveFirst(lags, w, derived);
+  const answer = (value: string, note: string): BottomLineTile => ({
+    id: "first",
+    label: "Does Kalshi move first?",
+    value,
+    note: shown === "raw" ? `${note} ${RAW_NOTE}` : note,
+  });
+  if (tested.length === 0) return answer("Can’t tell", "Too little data to check.");
+  if (kalshiFirst && stockFirst) return answer("Can’t tell", "Time shifts passed both ways.");
+  if (kalshiFirst) return answer("Kalshi first", `Maybe: ${stock} moved ${span(kalshiFirst.lag)} later. A lead to check.`);
+  if (stockFirst) return answer("Stock first", `Maybe: ${who.name} moved ${span(stockFirst.lag)} later. A lead to check.`);
+  return answer("No", `No clear sign after correcting for checking ${checked}.`);
+}
+
+function leadText(lags: LagCorrelation[], shown: PanelResults["shown"], stock: string, w: Words, who: Mover, derived: string[]): string {
+  const { tested, checked, kalshiFirst, stockFirst, span } = moveFirst(lags, w, derived);
+  if (tested.length === 0) return `There isn’t enough data to check which moved first. ${notPredicting(w.unit[0])}`;
   const parts: string[] = [];
   if (kalshiFirst) {
     parts.push(`Maybe: ${stock} tended to move ${span(kalshiFirst.lag)} after ${who.name} did, even after correcting for checking ${checked}.`, "That’s a lead to check, not a finding.");
@@ -403,7 +524,9 @@ function trustItems(i: BottomLineInput, rating: EvidenceRating, primary: TestRes
     } else {
       const reasons = fragileReasons(f, loo);
       if (reasons.length > 0) {
-        const checks = { movement: reasons.includes("movement"), leaveOneOut: reasons.includes("leave_one_out") };
+        // The reasons above name the checks their rule rests on; these name only the rest, so each is said once.
+        const said = rating.rule === "fragile" ? rating.fragile : { movement: rating.rule === "few_moves", leaveOneOut: false };
+        const checks = { movement: reasons.includes("movement") && !said.movement, leaveOneOut: reasons.includes("leave_one_out") && !said.leaveOneOut };
         const rate = resolution === "hourly" ? WARNING_RATE[choice] : undefined;
         items.push(
           [
@@ -414,7 +537,8 @@ function trustItems(i: BottomLineInput, rating: EvidenceRating, primary: TestRes
             .filter(Boolean)
             .join(" "),
         );
-      } else if (loo) {
+      } else if (loo && rating.rule !== "strong" && rating.rule !== "moderate") {
+        // Strong and Moderate say it held up in their reasons.
         items.push(`Stable: leaving out any one of the ${loo.runs.length} ${w.blocks[1]} that mattered most didn’t change the result.`);
       }
     }
@@ -498,8 +622,21 @@ export function scanBottomLine({ stock, choice, resolution, candidates, snap }: 
   const final = tested.length + untested === snap.states.length;
   const limits: BottomLineSection = { id: "limits", title: "What this can’t tell you", items: [SCAN_LIMITS] };
 
+  const all = candidateNoun(candidates);
+  const question = candidates.length === 1 ? `Did this ${all[0]} move with ${stock}?` : `Did any of these ${candidates.length} ${all[1]} move with ${stock}?`;
+
   if (tested.length === 0) {
-    return { headline: final ? "None of the candidates could be tested." : "Results appear here as each candidate finishes.", level: final ? "none" : "pending", sections: [limits], derived };
+    const level = final ? "none" : "pending";
+    return {
+      question,
+      verdict: SCAN_VERDICT[level],
+      headline: final ? "None of the candidates could be tested." : "Results appear here as each candidate finishes.",
+      level,
+      tiles: [],
+      why: whyTitle(level),
+      sections: [limits],
+      derived,
+    };
   }
 
   const noun = candidateNoun(tested.map(({ i }) => candidates[i]));
@@ -507,10 +644,10 @@ export function scanBottomLine({ stock, choice, resolution, candidates, snap }: 
   const holm = snap.corrections.filter((c) => c?.survivesHolm).length;
   const bh = snap.corrections.filter((c) => c?.survivesBh).length;
   const expected = (ALPHA * tested.length).toLocaleString("en-US", { maximumFractionDigits: 1 });
-  const first = `${final ? "Out" : "So far, out"} of ${plural(tested.length, noun)} tested, ${bh === 0 ? "none" : bh} still looked related after correcting for testing many at once.${
-    bh === 0 ? "" : holm === 0 ? " None passed the stricter check." : ` ${holm} also passed the stricter check.`
-  }`;
-  const second = `Before correcting, ${under} had ${under === 1 ? "a p-value" : "p-values"} under 0.05, where about ${expected} would be expected by chance alone even if none were related.`;
+  const first = `${final ? "Out" : "So far, out"} of ${plural(tested.length, noun)} tested, ${bh === 0 ? "none" : bh} still looked related after correcting for testing many at once.`;
+  const stricter = bh === 0 ? "" : holm === 0 ? "None passed the stricter check." : `${holm} also passed the stricter check.`;
+  const before = `${under} had ${under === 1 ? "a p-value" : "p-values"} under 0.05`;
+  const second = `Before correcting, ${before}, where about ${expected} would be expected by chance alone even if none were related.`;
 
   const index = snap.order.find((i) => snap.states[i].status === "done")!;
   const state = snap.states[index] as Done;
@@ -521,33 +658,43 @@ export function scanBottomLine({ stock, choice, resolution, candidates, snap }: 
     bh: snap.corrections[index]?.bh ?? 1,
     calibration: calibrationFor(resolution, choice, isLongWindow(choice) && !state.sameAs90),
   });
+  const lead = scanLeadParts(stock, candidates[index], state, rating, snap.corrections[index]?.bh ?? 1, w, tested.length, final, derived);
+  const why = whyTitle(rating.level);
+  const nouns = tested.length === 1 ? noun[0] : noun[1];
   return {
-    headline: `${first} ${second}`,
+    question,
+    verdict: (rating.smallLink && SMALL_LINK_VERDICT[rating.level]) || SCAN_VERDICT[rating.level],
+    headline: first,
     level: rating.level,
+    tiles: [
+      { id: "tested", label: "Tested", value: String(tested.length), note: `${nouns}${final ? "" : " so far"}${untested > 0 ? `; ${untested} couldn’t be tested` : ""}` },
+      { id: "related", label: "Still related after correcting", value: String(bh), note: stricter || "The less strict check found none." },
+      { id: "chance", label: "Expected by chance before correcting", value: `About ${expected}`, note: `${before} before correcting.` },
+    ],
+    why,
     sections: [
-      {
-        id: "scan-lead",
-        title: final ? "The strongest lead" : "The strongest lead so far",
-        items: scanLeadItems(stock, candidates[index], state, rating, snap.corrections[index]?.bh ?? 1, w, tested.length, final, derived),
-      },
+      { id: "scan-lead", title: final ? "The strongest lead" : "The strongest lead so far", items: [lead.text, WINNERS_CURSE_PLAIN] },
+      { id: "scan-why", title: why, items: [...lead.reasons, [stricter, second].filter(Boolean).join(" "), "Open its full analysis for the details."] },
       limits,
     ],
     derived,
   };
 }
 
-function scanLeadItems(stock: string, c: ScanCandidate, state: Done, rating: ScanLeadRating, bh: number, w: Words, tested: number, final: boolean, derived: string[]): string[] {
+/** The lead in words (shown with its badge) and its reasons (folded away). */
+function scanLeadParts(stock: string, c: ScanCandidate, state: Done, rating: ScanLeadRating, bh: number, w: Words, tested: number, final: boolean, derived: string[]): { text: string; reasons: string[] } {
   const primary = state.test.primary!;
   const who = mover(c.kind === "event" ? "expected" : "probability");
   const subject = c.kind === "event" ? "the expected rate change" : `the chance of “${c.label ?? c.title}”`;
   const name = `“${c.title}” (${c.ticker})`;
   const numbers = `r = ${fmtR(primary.estimate)}${primary.ci ? ` (95% range ${formatCi(primary.ci, fmtR)})` : ""}`;
   const loo = state.loo !== null && typeof state.loo === "object" ? state.loo : null;
+  const shown: string[] = [];
   const text: string[] = [];
   switch (rating.rule) {
     case "not_surviving":
     case "few_moves":
-      text.push(`Closest to standing out: ${name}, with ${numbers}.`, "It didn’t survive the correction for testing many at once.");
+      shown.push(`Closest to standing out: ${name}, with ${numbers}.`, "It didn’t survive the correction for testing many at once.");
       if (rating.rule === "few_moves") {
         text.push(`Also, ${who.owner} movement was bunched into a few ${w.unit[1]}, so a real link could easily be missed.`);
       } else {
@@ -561,7 +708,8 @@ function scanLeadItems(stock: string, c: ScanCandidate, state: Done, rating: Sca
       }
       break;
     default:
-      text.push(`The strongest lead is ${name}.`, `${upper(tended(subject, stock, primary.estimate ?? 0, w.unit[0]))}, ${beyond(DEFAULT_BENCHMARK.symbol)}.`, `Its correlation: ${numbers}.`);
+      shown.push(`The strongest lead is ${name}.`, `${upper(tended(subject, stock, primary.estimate ?? 0, w.unit[0]))}, ${beyond(DEFAULT_BENCHMARK.symbol)}.`);
+      text.push(`Its correlation: ${numbers}.`);
       switch (rating.rule) {
         case "pending":
           text.push(final ? `Still checking how much it rests on a few ${w.blocks[1]}…` : "Its rating waits for every candidate, then for a check of how much the top results rest on a few days.");
@@ -588,8 +736,7 @@ function scanLeadItems(stock: string, c: ScanCandidate, state: Done, rating: Sca
           break;
       }
   }
-  const items = [text.filter(Boolean).join(" ")];
-  if (rating.smallLink) items.push(smallLinkText(who.owner, stock));
-  items.push(WINNERS_CURSE_PLAIN, "Open its full analysis for the details.");
-  return items;
+  const reasons = [text.filter(Boolean).join(" ")].filter(Boolean);
+  if (rating.smallLink) reasons.push(smallLinkText(who.owner, stock));
+  return { text: shown.join(" "), reasons };
 }

@@ -7,6 +7,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ALPHA } from "@/lib/analytics";
 import { EVIDENCE } from "@/lib/analytics/evidence";
 import { linkSymbol, stubWorld, worldEvent, worldMarket } from "@/lib/history/test-world";
 import { parseSpan } from "@/lib/scan/api";
@@ -17,6 +18,7 @@ import type { tickerCandidates as TickerCandidates } from "@/lib/scan/candidates
 import type { ScanRun as ScanRunClass, ScanSnapshot } from "../scan/scanRunner";
 import type { ScanResults as ScanResultsComponent } from "../scan/ScanPage";
 import { scanReport } from "../report/scanReport";
+import { chanceLine, survivorsLine } from "../scan/text";
 import { numbersNotOn, textOf } from "../report/test-helpers";
 import { cardGlossary, cardParts, reportParts } from "./test-helpers";
 import { ScanBottomLine } from "./BottomLineCard";
@@ -95,8 +97,25 @@ function finished(run: ScanRunClass): Promise<ScanSnapshot> {
 
 const CARD = /<section data-plain-english[\s\S]*?<\/section>/;
 
-/** The summary's results text: the headline and the lead, less the fixed limits. */
-const resultsText = (s: BottomLine) => [s.headline, ...s.sections.filter((x) => x.id !== "limits").flatMap((x) => x.items)].join("\n");
+/** The summary's results text: the question, the answer, the tiles, and the lead, less the labels and the fixed limits. */
+const resultsText = (s: BottomLine) =>
+  [s.question, s.verdict, s.headline, ...s.tiles.flatMap((t) => [t.value, t.note]), ...s.sections.filter((x) => x.id !== "limits").flatMap((x) => x.items)].join("\n");
+
+/** The tiles are the counts the card prints below them. */
+function expectTilesMatchCounts(html: string, snap: ScanSnapshot, summary: BottomLine) {
+  const tested = snap.states.flatMap((s) => (s.status === "done" ? [s] : []));
+  const under = tested.filter((s) => (s.test.primary?.p ?? 1) < ALPHA).length;
+  const bh = snap.corrections.filter((c) => c?.survivesBh).length;
+  const holm = snap.corrections.filter((c) => c?.survivesHolm).length;
+  const page = textOf(html.replace(CARD, ""));
+  expect(page).toContain(chanceLine(under, tested.length));
+  expect(page).toContain(survivorsLine(holm, bh));
+  const [count, related, chance] = summary.tiles;
+  expect(count.value).toBe(String(tested.length));
+  expect(related.value).toBe(String(bh));
+  expect(chance.value).toBe(`About ${(ALPHA * tested.length).toLocaleString("en-US", { maximumFractionDigits: 1 })}`);
+  expect(chance.note).toContain(`${under} had`);
+}
 
 async function scanned(choice: 30 | 90, resolution: "hourly" | "daily", { stock = "TLT", tickers = [SCAN_MARKET.ticker, "KXFEDDECISION-26DEC"] } = {}) {
   stubScanRoutes();
@@ -131,6 +150,7 @@ function expectSummaryMatchesCard(html: string, snap: ScanSnapshot, summary: Bot
   const derived = new Set(summary.derived);
   expect(missing.filter((n) => !derived.has(n)), "numbers neither on the card nor declared").toEqual([]);
   expect(missing.filter((n) => !allowed.has(n)), "declared numbers that don't match their source").toEqual([]);
+  expectTilesMatchCounts(html, snap, summary);
 }
 
 describe("the scan's bottom-line summary is its results card's", () => {

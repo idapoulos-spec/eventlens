@@ -12,6 +12,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { passes } from "@/lib/analytics";
 import { EVIDENCE } from "@/lib/analytics/evidence";
 import type { PanelMessage } from "@/lib/analytics/panel-jobs";
 import { formatSigned } from "@/lib/format";
@@ -22,7 +23,7 @@ import { eventPage, marketPage, reportInputFor, type Loaded, type PageDeps } fro
 import { numbersIn, numbersNotOn, textOf } from "../report/test-helpers";
 import { GLOSSARY } from "./glossary";
 import { BottomLineCard } from "./BottomLineCard";
-import { RATING_METHOD_NUMBERS, bottomLine, type BottomLineInput, type BottomLine } from "./summary";
+import { LEVEL_LABEL, RATING_METHOD_NUMBERS, bottomLine, type BottomLineInput, type BottomLine } from "./summary";
 import { cardGlossary, cardParts, plainText, reportParts } from "./test-helpers";
 
 vi.setConfig({ testTimeout: 120_000 });
@@ -86,8 +87,29 @@ function summaryFor(page: Loaded, stock: string, kalshi: string, view: Parameter
   return { input, summary: bottomLine(input) };
 }
 
-/** The card's results text: everything but the fixed limits, the method notes, and the glossary. */
-const resultsText = (s: BottomLine) => [s.headline, ...s.sections.filter((x) => x.id !== "limits").flatMap((x) => x.items)].join("\n");
+/** The card's results text: everything but the labels, the fixed limits, the method notes, and the glossary. */
+const resultsText = (s: BottomLine) =>
+  [s.question, s.verdict, s.headline, ...s.tiles.flatMap((t) => [t.value, t.note]), ...s.sections.filter((x) => x.id !== "limits").flatMap((x) => x.items)].join("\n");
+
+/** The tiles say what the page's own results say: the rating, the regression's size and range, and the corrected lags. */
+function expectTilesMatchResults(input: BottomLineInput, summary: BottomLine) {
+  const [sure, big, first] = summary.tiles;
+  expect(sure.value).toBe(LEVEL_LABEL[summary.level]);
+  const fit = input.results.market?.kalshi;
+  if (fit) {
+    const scale = input.variable.kind === "probability" ? 10 : input.variable.unit === "bp" ? 25 : 1;
+    const ci = fit.test.ci;
+    expect(big.value).toBe(formatSigned(fit.coef * scale, 2, "%"));
+    for (const v of ci ?? []) expect(big.note).toContain(formatSigned(v * scale, 2, "%"));
+    expect(/could be zero/i.test(big.note)).toBe(!ci || (ci[0] <= 0 && ci[1] >= 0));
+  } else {
+    expect(big.value).toBe("Unknown");
+  }
+  const lags = input.results.view.lags.filter((l) => l.test.role === "exploratory" && l.test.p !== null);
+  const passing = lags.filter((l) => l.lag !== 0 && passes(l.test, "bh"));
+  const [kalshi, stock] = [passing.some((l) => l.lag > 0), passing.some((l) => l.lag < 0)];
+  expect(first.value).toBe(lags.length === 0 || (kalshi && stock) ? "Can’t tell" : kalshi ? "Kalshi first" : stock ? "Stock first" : "No");
+}
 
 /** The derived numbers this view's summary may hold, each worked out from its source; throws when one doesn't match the page. */
 function allowedDerived(input: BottomLineInput, rest: string): Set<string> {
@@ -152,6 +174,7 @@ function expectCardMatchesPage(html: string, input: AnalysisReportInput, summary
   expect(missing.filter((n) => !derived.has(n)), "numbers neither on the page nor declared").toEqual([]);
   const allowed = allowedDerived(input, rest);
   expect(missing.filter((n) => !allowed.has(n)), "declared numbers that don't match their source").toEqual([]);
+  expectTilesMatchResults(input, summary);
 }
 
 describe("the bottom-line card's numbers are its page's", () => {
@@ -276,6 +299,10 @@ describe("the bottom-line card's numbers are its page's", () => {
     // A size declared but not the page's coefficient rescaled is caught by its source check.
     const allowed = allowedDerived(input, rest);
     expect(allowed.has("+9.99%")).toBe(false);
+    // A tile's number that isn't the page's is caught too.
+    const tiles = summary.tiles.map((t) => (t.id === "big" ? { ...t, value: "+9.99%" } : t));
+    expect(numbersNotOn(resultsText({ ...summary, tiles }), rest)).toContain("+9.99%");
+    expect(() => expectCardMatchesPage(page.html, input, { ...summary, tiles })).toThrow();
     // And the card on the page is the builder's, so a changed headline wouldn't match it.
     expect(() => expectCardMatchesPage(page.html, input, { ...summary, headline: `${summary.headline} Extra 7.` })).toThrow();
   });

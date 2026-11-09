@@ -74,13 +74,17 @@ export function bottomLineInput(results: PanelResults, over: Partial<BottomLineI
   };
 }
 
-/** Everything the summary says, as one text: the headline and every section's items. */
-export const summaryText = (s: BottomLine) => [s.headline, ...s.sections.flatMap((x) => x.items)].join("\n");
+/** Everything the summary says, as one text: the question, the answer, the tiles, and every section's title and items. */
+export const summaryText = (s: BottomLine) =>
+  [s.question, s.verdict, s.headline, ...s.tiles.flatMap((t) => [t.label, t.value, t.note]), s.why, ...s.sections.flatMap((x) => [x.title, ...x.items])].join("\n");
 
 // ---- Language ----
 
 /** Trading words (and their forms), matched as whole words, any case. */
 export const BANNED = /\b(buy(s|ing)?|sell(s|ing)?|signal(s|ed|ing|led|ling)?|opportunit(y|ies)|recommend(s|ed|ing|ation|ations)?|profit(s|able|ably|ability)?)\b|\bshould\s+invest/gi;
+
+/** "Odds" isn't what a Kalshi price says: its prices are probabilities, so the wording says "chance". */
+export const ODDS = /\bodds\b/gi;
 
 /** Trading words in a text, after removing the one sentence allowed to name them (NOT_ADVICE). */
 export function bannedIn(text: string): string[] {

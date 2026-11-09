@@ -4,12 +4,13 @@ import { bottomLineSection, termsSection } from "../report/bottomLineReport";
 import { GLOSSARY } from "./glossary";
 import { analysisScenarios, scanScenarios } from "./scenarios";
 import { NOT_ADVICE, RATING_METHOD } from "./summary";
-import { bannedIn, gradeLevel, longest, sentences, summaryText } from "./test-helpers";
+import { bannedIn, gradeLevel, longest, ODDS, sentences, summaryText } from "./test-helpers";
 
 // The bottom-line summary never uses trading language, and stays short and simple: no sentence
 // over 25 words, and a Flesch–Kincaid grade of at most 9 (numbers, tickers, and quoted Kalshi labels
 // count as one plain word each). Every wording path is checked (scenarios.ts): each rating rule for a
 // market and an event at six settings, a scan in every state, the glossary, and how the rating works,
+// with their questions, verdicts, tiles, and section titles,
 // and the same in a report's "The bottom line" and "Terms used" sections.
 
 const MAX_WORDS = 25;
@@ -27,6 +28,14 @@ describe("the bottom-line summary's language", () => {
     for (const s of scenarios) expect(bannedIn(summaryText(s.summary)), s.name).toEqual([]);
     for (const e of GLOSSARY) expect(bannedIn(`${e.term} ${e.definition}`), e.id).toEqual([]);
     expect(bannedIn(RATING_METHOD.join(" "))).toEqual([]);
+  });
+
+  it("says “chance”, never “odds”: Kalshi’s prices are probabilities", () => {
+    for (const s of scenarios) expect(summaryText(s.summary).match(ODDS), s.name).toBeNull();
+    for (const e of GLOSSARY) expect(`${e.term} ${e.definition}`.match(ODDS), e.id).toBeNull();
+    expect(RATING_METHOD.join(" ").match(ODDS)).toBeNull();
+    for (const s of scenarios) expect(sectionText(bottomLineSection(s.summary, { method: !s.name.startsWith("scan ") })).match(ODDS), s.name).toBeNull();
+    expect("The Odds of it".match(ODDS)).toEqual(["Odds"]);
   });
 
   it("is the same in reports: their bottom-line and terms sections add only headings and the level", () => {

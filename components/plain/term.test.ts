@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { GLOSSARY, type GlossaryEntry } from "./glossary";
 import { analysisScenarios, scanScenarios } from "./scenarios";
+import { summaryText } from "./test-helpers";
 import { markTerms, popoverShift, TERM_CLOSED, termReducer, type TermAction, type TermState } from "./Term";
 
 const html = (node: ReactNode) => renderToStaticMarkup(createElement(Fragment, null, node));
@@ -111,7 +112,7 @@ describe("a card's marked terms", () => {
   });
 
   it("marks every term that has phrases somewhere in the cards' wording", () => {
-    const texts = [...analysisScenarios(), ...scanScenarios()].map(({ summary }) => [summary.headline, ...summary.sections.flatMap((x) => x.items)].join(" "));
+    const texts = [...analysisScenarios(), ...scanScenarios()].map(({ summary }) => summaryText(summary).replace(/\n/g, " "));
     const found = new Set(texts.flatMap((t) => marked(markTerms([t])[0])));
     for (const e of GLOSSARY.filter((x) => x.phrases.length > 0)) expect(e.phrases.some((p) => found.has(p)), e.id).toBe(true);
   });
