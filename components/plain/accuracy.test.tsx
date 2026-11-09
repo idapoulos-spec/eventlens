@@ -20,11 +20,12 @@ import { linkSymbol, stubWorld, worldEvent, worldMarket } from "@/lib/history/te
 import { formatLag } from "../charts/LeadLagChart";
 import { analysisReport, type AnalysisReportInput } from "../report/analysisReport";
 import { eventPage, marketPage, reportInputFor, type Loaded, type PageDeps } from "../report/test-build";
+import { sectionText } from "@/lib/report/model";
 import { numbersIn, numbersNotOn, textOf } from "../report/test-helpers";
 import { GLOSSARY } from "./glossary";
 import { BottomLineCard } from "./BottomLineCard";
-import { LEVEL_LABEL, RATING_METHOD_NUMBERS, bottomLine, type BottomLineInput, type BottomLine } from "./summary";
-import { cardGlossary, cardParts, plainText, reportParts } from "./test-helpers";
+import { LEVEL_LABEL, NOT_ADVICE, RATING_METHOD_NUMBERS, bottomLine, type BottomLineInput, type BottomLine } from "./summary";
+import { cardGlossary, cardParts, isEvidenceLine, reportParts } from "./test-helpers";
 
 vi.setConfig({ testTimeout: 120_000 });
 vi.mock("server-only", () => ({}));
@@ -150,12 +151,15 @@ function expectReportMatchesCard(html: string, input: AnalysisReportInput) {
   const report = analysisReport(input);
   const first = report.sections[0];
   expect(first.id).toBe("bottom-line");
+  expect(first.title).toBe("The bottom line");
+  // Part by part: the question, the answer, the tiles, the reasons, how the rating works, and the limits.
   const parts = reportParts(first);
-  const method = parts.indexOf("How the rating works");
-  expect(method).toBeGreaterThan(4);
-  expect(parts.slice(0, method)).toEqual(cardParts(card));
-  const notes = /<details[\s\S]*?<\/details>/.exec(card)![0];
-  expect(parts.slice(method + 1)).toEqual([...notes.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/g)].map((m) => plainText(m[1])));
+  const onCard = cardParts(card);
+  expect(parts.filter((p) => !isEvidenceLine(p))).toEqual(onCard.filter((p) => !isEvidenceLine(p)));
+  expect(parts.filter(isEvidenceLine)).toEqual(onCard.filter(isEvidenceLine));
+  expect(parts.indexOf("How the rating works")).toBeGreaterThan(4);
+  // The fixed sentence is there once in the whole report, word for word.
+  expect(report.sections.map(sectionText).join("\n").split(NOT_ADVICE).length - 1).toBe(1);
   const terms = report.sections.at(-1)!;
   expect(terms.id).toBe("terms");
   const rows = terms.blocks[0].kind === "facts" ? terms.blocks[0].rows : [];

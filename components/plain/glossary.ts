@@ -73,7 +73,7 @@ export const GLOSSARY: GlossaryEntry[] = [
     id: "basis-points",
     term: "Basis points (bp)",
     definition: "Hundredths of a percentage point. 25 basis points is 0.25 percentage points, the usual size of one Fed rate move.",
-    phrases: ["basis-point"],
+    phrases: ["basis-point", "bp"],
   },
   {
     id: "bootstrap",

@@ -9,6 +9,7 @@ import { panelCore, panelEvents, panelResults, type PanelInput, type PanelResult
 import { lastSessions, simulateMarketRows } from "@/lib/analytics/test-helpers";
 import { expectedVariable, probabilityVariable } from "@/lib/analytics/variable";
 import type { Section } from "@/lib/report/model";
+import { tileText } from "../report/bottomLineReport";
 import { textOf } from "../report/test-helpers";
 import type { BottomLineInput, BottomLine } from "./summary";
 import { NOT_ADVICE } from "./summary";
@@ -148,16 +149,35 @@ export function longest(text: string): { words: number; sentence: string } {
 /** Text without its markup: glossary markers and hidden labels read as the words they hold. */
 export const plainText = (html: string) => textOf(html.replace(/<[^>]+>/g, ""));
 
-/** The card's parts in reading order (headings, paragraphs, list items), less its header and its folded notes. */
-export function cardParts(card: string): string[] {
-  const body = card.replace(/<header[\s\S]*?<\/header>/, "").replace(/<details[\s\S]*?<\/details>/g, "");
-  return [...body.matchAll(/<(h3|p|li)\b[^>]*>([\s\S]*?)<\/\1>/g)].map((m) => plainText(m[2]));
+/** A tile read back from the card as a report writes it: "How sure?: Weak. Fragile result." */
+function tileLine(_: string, label: string, value: string, note: string): string {
+  const name = plainText(label);
+  return `<p>${name}: ${tileText({ id: name === "Tested" ? "tested" : "sure", value: plainText(value), note: plainText(note) })}</p>`;
 }
 
-/** A report section's parts in order: its headings, paragraphs, and list items. */
-export function reportParts(section: Section): string[] {
-  return section.blocks.flatMap((b) => (b.kind === "list" ? b.items : b.kind === "paragraph" || b.kind === "heading" ? [b.text] : [])).map(plainText);
+/**
+ * The card's parts in reading order, with the folded reasons, as a report lists them: its paragraphs,
+ * tiles, list items, and headings, and a fold's title as a heading. Less the card's own title and its
+ * folded glossary, which a report keeps in its last section.
+ */
+export function cardParts(card: string): string[] {
+  const body = card
+    .replace(/<details\b[^>]*><summary\b[^>]*>What the terms mean[\s\S]*?<\/details>/, "")
+    .replace(/<div class="[^"]*"><dt\b[^>]*>([\s\S]*?)<\/dt><dd\b[^>]*>([\s\S]*?)<\/dd><dd\b[^>]*>([\s\S]*?)<\/dd><\/div>/g, tileLine);
+  return [...body.matchAll(/<(h2|h3|h4|p|li|summary)\b[^>]*>([\s\S]*?)<\/\1>/g)]
+    .map((m) => plainText(m[2]))
+    .filter((part) => part !== "" && part !== "The bottom line");
 }
+
+/** A report section's parts in order: its headings, paragraphs, list items, and facts. */
+export function reportParts(section: Section): string[] {
+  return section.blocks
+    .flatMap((b) => (b.kind === "list" ? b.items : b.kind === "paragraph" || b.kind === "heading" ? [b.text] : b.kind === "facts" ? b.rows.map(([k, v]) => `${k}: ${v}`) : []))
+    .map(plainText);
+}
+
+/** A rating's line: the card's badge, or a report's "Evidence:" line. They sit in different places, so they're compared apart. */
+export const isEvidenceLine = (part: string) => part.startsWith("Evidence: ");
 
 /** The glossary as the card's "What the terms mean" lists it: "Term: definition". */
 export const cardGlossary = (card: string) => [...card.matchAll(/<div><dt\b[\s\S]*?<\/dd><\/div>/g)].map(([d]) => plainText(d));

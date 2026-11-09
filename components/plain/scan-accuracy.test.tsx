@@ -20,9 +20,10 @@ import type { ScanResults as ScanResultsComponent } from "../scan/ScanPage";
 import { scanReport } from "../report/scanReport";
 import { chanceLine, survivorsLine } from "../scan/text";
 import { numbersNotOn, textOf } from "../report/test-helpers";
-import { cardGlossary, cardParts, reportParts } from "./test-helpers";
+import { sectionText } from "@/lib/report/model";
+import { cardGlossary, cardParts, isEvidenceLine, reportParts } from "./test-helpers";
 import { ScanBottomLine } from "./BottomLineCard";
-import { scanBottomLine, type BottomLine } from "./summary";
+import { NOT_ADVICE, scanBottomLine, type BottomLine } from "./summary";
 
 vi.setConfig({ testTimeout: 120_000 });
 vi.mock("server-only", () => ({}));
@@ -134,9 +135,14 @@ async function scanned(choice: 30 | 90, resolution: "hourly" | "daily", { stock 
 function expectSummaryMatchesCard(html: string, snap: ScanSnapshot, summary: BottomLine, report: ReturnType<typeof scanReport>) {
   const card = CARD.exec(html)?.[0];
   if (!card) throw new Error("expected the bottom-line summary");
-  // The report opens with the card's parts (the card's own title first) and ends with its glossary.
+  // The report opens with the card's parts, under the card's title, and ends with its glossary.
   expect(report.sections[0].id).toBe("bottom-line");
-  expect(["The bottom line", ...reportParts(report.sections[0])]).toEqual(cardParts(card));
+  expect(report.sections[0].title).toBe("The bottom line");
+  const parts = reportParts(report.sections[0]);
+  const onCard = cardParts(card);
+  expect(parts.filter((p) => !isEvidenceLine(p))).toEqual(onCard.filter((p) => !isEvidenceLine(p)));
+  expect(parts.filter(isEvidenceLine)).toEqual(onCard.filter(isEvidenceLine));
+  expect(report.sections.map(sectionText).join("\n").split(NOT_ADVICE).length - 1).toBe(1);
   const terms = report.sections.at(-1)!;
   expect(terms.id).toBe("terms");
   expect(terms.blocks[0].kind === "facts" && terms.blocks[0].rows.map(([k, v]) => `${k}: ${v}`)).toEqual(cardGlossary(card));
