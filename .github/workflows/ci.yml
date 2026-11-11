@@ -3,6 +3,12 @@ name: CI
 on:
   push:
   pull_request:
+  # Nightly, so the simulations run on main every day whatever was pushed (the check job runs too).
+  # At :37, away from the top of the hour, when GitHub delays or drops the most scheduled runs.
+  schedule:
+    - cron: "37 7 * * *"
+  # Runs everything, the simulations included, on any branch: gh workflow run CI --ref <branch>.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -47,12 +53,61 @@ jobs:
       # The build doesn't need TWELVE_DATA_API_KEY: it is only read at request time.
       - run: pnpm build
 
+  # Whether the simulations below need to run. Always on pushes to main, nightly, and on manual
+  # dispatch. Otherwise only when the branch, since it left main (or a pull request, since it left
+  # its base), changes one of their inputs, listed in .github/simulation-inputs.txt: comparing the
+  # whole branch rather than the latest push, a docs-only push can't cancel and skip the run a
+  # statistics change needs. If it can't tell, they run. The reason is a notice on the run's page.
+  simulations-needed:
+    name: Simulations needed?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      # The whole history, to find where the branch left main.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          BASE: origin/${{ github.base_ref || 'main' }}
+        run: |
+          case "$EVENT:$REF" in
+            schedule:* | workflow_dispatch:* | push:refs/heads/main)
+              run=true
+              note="Running: they always run on pushes to main, nightly, and on manual dispatch."
+              ;;
+            *)
+              if why=$(bash scripts/simulations-needed.sh "$BASE"); then
+                run=true
+                note="Running. $why"
+              elif [ $? -eq 1 ]; then
+                run=false
+                note="Skipped. $why They still run on every push to main, nightly, and on manual dispatch; to run them on this branch now: gh workflow run CI --ref $BRANCH"
+              else
+                run=true
+                note="Running, as it couldn't tell whether this branch changes their inputs. $why"
+              fi
+              ;;
+          esac
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Simulations::$note"
+          echo "$note" >> "$GITHUB_STEP_SUMMARY"
+
   # The slow simulations (pnpm test:sim, files named *.sim.test.ts): calibration at Research's longer
   # windows, how often the fragile warning fires, and the scan's validation. Two files at a time
-  # (vitest.sim.config.mts) for about half an hour, so they run alongside the job above rather than
-  # in it, with their own limit and room to spare.
+  # (vitest.sim.config.mts) for about half an hour, so they run alongside the check job rather than
+  # in it, with their own limit and room to spare. Shown as skipped when simulations-needed says
+  # they aren't needed.
   simulations:
     name: Simulations
+    needs: simulations-needed
+    if: needs.simulations-needed.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
