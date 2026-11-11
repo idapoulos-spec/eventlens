@@ -1,0 +1,28 @@
+# What the slow simulations (pnpm test:sim, files named *.sim.test.ts) depend on: one git pathspec per
+# line, a directory ending in "/". On a branch, CI's Simulations job runs only when the branch changes
+# one of these compared with where it left main (scripts/simulations-needed.sh); it always runs on
+# pushes to main, nightly, and on manual dispatch.
+#
+# lib/analytics/simulation-inputs.test.ts follows the imports of every simulation file and of
+# vitest.sim.config.mts, and fails if one of them isn't covered here or a listed path doesn't exist.
+
+# The simulations and the code they import.
+lib/analytics/
+lib/format.ts
+lib/market-data/session.ts
+lib/market-data/types.ts
+
+# How Vitest runs them.
+vitest.sim.config.mts
+vitest.shared.ts
+tsconfig.json
+
+# Dependencies, Node.js and pnpm versions, and scripts. package.json counts unless the only change
+# is its "version", so a release's version bump doesn't run the simulations.
+package.json
+pnpm-lock.yaml
+
+# The job, this list, and the decision.
+.github/workflows/ci.yml
+.github/simulation-inputs.txt
+scripts/simulations-needed.sh

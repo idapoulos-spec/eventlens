@@ -47,16 +47,17 @@ pnpm dev -p 3001
 
 Next.js runs only one `next dev` per directory (a second one exits with "Another next dev server is already running"), so each dev server needs its own worktree. A new worktree has no `node_modules` or `.env.local` (both are gitignored): run `pnpm install` and copy `.env.local` from the main checkout.
 
-Before pushing, run `pnpm lint`, `pnpm test`, and `pnpm build`. CI (`.github/workflows/ci.yml`) runs the same three on every push and pull request, and the slow simulations (`pnpm test:sim`, files named `*.sim.test.ts`) in a separate job; run those too when you change the statistics.
+Before pushing, run `pnpm lint`, `pnpm test`, and `pnpm build`. CI (`.github/workflows/ci.yml`) runs the same three on every push and pull request. The slow simulations (`pnpm test:sim`, files named `*.sim.test.ts`, about half an hour) run in a separate job: always on pushes to `main`, nightly, and on manual dispatch, and on other branches only when the branch changes one of their inputs, listed in `.github/simulation-inputs.txt` (`package.json` counts unless only its `"version"` changed). Otherwise the job shows as skipped, with the reason in a notice on the run's page. Run them locally too when you change the statistics. If the statistics start importing a file the list doesn't cover, `lib/analytics/simulation-inputs.test.ts` fails: add the file to the list.
 
 ## Merging and tagging
 
 Run each step as its own command, and check it before the next. Never chain a tag onto the merge command (with `&&` or `;`, or in the same script):
 
 1. On the branch, set `package.json`'s `"version"` to the release's `X.Y.Z` if it isn't already (reports name the version and commit of the build), commit, and push.
-2. Merge (`git merge --no-ff <branch>`, with the message from a file via `-F <file>`: `-F -` doesn't read stdin, so the merge fails).
-3. Verify the merge succeeded: `git log -1` on `main` shows the new merge commit, and `git rev-parse HEAD` is that commit.
-4. Push `main`.
-5. Only then create the tag `vX.Y.Z`, matching `package.json`'s version, on that commit (`git tag -a vX.Y.Z -F <file> <merge commit>`) and push it.
+2. If the branch changes any of the simulations' inputs (`bash scripts/simulations-needed.sh origin/main <branch>` exits 0 and names them), the Simulations job must have **passed** on the commit you will merge, the branch's tip after step 1's push. Find that commit's CI run (`gh run list --branch <branch> --workflow CI`; its `headSha` must equal `git rev-parse <branch>`) and check `gh run view <id>`. Failed, cancelled, or still running blocks the merge. Skipped is fine only when the branch changes none of the inputs, as the run's "Simulations needed?" notice says. To run them on a branch without pushing, use `gh workflow run CI --ref <branch>`.
+3. Merge (`git merge --no-ff <branch>`, with the message from a file via `-F <file>`: `-F -` doesn't read stdin, so the merge fails).
+4. Verify the merge succeeded: `git log -1` on `main` shows the new merge commit, and `git rev-parse HEAD` is that commit.
+5. Push `main`.
+6. Only then create the tag `vX.Y.Z`, matching `package.json`'s version, on that commit (`git tag -a vX.Y.Z -F <file> <merge commit>`) and push it.
 
 On 2026-10-21 a failed merge (`-F -`) was followed by a chained `git tag` and `git push`, which tagged and published the previous `main` commit; the tag had to be deleted and re-created.
