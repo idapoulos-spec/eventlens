@@ -80,7 +80,7 @@ export function reportFor(page: Loaded, stock: string, kalshi: string, view: Loa
   return analysisReport(reportInputFor(page, stock, kalshi, view, options));
 }
 
-/** What the panel holds for that view, as a report (and the plain-English summary) reads it. */
+/** What the panel holds for that view, as a report (and the bottom-line summary) reads it. */
 export function reportInputFor(
   page: Loaded,
   stock: string,

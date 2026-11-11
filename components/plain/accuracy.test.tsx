@@ -1,4 +1,4 @@
-// The plain-English card's numbers are its page's. The page is rendered as the server renders it,
+// The bottom-line card's numbers are its page's. The page is rendered as the server renders it,
 // from the fake world through the real loaders and components, with its background parts (the
 // detectable size and the leave-one-out check) run at once. The card on that page must say exactly
 // what the summary builder says for the same rows and settings, and every number in it must be
@@ -12,6 +12,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { passes } from "@/lib/analytics";
 import { EVIDENCE } from "@/lib/analytics/evidence";
 import type { PanelMessage } from "@/lib/analytics/panel-jobs";
 import { formatSigned } from "@/lib/format";
@@ -19,11 +20,12 @@ import { linkSymbol, stubWorld, worldEvent, worldMarket } from "@/lib/history/te
 import { formatLag } from "../charts/LeadLagChart";
 import { analysisReport, type AnalysisReportInput } from "../report/analysisReport";
 import { eventPage, marketPage, reportInputFor, type Loaded, type PageDeps } from "../report/test-build";
+import { sectionText } from "@/lib/report/model";
 import { numbersIn, numbersNotOn, textOf } from "../report/test-helpers";
 import { GLOSSARY } from "./glossary";
-import { PlainEnglishCard } from "./PlainEnglishCard";
-import { RATING_METHOD_NUMBERS, plainSummary, type PlainInput, type PlainSummary } from "./summary";
-import { cardGlossary, cardParts, plainText, reportParts } from "./test-helpers";
+import { BottomLineCard } from "./BottomLineCard";
+import { LEVEL_LABEL, NOT_ADVICE, RATING_METHOD_NUMBERS, bottomLine, type BottomLineInput, type BottomLine } from "./summary";
+import { cardGlossary, cardParts, isEvidenceLine, reportParts } from "./test-helpers";
 
 vi.setConfig({ testTimeout: 120_000 });
 vi.mock("server-only", () => ({}));
@@ -76,21 +78,42 @@ const CARD = /<section data-plain-english[\s\S]*?<\/section>/;
 /** The card's markup on the page, and the page without it. */
 function split(html: string): { card: string; rest: string } {
   const card = CARD.exec(html)?.[0];
-  if (!card) throw new Error("expected the plain-English card");
+  if (!card) throw new Error("expected the bottom-line card");
   return { card, rest: html.replace(CARD, "") };
 }
 
 /** The summary of the view's results, built from what the panel holds. */
-function summaryFor(page: Loaded, stock: string, kalshi: string, view: Parameters<typeof reportInputFor>[3]): { input: AnalysisReportInput; summary: PlainSummary } {
+function summaryFor(page: Loaded, stock: string, kalshi: string, view: Parameters<typeof reportInputFor>[3]): { input: AnalysisReportInput; summary: BottomLine } {
   const input = reportInputFor(page, stock, kalshi, view);
-  return { input, summary: plainSummary(input) };
+  return { input, summary: bottomLine(input) };
 }
 
-/** The card's results text: everything but the fixed limits, the method notes, and the glossary. */
-const resultsText = (s: PlainSummary) => [s.headline, ...s.sections.filter((x) => x.id !== "limits").flatMap((x) => x.items)].join("\n");
+/** The card's results text: everything but the labels, the fixed limits, the method notes, and the glossary. */
+const resultsText = (s: BottomLine) =>
+  [s.question, s.verdict, s.headline, ...s.tiles.flatMap((t) => [t.value, t.note]), ...s.sections.filter((x) => x.id !== "limits").flatMap((x) => x.items)].join("\n");
+
+/** The tiles say what the page's own results say: the rating, the regression's size and range, and the corrected lags. */
+function expectTilesMatchResults(input: BottomLineInput, summary: BottomLine) {
+  const [sure, big, first] = summary.tiles;
+  expect(sure.value).toBe(LEVEL_LABEL[summary.level]);
+  const fit = input.results.market?.kalshi;
+  if (fit) {
+    const scale = input.variable.kind === "probability" ? 10 : input.variable.unit === "bp" ? 25 : 1;
+    const ci = fit.test.ci;
+    expect(big.value).toBe(formatSigned(fit.coef * scale, 2, "%"));
+    for (const v of ci ?? []) expect(big.note).toContain(formatSigned(v * scale, 2, "%"));
+    expect(/could be zero/i.test(big.note)).toBe(!ci || (ci[0] <= 0 && ci[1] >= 0));
+  } else {
+    expect(big.value).toBe("Unknown");
+  }
+  const lags = input.results.view.lags.filter((l) => l.test.role === "exploratory" && l.test.p !== null);
+  const passing = lags.filter((l) => l.lag !== 0 && passes(l.test, "bh"));
+  const [kalshi, stock] = [passing.some((l) => l.lag > 0), passing.some((l) => l.lag < 0)];
+  expect(first.value).toBe(lags.length === 0 || (kalshi && stock) ? "Can’t tell" : kalshi ? "Kalshi first" : stock ? "Stock first" : "No");
+}
 
 /** The derived numbers this view's summary may hold, each worked out from its source; throws when one doesn't match the page. */
-function allowedDerived(input: PlainInput, rest: string): Set<string> {
+function allowedDerived(input: BottomLineInput, rest: string): Set<string> {
   const page = textOf(rest);
   const allowed = new Set<string>([String(EVIDENCE.strongP), EVIDENCE.maxDetectable.toFixed(2), ...RATING_METHOD_NUMBERS]);
   // A size for 10 pp (from 40% to 50%) or 25 bp: the page's per-unit coefficient, rescaled.
@@ -127,13 +150,16 @@ function expectReportMatchesCard(html: string, input: AnalysisReportInput) {
   const { card } = split(html);
   const report = analysisReport(input);
   const first = report.sections[0];
-  expect(first.id).toBe("plain-english");
+  expect(first.id).toBe("bottom-line");
+  expect(first.title).toBe("The bottom line");
+  // Part by part: the question, the answer, the tiles, the reasons, how the rating works, and the limits.
   const parts = reportParts(first);
-  const method = parts.indexOf("How the rating works");
-  expect(method).toBeGreaterThan(4);
-  expect(parts.slice(0, method)).toEqual(cardParts(card));
-  const notes = /<details[\s\S]*?<\/details>/.exec(card)![0];
-  expect(parts.slice(method + 1)).toEqual([...notes.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/g)].map((m) => plainText(m[1])));
+  const onCard = cardParts(card);
+  expect(parts.filter((p) => !isEvidenceLine(p))).toEqual(onCard.filter((p) => !isEvidenceLine(p)));
+  expect(parts.filter(isEvidenceLine)).toEqual(onCard.filter(isEvidenceLine));
+  expect(parts.indexOf("How the rating works")).toBeGreaterThan(4);
+  // The fixed sentence is there once in the whole report, word for word.
+  expect(report.sections.map(sectionText).join("\n").split(NOT_ADVICE).length - 1).toBe(1);
   const terms = report.sections.at(-1)!;
   expect(terms.id).toBe("terms");
   const rows = terms.blocks[0].kind === "facts" ? terms.blocks[0].rows : [];
@@ -142,19 +168,20 @@ function expectReportMatchesCard(html: string, input: AnalysisReportInput) {
 }
 
 /** The card says what the builder says, and every number in it is the page's or a checked derived one. */
-function expectCardMatchesPage(html: string, input: AnalysisReportInput, summary: PlainSummary) {
+function expectCardMatchesPage(html: string, input: AnalysisReportInput, summary: BottomLine) {
   expectMarkersInText(html);
   expectReportMatchesCard(html, input);
   const { card, rest } = split(html);
-  expect(textOf(card)).toBe(textOf(renderToStaticMarkup(<PlainEnglishCard summary={summary} />)));
+  expect(textOf(card)).toBe(textOf(renderToStaticMarkup(<BottomLineCard summary={summary} />)));
   const missing = numbersNotOn(resultsText(summary), rest);
   const derived = new Set(summary.derived.map((n) => n.replace(/−/g, "-")));
   expect(missing.filter((n) => !derived.has(n)), "numbers neither on the page nor declared").toEqual([]);
   const allowed = allowedDerived(input, rest);
   expect(missing.filter((n) => !allowed.has(n)), "declared numbers that don't match their source").toEqual([]);
+  expectTilesMatchResults(input, summary);
 }
 
-describe("the plain-English card's numbers are its page's", () => {
+describe("the bottom-line card's numbers are its page's", () => {
   it("for a single market, at 90 days hourly, market-adjusted (the default)", async () => {
     stubWorld([LIVE_MARKET]);
     const page = await marketPage(deps, "NVDA", LIVE_MARKET.ticker, { window: null, resolution: null });
@@ -276,6 +303,10 @@ describe("the plain-English card's numbers are its page's", () => {
     // A size declared but not the page's coefficient rescaled is caught by its source check.
     const allowed = allowedDerived(input, rest);
     expect(allowed.has("+9.99%")).toBe(false);
+    // A tile's number that isn't the page's is caught too.
+    const tiles = summary.tiles.map((t) => (t.id === "big" ? { ...t, value: "+9.99%" } : t));
+    expect(numbersNotOn(resultsText({ ...summary, tiles }), rest)).toContain("+9.99%");
+    expect(() => expectCardMatchesPage(page.html, input, { ...summary, tiles })).toThrow();
     // And the card on the page is the builder's, so a changed headline wouldn't match it.
     expect(() => expectCardMatchesPage(page.html, input, { ...summary, headline: `${summary.headline} Extra 7.` })).toThrow();
   });

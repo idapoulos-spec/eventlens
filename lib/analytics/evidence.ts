@@ -4,7 +4,7 @@ import { ALPHA, type TestResult } from "./inference";
 import type { Resolution } from "./research";
 
 /**
- * How strong the evidence is, for the plain-English summary: one rating from results the page
+ * How strong the evidence is, for the bottom-line summary: one rating from results the page
  * already computes (the primary test, the fragility diagnostics and leave-one-out check, and the
  * detectable size). The rules were fixed on 2026-10-27 and written into the README ("In plain
  * English") before any simulation of them ran; they're not tuned to any result. The first rule

@@ -21,8 +21,8 @@ import { formatSmallP, scanFileBase, scanReport } from "../report/scanReport";
 import { useReportControl } from "../report/useReportControl";
 import type { Report } from "@/lib/report/model";
 import { APP_COMMIT, APP_VERSION } from "@/lib/report/version";
-import { ScanPlainSummary } from "../plain/PlainEnglishCard";
-import { scanPlainSummary } from "../plain/summary";
+import { ScanBottomLine } from "../plain/BottomLineCard";
+import { scanBottomLine } from "../plain/summary";
 import { Caption, Flag, fmtR, Segmented } from "../research/parts";
 import { formatCi } from "../research/stats";
 import { KalshiSearch } from "../search/KalshiSearch";
@@ -342,8 +342,8 @@ export function ScanResults({
   const median = medianAbs(tested.flatMap(({ s }) => (s.test.primary?.estimate == null ? [] : [s.test.primary.estimate])));
   const note = correlationNote(tested.map(({ i }) => candidates[i]));
   const final = pending === 0;
-  // The plain-English summary: the counts and the strongest lead in everyday words, "so far" while it runs.
-  const plain = useMemo(() => scanPlainSummary({ stock, choice, resolution, candidates, snap }), [stock, choice, resolution, candidates, snap]);
+  // The bottom-line summary: the counts and the strongest lead in everyday words, "so far" while it runs.
+  const lineSummary = useMemo(() => scanBottomLine({ stock, choice, resolution, candidates, snap }), [stock, choice, resolution, candidates, snap]);
 
   if (snap.phase === "failed") return <Notice title="The scan stopped" message={snap.error ?? "Something went wrong."} />;
 
@@ -356,7 +356,7 @@ export function ScanResults({
           : `Market-adjusted against ${DEFAULT_BENCHMARK.symbol}; frozen as of ${formatDateTime(asOf, { withYear: true })}: each window ends there, or at its close if that came first`
       }
     >
-      <ScanPlainSummary summary={plain} />
+      <ScanBottomLine summary={lineSummary} />
 
       <div role="status" aria-live="polite" className="mb-4 text-sm text-ink-secondary">
         {snap.phase === "prices"

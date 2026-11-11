@@ -1,4 +1,4 @@
-// The scan's plain-English summary says what its results card shows. A finished scan against the
+// The scan's bottom-line summary says what its results card shows. A finished scan against the
 // fake world (its routes answered by their loaders, as in scan-report.test.tsx), its card rendered
 // as the page renders it: the summary there must be the builder's for the same snapshot, and every
 // number in it must be printed elsewhere on the card, unless the builder declares it (the count of
@@ -7,6 +7,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ALPHA } from "@/lib/analytics";
 import { EVIDENCE } from "@/lib/analytics/evidence";
 import { linkSymbol, stubWorld, worldEvent, worldMarket } from "@/lib/history/test-world";
 import { parseSpan } from "@/lib/scan/api";
@@ -17,10 +18,12 @@ import type { tickerCandidates as TickerCandidates } from "@/lib/scan/candidates
 import type { ScanRun as ScanRunClass, ScanSnapshot } from "../scan/scanRunner";
 import type { ScanResults as ScanResultsComponent } from "../scan/ScanPage";
 import { scanReport } from "../report/scanReport";
+import { chanceLine, survivorsLine } from "../scan/text";
 import { numbersNotOn, textOf } from "../report/test-helpers";
-import { cardGlossary, cardParts, reportParts } from "./test-helpers";
-import { ScanPlainSummary } from "./PlainEnglishCard";
-import { scanPlainSummary, type PlainSummary } from "./summary";
+import { sectionText } from "@/lib/report/model";
+import { cardGlossary, cardParts, isEvidenceLine, reportParts } from "./test-helpers";
+import { ScanBottomLine } from "./BottomLineCard";
+import { NOT_ADVICE, scanBottomLine, type BottomLine } from "./summary";
 
 vi.setConfig({ testTimeout: 120_000 });
 vi.mock("server-only", () => ({}));
@@ -95,8 +98,25 @@ function finished(run: ScanRunClass): Promise<ScanSnapshot> {
 
 const CARD = /<section data-plain-english[\s\S]*?<\/section>/;
 
-/** The summary's results text: the headline and the lead, less the fixed limits. */
-const resultsText = (s: PlainSummary) => [s.headline, ...s.sections.filter((x) => x.id !== "limits").flatMap((x) => x.items)].join("\n");
+/** The summary's results text: the question, the answer, the tiles, and the lead, less the labels and the fixed limits. */
+const resultsText = (s: BottomLine) =>
+  [s.question, s.verdict, s.headline, ...s.tiles.flatMap((t) => [t.value, t.note]), ...s.sections.filter((x) => x.id !== "limits").flatMap((x) => x.items)].join("\n");
+
+/** The tiles are the counts the card prints below them. */
+function expectTilesMatchCounts(html: string, snap: ScanSnapshot, summary: BottomLine) {
+  const tested = snap.states.flatMap((s) => (s.status === "done" ? [s] : []));
+  const under = tested.filter((s) => (s.test.primary?.p ?? 1) < ALPHA).length;
+  const bh = snap.corrections.filter((c) => c?.survivesBh).length;
+  const holm = snap.corrections.filter((c) => c?.survivesHolm).length;
+  const page = textOf(html.replace(CARD, ""));
+  expect(page).toContain(chanceLine(under, tested.length));
+  expect(page).toContain(survivorsLine(holm, bh));
+  const [count, related, chance] = summary.tiles;
+  expect(count.value).toBe(String(tested.length));
+  expect(related.value).toBe(String(bh));
+  expect(chance.value).toBe(`About ${(ALPHA * tested.length).toLocaleString("en-US", { maximumFractionDigits: 1 })}`);
+  expect(chance.note).toContain(`${under} had`);
+}
 
 async function scanned(choice: 30 | 90, resolution: "hourly" | "daily", { stock = "TLT", tickers = [SCAN_MARKET.ticker, "KXFEDDECISION-26DEC"] } = {}) {
   stubScanRoutes();
@@ -109,21 +129,26 @@ async function scanned(choice: 30 | 90, resolution: "hourly" | "daily", { stock 
   const html = renderToStaticMarkup(<ScanResults run={run} {...settings} />);
   run.dispose();
   const report = scanReport({ ...settings, snap, asOf: null, selection: "a custom list", link: null, preparedBy: null, generatedAt: NOW, version: "test", commit: "test" });
-  return { html, snap, summary: scanPlainSummary({ ...settings, snap }), report };
+  return { html, snap, summary: scanBottomLine({ ...settings, snap }), report };
 }
 
-function expectSummaryMatchesCard(html: string, snap: ScanSnapshot, summary: PlainSummary, report: ReturnType<typeof scanReport>) {
+function expectSummaryMatchesCard(html: string, snap: ScanSnapshot, summary: BottomLine, report: ReturnType<typeof scanReport>) {
   const card = CARD.exec(html)?.[0];
-  if (!card) throw new Error("expected the plain-English summary");
-  // The report opens with the card's parts (the card's own title first) and ends with its glossary.
-  expect(report.sections[0].id).toBe("plain-english");
-  expect(["In plain English", ...reportParts(report.sections[0])]).toEqual(cardParts(card));
+  if (!card) throw new Error("expected the bottom-line summary");
+  // The report opens with the card's parts, under the card's title, and ends with its glossary.
+  expect(report.sections[0].id).toBe("bottom-line");
+  expect(report.sections[0].title).toBe("The bottom line");
+  const parts = reportParts(report.sections[0]);
+  const onCard = cardParts(card);
+  expect(parts.filter((p) => !isEvidenceLine(p))).toEqual(onCard.filter((p) => !isEvidenceLine(p)));
+  expect(parts.filter(isEvidenceLine)).toEqual(onCard.filter(isEvidenceLine));
+  expect(report.sections.map(sectionText).join("\n").split(NOT_ADVICE).length - 1).toBe(1);
   const terms = report.sections.at(-1)!;
   expect(terms.id).toBe("terms");
   expect(terms.blocks[0].kind === "facts" && terms.blocks[0].rows.map(([k, v]) => `${k}: ${v}`)).toEqual(cardGlossary(card));
   // It's the results card's first part, and it's the builder's.
   expect(html.indexOf(card)).toBeLessThan(html.indexOf("Exploratory leads, not findings."));
-  expect(textOf(card)).toBe(textOf(renderToStaticMarkup(<ScanPlainSummary summary={summary} />)));
+  expect(textOf(card)).toBe(textOf(renderToStaticMarkup(<ScanBottomLine summary={summary} />)));
   // Every number in it is on the card outside it, or declared and checked.
   const tested = snap.states.filter((s) => s.status === "done").length;
   const allowed = new Set([String(EVIDENCE.strongP), String(tested - 1)]);
@@ -131,9 +156,10 @@ function expectSummaryMatchesCard(html: string, snap: ScanSnapshot, summary: Pla
   const derived = new Set(summary.derived);
   expect(missing.filter((n) => !derived.has(n)), "numbers neither on the card nor declared").toEqual([]);
   expect(missing.filter((n) => !allowed.has(n)), "declared numbers that don't match their source").toEqual([]);
+  expectTilesMatchCounts(html, snap, summary);
 }
 
-describe("the scan's plain-English summary is its results card's", () => {
+describe("the scan's bottom-line summary is its results card's", () => {
   it("for a market and an event at 90 days hourly", async () => {
     const { html, snap, summary, report } = await scanned(90, "hourly");
     expect(["pending", "none"]).not.toContain(summary.level);

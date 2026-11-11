@@ -52,9 +52,9 @@ import { formatLag, LeadLagChart, type LagUnit } from "../charts/LeadLagChart";
 import { RollingCorrelationChart } from "../charts/RollingCorrelationChart";
 import { Card, Notice } from "../ui";
 import { MarketAdjustmentCard, modelSample, type ModelSample } from "./MarketAdjustmentCard";
-import { PlainEnglishCard } from "../plain/PlainEnglishCard";
+import { BottomLineCard } from "../plain/BottomLineCard";
 import { Term } from "../plain/Term";
-import { plainSummary } from "../plain/summary";
+import { bottomLine } from "../plain/summary";
 import { partId, useDelayed, usePanelJobs } from "./panelJobs";
 import { Caption, Flag, fmtR, lowerFirst, plural, Segmented, Table, ValuesTable } from "./parts";
 import {
@@ -377,16 +377,16 @@ export function ResearchPanel({
     },
   });
 
-  // The plain-English card: the same results in everyday words, rated once the parts it needs are in.
+  // The bottom-line card: the same results in everyday words, rated once the parts it needs are in.
   const hasPrimaryP = primary?.p != null;
   const detectableValue = hasPrimaryP ? detectablePart?.value : null;
   const looValue = hasPrimaryP ? looPart?.value : null;
   const longDaily = resolution === "daily" && plan.kind === "long";
-  const plain = useMemo(
+  const lineSummary = useMemo(
     () =>
       results &&
-      timed("plain", () =>
-        plainSummary({
+      timed("bottom-line", () =>
+        bottomLine({
           stock: stockSymbol,
           variable,
           choice,
@@ -425,7 +425,7 @@ export function ResearchPanel({
       {/* One child with the Research card, not a new one beside it: React's ids (the benchmark field's
           useId) follow a component's place among its siblings, and the cards below must not change. */}
       <>
-        {plain && <PlainEnglishCard summary={plain} />}
+        {lineSummary && <BottomLineCard summary={lineSummary} />}
         <Card
           title="Research"
           subtitle={`${variable.kind === "probability" ? "Kalshi probability changes" : variable.text.changes} vs. ${stockSymbol} returns, compared only where both have a real observation${

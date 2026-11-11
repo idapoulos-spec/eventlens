@@ -1,4 +1,4 @@
-// Fixtures and checks for the plain-English summary's tests: real panel results from simulated rows,
+// Fixtures and checks for the bottom-line summary's tests: real panel results from simulated rows,
 // with the parts each rating rule reads swapped for hand-made ones, the language checks (trading
 // words, sentence length, reading level), and reading a rendered card back part by part.
 
@@ -9,8 +9,9 @@ import { panelCore, panelEvents, panelResults, type PanelInput, type PanelResult
 import { lastSessions, simulateMarketRows } from "@/lib/analytics/test-helpers";
 import { expectedVariable, probabilityVariable } from "@/lib/analytics/variable";
 import type { Section } from "@/lib/report/model";
+import { tileText } from "../report/bottomLineReport";
 import { textOf } from "../report/test-helpers";
-import type { PlainInput, PlainSummary } from "./summary";
+import type { BottomLineInput, BottomLine } from "./summary";
 import { NOT_ADVICE } from "./summary";
 
 export const MARKET = probabilityVariable("Fed maintains rate");
@@ -53,7 +54,7 @@ export const fragilityWith = (f: Fragility, effective: number): Fragility => ({ 
 export const looWith = (loo: LeaveOneOut, flips: number): LeaveOneOut => ({ ...loo, flips });
 export const detectableAt = (r: number | null): DetectableCorrelation => ({ r, max: 0.8, slope: null, power: 0.8, samples: 999, unit: "session", units: 62 });
 
-export function plainInput(results: PanelResults, over: Partial<PlainInput> = {}): PlainInput {
+export function bottomLineInput(results: PanelResults, over: Partial<BottomLineInput> = {}): BottomLineInput {
   return {
     stock: "TLT",
     variable: MARKET,
@@ -74,13 +75,17 @@ export function plainInput(results: PanelResults, over: Partial<PlainInput> = {}
   };
 }
 
-/** Everything the summary says, as one text: the headline and every section's items. */
-export const summaryText = (s: PlainSummary) => [s.headline, ...s.sections.flatMap((x) => x.items)].join("\n");
+/** Everything the summary says, as one text: the question, the answer, the tiles, and every section's title and items. */
+export const summaryText = (s: BottomLine) =>
+  [s.question, s.verdict, s.headline, ...s.tiles.flatMap((t) => [t.label, t.value, t.note]), s.why, ...s.sections.flatMap((x) => [x.title, ...x.items])].join("\n");
 
 // ---- Language ----
 
 /** Trading words (and their forms), matched as whole words, any case. */
 export const BANNED = /\b(buy(s|ing)?|sell(s|ing)?|signal(s|ed|ing|led|ling)?|opportunit(y|ies)|recommend(s|ed|ing|ation|ations)?|profit(s|able|ably|ability)?)\b|\bshould\s+invest/gi;
+
+/** "Odds" isn't what a Kalshi price says: its prices are probabilities, so the wording says "chance". */
+export const ODDS = /\bodds\b/gi;
 
 /** Trading words in a text, after removing the one sentence allowed to name them (NOT_ADVICE). */
 export function bannedIn(text: string): string[] {
@@ -144,16 +149,33 @@ export function longest(text: string): { words: number; sentence: string } {
 /** Text without its markup: glossary markers and hidden labels read as the words they hold. */
 export const plainText = (html: string) => textOf(html.replace(/<[^>]+>/g, ""));
 
-/** The card's parts in reading order (headings, paragraphs, list items), less its header and its folded notes. */
+/** A tile read back from the card as a report writes it: "How sure? Weak. Fragile result." */
+function tileLine(_: string, label: string, value: string, note: string): string {
+  const name = plainText(label);
+  return `<p>${tileText({ id: name === "Tested" ? "tested" : "sure", label: name, value: plainText(value), note: plainText(note) })}</p>`;
+}
+
+/**
+ * The card's parts in reading order, with the folded reasons, as a report lists them: its paragraphs,
+ * tiles, list items, and headings, and a fold's title as a heading. Less the card's own title and its
+ * folded glossary, which a report keeps in its last section.
+ */
 export function cardParts(card: string): string[] {
-  const body = card.replace(/<header[\s\S]*?<\/header>/, "").replace(/<details[\s\S]*?<\/details>/g, "");
-  return [...body.matchAll(/<(h3|p|li)\b[^>]*>([\s\S]*?)<\/\1>/g)].map((m) => plainText(m[2]));
+  const body = card
+    .replace(/<details\b[^>]*><summary\b[^>]*>What the terms mean[\s\S]*?<\/details>/, "")
+    .replace(/<div class="[^"]*"><dt\b[^>]*>([\s\S]*?)<\/dt><dd\b[^>]*>([\s\S]*?)<\/dd><dd\b[^>]*>([\s\S]*?)<\/dd><\/div>/g, tileLine);
+  return [...body.matchAll(/<(h2|h3|h4|p|li|summary)\b[^>]*>([\s\S]*?)<\/\1>/g)]
+    .map((m) => plainText(m[2]))
+    .filter((part) => part !== "" && part !== "The bottom line");
 }
 
 /** A report section's parts in order: its headings, paragraphs, and list items. */
 export function reportParts(section: Section): string[] {
   return section.blocks.flatMap((b) => (b.kind === "list" ? b.items : b.kind === "paragraph" || b.kind === "heading" ? [b.text] : [])).map(plainText);
 }
+
+/** A rating's line: the card's badge, or a report's "Evidence:" line. They sit in different places, so they're compared apart. */
+export const isEvidenceLine = (part: string) => part.startsWith("Evidence: ");
 
 /** The glossary as the card's "What the terms mean" lists it: "Term: definition". */
 export const cardGlossary = (card: string) => [...card.matchAll(/<div><dt\b[\s\S]*?<\/dd><\/div>/g)].map(([d]) => plainText(d));
