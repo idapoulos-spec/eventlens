@@ -228,7 +228,7 @@ function LeadWithGauge({ text, gauge }: { text: ReactNode; gauge: BottomLineGaug
   return (
     <>
       <div className="mt-1.5 flex flex-wrap items-start gap-x-5 gap-y-3">
-        <p className="min-w-0 flex-[1_1_14rem] text-sm text-ink">{text}</p>
+        <p className="min-w-0 max-w-2xl flex-[1_1_14rem] text-sm text-ink">{text}</p>
         {gauge?.drawn && (
           <div className="min-w-0 flex-[0_1_11rem]">
             <GaugeDrawing gauge={gauge} size="compact" surface="var(--surface-raised)" className="w-full max-w-[11rem]" />
