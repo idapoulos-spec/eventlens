@@ -7,14 +7,14 @@
 
 import { escapeHtml } from "./html";
 
-const SURFACE = "#fcfcfb";
-const INK = "#52514e";
+export const SURFACE = "#fcfcfb";
+export const INK = "#52514e";
 const MUTED = "#898781";
-const GRID = "#e1e0d9";
+export const GRID = "#e1e0d9";
 const AXIS = "#c3c2b7";
 /** Rises (or the one series), then falls. */
 export const SERIES = ["#2a78d6", "#eb6834"] as const;
-const FONT = `font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"`;
+export const FONT = `font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"`;
 
 const W = 640;
 const M = { top: 14, right: 16, bottom: 30, left: 48 };

@@ -11,6 +11,9 @@ import { expectedVariable, probabilityVariable } from "@/lib/analytics/variable"
 import type { Section } from "@/lib/report/model";
 import { tileText } from "../report/bottomLineReport";
 import { textOf } from "../report/test-helpers";
+import { fmtR } from "../research/parts";
+import { formatCi } from "../research/stats";
+import { GAUGE_SCALE, valueAt, type GaugeSize } from "./gauge";
 import type { BottomLineInput, BottomLine } from "./summary";
 import { NOT_ADVICE } from "./summary";
 
@@ -75,9 +78,12 @@ export function bottomLineInput(results: PanelResults, over: Partial<BottomLineI
   };
 }
 
-/** Everything the summary says, as one text: the question, the answer, the tiles, and every section's title and items. */
+/** The gauge's words: its line, note, and spoken label, or why there's none. */
+export const gaugeText = (s: BottomLine): string[] => (!s.gauge ? [] : s.gauge.drawn ? [s.gauge.line, s.gauge.note, s.gauge.label] : [s.gauge.why]);
+
+/** Everything the summary says, as one text: the question, the answer, the gauge, the tiles, and every section's title and items. */
 export const summaryText = (s: BottomLine) =>
-  [s.question, s.verdict, s.headline, ...s.tiles.flatMap((t) => [t.label, t.value, t.note]), s.why, ...s.sections.flatMap((x) => [x.title, ...x.items])].join("\n");
+  [s.question, s.verdict, s.headline, ...gaugeText(s), ...s.tiles.flatMap((t) => [t.label, t.value, t.note]), s.why, ...s.sections.flatMap((x) => [x.title, ...x.items])].join("\n");
 
 // ---- Language ----
 
@@ -169,9 +175,11 @@ export function cardParts(card: string): string[] {
     .filter((part) => part !== "" && part !== "The bottom line");
 }
 
-/** A report section's parts in order: its headings, paragraphs, and list items. */
+/** A report section's parts in order: its headings, paragraphs, list items, and a chart's caption (the gauge's line). */
 export function reportParts(section: Section): string[] {
-  return section.blocks.flatMap((b) => (b.kind === "list" ? b.items : b.kind === "paragraph" || b.kind === "heading" ? [b.text] : [])).map(plainText);
+  return section.blocks
+    .flatMap((b) => (b.kind === "list" ? b.items : b.kind === "paragraph" || b.kind === "heading" ? [b.text] : b.kind === "chart" ? [b.caption] : []))
+    .map(plainText);
 }
 
 /** A rating's line: the card's badge, or a report's "Evidence:" line. They sit in different places, so they're compared apart. */
@@ -179,3 +187,64 @@ export const isEvidenceLine = (part: string) => part.startsWith("Evidence: ");
 
 /** The glossary as the card's "What the terms mean" lists it: "Term: definition". */
 export const cardGlossary = (card: string) => [...card.matchAll(/<div><dt\b[\s\S]*?<\/dd><\/div>/g)].map(([d]) => plainText(d));
+
+// ---- Reading a gauge back from its drawing ----
+
+/** What a card's gauge draws, read back from its coordinates: the values its needle and band ends stand for, and its label. */
+export function drawnGauge(card: string): { size: GaugeSize; label: string; r: number; band: [number, number] | null; arrows: string[] } | null {
+  const svg = /<svg [^>]*data-gauge="(full|compact)"[\s\S]*?<\/svg>/.exec(card);
+  if (!svg) return null;
+  const size = svg[1] as GaugeSize;
+  const needle = /<line x1="[\d.]+" y1="[\d.]+" x2="([\d.]+)" y2="([\d.]+)"[^>]*data-part="needle"/.exec(svg[0]);
+  if (!needle) throw new Error("expected the gauge's needle");
+  const band = /<path d="M([\d.]+) ([\d.]+)A[\d.]+ [\d.]+ 0 0 1 ([\d.]+) ([\d.]+)"[^>]*data-part="band"/.exec(svg[0]);
+  const at = (x: string, y: string) => valueAt(size, { x: Number(x), y: Number(y) });
+  return {
+    size,
+    label: textOf(/aria-label="([^"]*)"/.exec(svg[0])![1]),
+    r: at(needle[1], needle[2]),
+    band: band ? [at(band[1], band[2]), at(band[3], band[4])] : null,
+    arrows: [...svg[0].matchAll(/data-part="arrow-(low|high)"/g)].map((m) => m[1]),
+  };
+}
+
+const onScale = (v: number) => Math.max(-GAUGE_SCALE, Math.min(GAUGE_SCALE, v));
+/** A drawn value is the given one, to within the drawing's rounding to 0.1 units. */
+const DRAWN = 1e-3;
+
+/**
+ * The card's gauge draws exactly the primary test the page holds, and says the numbers the page prints
+ * outside the card: the needle at its r and the band's ends at its range (at the scale's edge, with an
+ * arrow, past it), and the label's r and range as the page writes them. Throws when they differ.
+ */
+export function expectGaugeMatchesPage(card: string, page: string, test: { estimate: number | null; ci: [number, number] | null } | null) {
+  const g = drawnGauge(card);
+  if (!test || test.estimate === null) {
+    if (g) throw new Error("a gauge drawn without a correlation");
+    return;
+  }
+  if (!g) throw new Error("expected the gauge");
+  const { estimate: r, ci } = test;
+  const near = (drawn: number, value: number, what: string) => {
+    if (!(Math.abs(drawn - onScale(value)) < DRAWN)) throw new Error(`${what}: drawn at ${drawn}, the page's is ${value}`);
+  };
+  near(g.r, r, "needle");
+  const printed = [fmtR(r), ...(ci ? [formatCi(ci, fmtR)] : [])];
+  for (const text of printed) {
+    if (!page.includes(text)) throw new Error(`the page doesn't print ${text}`);
+  }
+  if (!g.label.includes(`r = ${printed[0]}`) || (ci && !g.label.includes(`95% range ${printed[1]}`))) throw new Error(`the label's numbers aren't the page's: ${g.label}`);
+  const edges = new Set<string>();
+  if (Math.abs(r) > GAUGE_SCALE) edges.add(r < 0 ? "low" : "high");
+  if (ci) {
+    const allPast = ci[1] < -GAUGE_SCALE || ci[0] > GAUGE_SCALE;
+    if (allPast !== (g.band === null)) throw new Error("the band is drawn when all of the range is past the scale, or missing when it isn't");
+    if (g.band) {
+      near(g.band[0], ci[0], "band's low end");
+      near(g.band[1], ci[1], "band's high end");
+    }
+    if (ci[0] < -GAUGE_SCALE) edges.add("low");
+    if (ci[1] > GAUGE_SCALE) edges.add("high");
+  } else if (g.band) throw new Error("a band drawn without a range");
+  if ([...edges].sort().join() !== [...g.arrows].sort().join()) throw new Error(`arrows at ${g.arrows.join()} for values past ${[...edges].join()}`);
+}

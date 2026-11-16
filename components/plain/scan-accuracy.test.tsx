@@ -21,9 +21,9 @@ import { scanReport } from "../report/scanReport";
 import { chanceLine, survivorsLine } from "../scan/text";
 import { numbersNotOn, textOf } from "../report/test-helpers";
 import { sectionText } from "@/lib/report/model";
-import { cardGlossary, cardParts, isEvidenceLine, reportParts } from "./test-helpers";
+import { cardGlossary, cardParts, expectGaugeMatchesPage, gaugeText, isEvidenceLine, reportParts } from "./test-helpers";
 import { ScanBottomLine } from "./BottomLineCard";
-import { NOT_ADVICE, scanBottomLine, type BottomLine } from "./summary";
+import { GAUGE_ENDS, NOT_ADVICE, scanBottomLine, type BottomLine } from "./summary";
 
 vi.setConfig({ testTimeout: 120_000 });
 vi.mock("server-only", () => ({}));
@@ -100,7 +100,7 @@ const CARD = /<section data-plain-english[\s\S]*?<\/section>/;
 
 /** The summary's results text: the question, the answer, the tiles, and the lead, less the labels and the fixed limits. */
 const resultsText = (s: BottomLine) =>
-  [s.question, s.verdict, s.headline, ...s.tiles.flatMap((t) => [t.value, t.note]), ...s.sections.filter((x) => x.id !== "limits").flatMap((x) => x.items)].join("\n");
+  [s.question, s.verdict, s.headline, ...gaugeText(s), ...s.tiles.flatMap((t) => [t.value, t.note]), ...s.sections.filter((x) => x.id !== "limits").flatMap((x) => x.items)].join("\n");
 
 /** The tiles are the counts the card prints below them. */
 function expectTilesMatchCounts(html: string, snap: ScanSnapshot, summary: BottomLine) {
@@ -151,12 +151,16 @@ function expectSummaryMatchesCard(html: string, snap: ScanSnapshot, summary: Bot
   expect(textOf(card)).toBe(textOf(renderToStaticMarkup(<ScanBottomLine summary={summary} />)));
   // Every number in it is on the card outside it, or declared and checked.
   const tested = snap.states.filter((s) => s.status === "done").length;
-  const allowed = new Set([String(EVIDENCE.strongP), String(tested - 1)]);
+  const allowed = new Set([String(EVIDENCE.strongP), String(tested - 1), ...GAUGE_ENDS.map((n) => n.replace(/−/g, "-"))]);
   const missing = numbersNotOn(resultsText(summary), html.replace(CARD, ""));
-  const derived = new Set(summary.derived);
+  const derived = new Set(summary.derived.map((n) => n.replace(/−/g, "-")));
   expect(missing.filter((n) => !derived.has(n)), "numbers neither on the card nor declared").toEqual([]);
   expect(missing.filter((n) => !allowed.has(n)), "declared numbers that don't match their source").toEqual([]);
   expectTilesMatchCounts(html, snap, summary);
+  // The gauge beside the lead draws the lead's r and range, as the table below prints them.
+  const lead = snap.order.find((i) => snap.states[i].status === "done")!;
+  const state = snap.states[lead];
+  expectGaugeMatchesPage(card, textOf(html.replace(CARD, "")), state.status === "done" ? state.test.primary : null);
 }
 
 describe("the scan's bottom-line summary is its results card's", () => {
