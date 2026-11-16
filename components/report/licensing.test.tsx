@@ -85,6 +85,26 @@ function expectNoPrices(report: Report, canaries: number[], spy: number[] = []) 
   }
 }
 
+/**
+ * The bottom line's gauge is in the report, so the searches above cover it: its drawing in the
+ * printable page and its line and label in Markdown. Its drawing's numbers, past its label and its
+ * colors, are coordinates with at most one decimal.
+ */
+function expectGauge(report: Report) {
+  const chart = report.sections[0].blocks.find((b) => b.kind === "chart" && b.id === "gauge");
+  if (chart?.kind !== "chart") throw new Error("expected the gauge in the report's bottom line");
+  const [md, html] = outputs(report);
+  expect(chart.svg).toMatch(/^<svg [^>]*role="img"/);
+  expect(html).toContain(chart.svg);
+  expect(md).toContain(chart.caption);
+  expect(md).toContain(chart.alt);
+  const drawing = chart.svg
+    .replace(/<title>[\s\S]*?<\/title>/, "")
+    .replace(/aria-label="[^"]*"/, "")
+    .replace(/#[0-9a-f]{6}\b/gi, "");
+  expect(numbersIn(drawing).filter((n) => !/^\d+(\.\d)?$/.test(n))).toEqual([]);
+}
+
 describe("reports carry no stock prices", () => {
   it("in a single market's report, with a canary benchmark, at several settings", async () => {
     stubWorld([LIVE_MARKET]);
@@ -97,7 +117,9 @@ describe("reports carry no stock prices", () => {
       { choice: 30 as const, resolution: "daily" as const, returns: "raw" as const },
       { choice: 7 as const, resolution: "hourly" as const },
     ]) {
-      expectNoPrices(reportFor(page, "CNRY", LIVE_MARKET.ticker, { ...view, benchmark: "CNRYB" }, { link: LINK, preparedBy: "A. Reviewer" }), canaries);
+      const report = reportFor(page, "CNRY", LIVE_MARKET.ticker, { ...view, benchmark: "CNRYB" }, { link: LINK, preparedBy: "A. Reviewer" });
+      expectGauge(report);
+      expectNoPrices(report, canaries);
     }
   });
 
@@ -105,7 +127,9 @@ describe("reports carry no stock prices", () => {
     stubWorld(LONG_EVENT);
     const canaries = [...(await pricesOf("CNRY")), ...(await pricesOf("CNRYB"))];
     const page = await eventPage(deps, "CNRY", "KXFEDDECISION-26DEC", { window: null, resolution: null });
-    expectNoPrices(reportFor(page, "CNRY", "KXFEDDECISION-26DEC", { choice: 90, resolution: "hourly" }, { link: LINK }), canaries, await pricesOf("SPY"));
+    const report = reportFor(page, "CNRY", "KXFEDDECISION-26DEC", { choice: 90, resolution: "hourly" }, { link: LINK });
+    expectGauge(report);
+    expectNoPrices(report, canaries, await pricesOf("SPY"));
   });
 
   it("in a scan's report", async () => {
@@ -142,6 +166,7 @@ describe("reports carry no stock prices", () => {
     run.dispose();
     expect(snap.states.filter((s) => s.status === "done")).toHaveLength(2);
     const report = scanReport({ stock: "CNRY", choice: 90, resolution: "hourly", candidates: list.data.candidates, snap, asOf: null, selection: "a custom list", link: LINK, preparedBy: null, generatedAt: NOW, version: "test", commit: "test" });
+    expectGauge(report);
     expectNoPrices(report, canaries, spy);
   });
 
@@ -181,8 +206,8 @@ describe("reports carry no stock return finer than a statistic", () => {
         // The chart draws a path only for a group with enough events.
         expect(chart?.kind === "chart" && chart.svg.includes(`After ${name.toLowerCase()} (`), `${name} path at ${jump} pp`).toBe(n >= MIN_TEST_EVENTS);
       }
-      // Charts appear only for the lead-lag correlations, the rolling correlation, and the event study.
-      expect(blocks.filter((b) => b.kind === "chart").map((b) => (b as { id: string }).id).every((id) => ["lead-lag", "rolling", "event-study"].includes(id))).toBe(true);
+      // Charts appear only for the lead-lag correlations, the rolling correlation, the event study, and the bottom line's gauge (r and its range).
+      expect(blocks.filter((b) => b.kind === "chart").map((b) => (b as { id: string }).id).every((id) => ["lead-lag", "rolling", "event-study", "gauge"].includes(id))).toBe(true);
     }
   });
 });

@@ -4,6 +4,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { escapeHtml } from "@/lib/report/html";
 import { textOf } from "../report/test-helpers";
 import { BottomLineCard, ScanBottomLine } from "./BottomLineCard";
 import { analysisScenarios, scanScenarios } from "./scenarios";
@@ -145,6 +146,65 @@ describe("the evidence badge", () => {
       else expect(html.match(/<div aria-hidden="true"/g), name).toHaveLength(1);
     }
     for (const { name, html } of scans) expect(html, name).not.toContain('aria-hidden="true"');
+  });
+});
+
+describe("the gauge", () => {
+  const svgs = (html: string) => html.match(/<svg\b[^>]*>/g) ?? [];
+
+  it("is one image to a screen reader, named with the direction, r, and the range", () => {
+    for (const { name, html, summary } of cards) {
+      const g = summary.gauge;
+      if (g?.drawn) {
+        expect(svgs(html), name).toHaveLength(1);
+        expect(svgs(html)[0], name).toContain('role="img"');
+        expect(svgs(html)[0], name).toContain(`aria-label="${escapeHtml(g.label)}"`);
+        expect(g.label.length, name).toBeGreaterThan(40);
+      } else expect(svgs(html), name).toEqual([]);
+    }
+  });
+
+  it("is written out in the open: its line and note, or why there's none", () => {
+    for (const { name, html, summary } of cards) {
+      const g = summary.gauge;
+      const open = plainText(withoutFolds(html));
+      if (g?.drawn) {
+        expect(open, name).toContain(g.line);
+        expect(open, name).toContain(g.note);
+      } else if (g) expect(open, name).toContain(g.why);
+    }
+  });
+
+  it("sits under the answer, before the tiles, on an analysis's card; with the lead on a scan's", () => {
+    for (const { name, html, summary } of analyses) {
+      const g = summary.gauge!;
+      const open = plainText(withoutFolds(html));
+      const at = open.indexOf(g.drawn ? g.line : g.why);
+      expect(at, name).toBeGreaterThan(open.indexOf(plainText(summary.headline)));
+      expect(at, name).toBeLessThan(open.indexOf(summary.tiles[0].label));
+    }
+    for (const { name, html, summary } of scans) {
+      if (!summary.gauge?.drawn) continue;
+      const open = plainText(withoutFolds(html));
+      const lead = summary.sections.find((s) => s.id === "scan-lead")!;
+      expect(open.indexOf(summary.gauge.line), name).toBeGreaterThan(open.indexOf(plainText(lead.items[0])));
+      expect(open.indexOf(summary.gauge.note), name).toBeLessThan(open.indexOf(lead.items[1]));
+    }
+  });
+
+  it("is drawn in the correlation teal, grays, and text colors: never Kalshi's, the stock's, or a direction's", () => {
+    let drawn = 0;
+    for (const { name, html } of cards) {
+      const svg = /<svg\b[\s\S]*?<\/svg>/.exec(html)?.[0];
+      if (!svg) continue;
+      drawn++;
+      const colors = new Set([...svg.matchAll(/(?:stroke|fill)="([^"]+)"/g)].map((m) => m[1]));
+      expect([...colors].sort(), name).toEqual(
+        expect.arrayContaining(["none", "var(--axis)", "var(--ink-secondary)", "var(--series-correlation)"]),
+      );
+      for (const c of colors) expect(["none", "var(--axis)", "var(--ink-secondary)", "var(--series-correlation)", "var(--surface)", "var(--surface-raised)"], `${name}: ${c}`).toContain(c);
+    }
+    expect(drawn).toBeGreaterThan(200);
   });
 });
 

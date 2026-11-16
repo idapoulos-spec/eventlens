@@ -1,8 +1,9 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { GaugeDrawing } from "./GaugeDrawing";
 import { GLOSSARY } from "./glossary";
-import { LEVEL_LABEL, METER_STEP, RATING_METHOD, type BottomLine, type BottomLineLevel, type BottomLineSection } from "./summary";
+import { LEVEL_LABEL, METER_STEP, RATING_METHOD, type BottomLine, type BottomLineGauge, type BottomLineLevel, type BottomLineSection } from "./summary";
 import { markTerms } from "./Term";
 
 // The bottom line on the page: the analysis card at the top of Research, and the scan's version at the
@@ -94,6 +95,22 @@ function Answer({ summary, nodes, size }: { summary: BottomLine; nodes: Nodes; s
         <strong className="font-semibold">{summary.verdict}</strong> {nodes.headline}
       </p>
     </>
+  );
+}
+
+/**
+ * How they moved together, under the answer: the gauge, its line, and its note, or why there's none.
+ * Its words aren't marked as terms, so every glossary marker stays where it was.
+ */
+function Gauge({ gauge }: { gauge: BottomLineGauge | null }) {
+  if (!gauge) return null;
+  if (!gauge.drawn) return <p className="mt-3 text-xs text-ink-secondary">{gauge.why}</p>;
+  return (
+    <div className="mt-4">
+      <GaugeDrawing gauge={gauge} size="full" surface="var(--surface)" className="w-full max-w-[16rem]" />
+      <p className="mt-2 text-sm font-medium text-ink">{gauge.line}</p>
+      <p className="mt-1 text-xs text-ink-secondary">{gauge.note}</p>
+    </div>
   );
 }
 
@@ -195,10 +212,32 @@ export function BottomLineCard({ summary }: { summary: BottomLine }) {
         <EvidenceBadge level={summary.level} />
       </header>
       <Answer summary={summary} nodes={nodes} size="text-base" />
+      <Gauge gauge={summary.gauge} />
       <Tiles summary={summary} nodes={nodes} surface="bg-surface-raised" />
       <Folds summary={summary} nodes={nodes} />
       <Limits summary={summary} />
     </section>
+  );
+}
+
+/**
+ * The scan's strongest lead in words, with a smaller gauge beside it (below it on a phone) and the
+ * gauge's note under both.
+ */
+function LeadWithGauge({ text, gauge }: { text: ReactNode; gauge: BottomLineGauge | null }) {
+  return (
+    <>
+      <div className="mt-1.5 flex flex-wrap items-start gap-x-5 gap-y-3">
+        <p className="min-w-0 flex-[1_1_14rem] text-sm text-ink">{text}</p>
+        {gauge?.drawn && (
+          <div className="min-w-0 flex-[0_1_11rem]">
+            <GaugeDrawing gauge={gauge} size="compact" surface="var(--surface-raised)" className="w-full max-w-[11rem]" />
+            <p className="mt-1.5 text-xs font-medium text-ink">{gauge.line}</p>
+          </div>
+        )}
+      </div>
+      {gauge && <p className="mt-2 text-xs text-ink-secondary">{gauge.drawn ? gauge.note : gauge.why}</p>}
+    </>
   );
 }
 
@@ -218,7 +257,7 @@ export function ScanBottomLine({ summary }: { summary: BottomLine }) {
             <h4 className="text-xs font-semibold text-ink">{lead.title}</h4>
             <EvidenceBadge level={summary.level} />
           </div>
-          <p className="mt-1.5 text-sm text-ink">{leadNodes[0]}</p>
+          <LeadWithGauge text={leadNodes[0]} gauge={summary.gauge} />
           <p className="mt-2 text-xs text-ink-secondary">{leadNodes[1]}</p>
         </div>
       )}

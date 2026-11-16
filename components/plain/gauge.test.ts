@@ -14,7 +14,7 @@ import { primaryWith, withParts } from "./test-helpers";
 const SIZES: GaugeSize[] = ["full", "compact"];
 const scenarios = [...analysisScenarios(), ...scanScenarios()];
 const drawn = scenarios.filter((s): s is typeof s & { summary: BottomLine & { gauge: DrawnGauge } } => s.summary.gauge?.drawn === true);
-/** Within rounding of the drawing to 0.01 units. */
+/** Within rounding of the drawing to 0.1 units (under 0.0005 on the scale). */
 const CLOSE = 1e-3;
 
 describe("the gauge's geometry", () => {

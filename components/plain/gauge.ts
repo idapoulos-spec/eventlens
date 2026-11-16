@@ -33,7 +33,11 @@ export const GAUGE_DIMS: Record<GaugeSize, Dims> = {
   compact: { width: 176, height: 110, cx: 88, cy: 84, radius: 60, track: 6, band: 10, gap: 2, needle: 48, tick: 8, font: 11 },
 };
 
-/** A point, rounded to 0.01 so the markup stays short; that moves a value by less than 0.0002 on the scale. */
+/**
+ * A point, rounded to 0.1 as the report's charts round theirs, so no coordinate reads as a data value
+ * (licensing.test.tsx checks a report's two-decimal numbers against the benchmark's prices). That
+ * moves a drawn value by less than 0.0005 on the scale.
+ */
 export interface Point {
   x: number;
   y: number;
@@ -49,14 +53,14 @@ export interface GaugeGeometry {
   band: { path: string; gapPath: string; from: Point; to: Point } | null;
   /** Which ends of the range were cut at the scale's edge. */
   bandPast: { low: boolean; high: boolean; all: Past } | null;
-  /** The edges that carry an arrow: something there runs past the scale. */
-  arrows: { edge: "low" | "high"; points: string }[];
+  /** The edges that carry an arrow (a triangle, as an SVG path): something there runs past the scale. */
+  arrows: { edge: "low" | "high"; path: string }[];
   /** The 0 tick ("No link") and the two end ticks. */
   ticks: { at: number; from: Point; to: Point }[];
   labels: { text: string; x: number; y: number; anchor: "start" | "middle" | "end" }[];
 }
 
-const round = (v: number) => Math.round(v * 100) / 100;
+const round = (v: number) => Math.round(v * 10) / 10;
 const clamp = (v: number) => Math.max(-GAUGE_SCALE, Math.min(GAUGE_SCALE, v));
 const pastOf = (v: number): Past => (v < -GAUGE_SCALE ? "low" : v > GAUGE_SCALE ? "high" : null);
 
@@ -91,17 +95,15 @@ export function trackPath(size: GaugeSize): string {
   return arc(GAUGE_DIMS[size], Math.PI, 0);
 }
 
-/** A small triangle below the ring's end, pointing down: past the scale, the ring would carry on downward. */
+/**
+ * A small triangle below the ring's end, pointing down: past the scale, the ring would carry on
+ * downward. A path with its numbers apart (no "x,y" pairs), so no two of them read as one number.
+ */
 function arrowAt(d: Dims, edge: "low" | "high"): string {
   const x = d.cx + (edge === "low" ? -d.radius : d.radius);
   const half = d.band / 2;
   const top = d.cy + 3;
-  const pts: [number, number][] = [
-    [x - half, top],
-    [x + half, top],
-    [x, top + half + 1],
-  ];
-  return pts.map(([px, py]) => `${fmt(px)},${fmt(py)}`).join(" ");
+  return `M${fmt(x - half)} ${fmt(top)}L${fmt(x + half)} ${fmt(top)}L${fmt(x)} ${fmt(top + half + 1)}Z`;
 }
 
 export function gaugeGeometry(r: number, ci: [number, number] | null, size: GaugeSize): GaugeGeometry {
@@ -132,7 +134,7 @@ export function gaugeGeometry(r: number, ci: [number, number] | null, size: Gaug
   if (needle.past) edges.add(needle.past);
   if (bandPast?.low) edges.add("low");
   if (bandPast?.high) edges.add("high");
-  const arrows = (["low", "high"] as const).filter((e) => edges.has(e)).map((edge) => ({ edge, points: arrowAt(d, edge) }));
+  const arrows = (["low", "high"] as const).filter((e) => edges.has(e)).map((edge) => ({ edge, path: arrowAt(d, edge) }));
 
   const tick = (at: number) => {
     const a = angleOf(at);

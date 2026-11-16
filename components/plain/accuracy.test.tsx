@@ -18,14 +18,15 @@ import type { PanelMessage } from "@/lib/analytics/panel-jobs";
 import { formatSigned } from "@/lib/format";
 import { linkSymbol, stubWorld, worldEvent, worldMarket } from "@/lib/history/test-world";
 import { formatLag } from "../charts/LeadLagChart";
+import { fmtR } from "../research/parts";
 import { analysisReport, type AnalysisReportInput } from "../report/analysisReport";
 import { eventPage, marketPage, reportInputFor, type Loaded, type PageDeps } from "../report/test-build";
 import { sectionText } from "@/lib/report/model";
 import { numbersIn, numbersNotOn, textOf } from "../report/test-helpers";
 import { GLOSSARY } from "./glossary";
 import { BottomLineCard } from "./BottomLineCard";
-import { LEVEL_LABEL, NOT_ADVICE, RATING_METHOD_NUMBERS, bottomLine, type BottomLineInput, type BottomLine } from "./summary";
-import { cardGlossary, cardParts, isEvidenceLine, reportParts } from "./test-helpers";
+import { GAUGE_ENDS, LEVEL_LABEL, NOT_ADVICE, RATING_METHOD_NUMBERS, bottomLine, type BottomLineInput, type BottomLine } from "./summary";
+import { cardGlossary, cardParts, expectGaugeMatchesPage, gaugeText, isEvidenceLine, reportParts } from "./test-helpers";
 
 vi.setConfig({ testTimeout: 120_000 });
 vi.mock("server-only", () => ({}));
@@ -90,7 +91,7 @@ function summaryFor(page: Loaded, stock: string, kalshi: string, view: Parameter
 
 /** The card's results text: everything but the labels, the fixed limits, the method notes, and the glossary. */
 const resultsText = (s: BottomLine) =>
-  [s.question, s.verdict, s.headline, ...s.tiles.flatMap((t) => [t.value, t.note]), ...s.sections.filter((x) => x.id !== "limits").flatMap((x) => x.items)].join("\n");
+  [s.question, s.verdict, s.headline, ...gaugeText(s), ...s.tiles.flatMap((t) => [t.value, t.note]), ...s.sections.filter((x) => x.id !== "limits").flatMap((x) => x.items)].join("\n");
 
 /** The tiles say what the page's own results say: the rating, the regression's size and range, and the corrected lags. */
 function expectTilesMatchResults(input: BottomLineInput, summary: BottomLine) {
@@ -115,7 +116,8 @@ function expectTilesMatchResults(input: BottomLineInput, summary: BottomLine) {
 /** The derived numbers this view's summary may hold, each worked out from its source; throws when one doesn't match the page. */
 function allowedDerived(input: BottomLineInput, rest: string): Set<string> {
   const page = textOf(rest);
-  const allowed = new Set<string>([String(EVIDENCE.strongP), EVIDENCE.maxDetectable.toFixed(2), ...RATING_METHOD_NUMBERS]);
+  // The rating's own constants, and the gauge's scale.
+  const allowed = new Set<string>([String(EVIDENCE.strongP), EVIDENCE.maxDetectable.toFixed(2), ...RATING_METHOD_NUMBERS, ...GAUGE_ENDS.map((n) => n.replace(/−/g, "-"))]);
   // A size for 10 pp (from 40% to 50%) or 25 bp: the page's per-unit coefficient, rescaled.
   const fit = input.results.market?.kalshi;
   if (fit) {
@@ -179,6 +181,7 @@ function expectCardMatchesPage(html: string, input: AnalysisReportInput, summary
   const allowed = allowedDerived(input, rest);
   expect(missing.filter((n) => !allowed.has(n)), "declared numbers that don't match their source").toEqual([]);
   expectTilesMatchResults(input, summary);
+  expectGaugeMatchesPage(card, textOf(rest), input.results.market?.primary ?? null);
 }
 
 describe("the bottom-line card's numbers are its page's", () => {
@@ -309,6 +312,22 @@ describe("the bottom-line card's numbers are its page's", () => {
     expect(() => expectCardMatchesPage(page.html, input, { ...summary, tiles })).toThrow();
     // And the card on the page is the builder's, so a changed headline wouldn't match it.
     expect(() => expectCardMatchesPage(page.html, input, { ...summary, headline: `${summary.headline} Extra 7.` })).toThrow();
+    // The gauge draws the page's r and range: one moved by 0.01, or a label that names another r, is caught.
+    const g = summary.gauge;
+    if (!g?.drawn || !g.ci) throw new Error("expected a gauge with a range");
+    const primary = input.results.market!.primary!;
+    const pageText = textOf(rest);
+    expectGaugeMatchesPage(split(page.html).card, pageText, primary);
+    const r = fmtR(g.r);
+    for (const moved of [
+      { ...g, r: g.r + 0.01 },
+      { ...g, ci: [g.ci[0] + 0.01, g.ci[1]] as [number, number] },
+      { ...g, ci: [g.ci[0], g.ci[1] - 0.01] as [number, number] },
+      { ...g, label: g.label.replace(`r = ${r}`, `r = ${fmtR(g.r + 0.01)}`) },
+    ]) {
+      const card = renderToStaticMarkup(<BottomLineCard summary={{ ...summary, gauge: moved }} />);
+      expect(() => expectGaugeMatchesPage(card, pageText, primary)).toThrow();
+    }
   });
 
   it("finds numbers as the report check does (signs and percents kept)", () => {
