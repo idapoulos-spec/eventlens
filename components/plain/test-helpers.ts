@@ -75,9 +75,12 @@ export function bottomLineInput(results: PanelResults, over: Partial<BottomLineI
   };
 }
 
-/** Everything the summary says, as one text: the question, the answer, the tiles, and every section's title and items. */
+/** The gauge's words: its line, note, and spoken label, or why there's none. */
+export const gaugeText = (s: BottomLine): string[] => (!s.gauge ? [] : s.gauge.drawn ? [s.gauge.line, s.gauge.note, s.gauge.label] : [s.gauge.why]);
+
+/** Everything the summary says, as one text: the question, the answer, the gauge, the tiles, and every section's title and items. */
 export const summaryText = (s: BottomLine) =>
-  [s.question, s.verdict, s.headline, ...s.tiles.flatMap((t) => [t.label, t.value, t.note]), s.why, ...s.sections.flatMap((x) => [x.title, ...x.items])].join("\n");
+  [s.question, s.verdict, s.headline, ...gaugeText(s), ...s.tiles.flatMap((t) => [t.label, t.value, t.note]), s.why, ...s.sections.flatMap((x) => [x.title, ...x.items])].join("\n");
 
 // ---- Language ----
 

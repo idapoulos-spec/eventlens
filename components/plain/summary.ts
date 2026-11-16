@@ -29,6 +29,7 @@ import type { ScanCandidate } from "@/lib/scan/types";
 import { fmtR, lowerFirst, plural } from "../research/parts";
 import { formatCi, formatP } from "../research/stats";
 import type { CandidateState, ScanSnapshot } from "../scan/scanRunner";
+import { GAUGE_SCALE } from "./gauge";
 
 export type BottomLineLevel = EvidenceLevel | ScanLeadLevel | "pending" | "none";
 
@@ -82,6 +83,8 @@ export interface BottomLine {
   /** The title of the folded reasons: "Why it's rated Weak". */
   why: string;
   sections: BottomLineSection[];
+  /** The "how they moved together" gauge under the answer (beside the lead for a scan); null for a scan with no lead. */
+  gauge: BottomLineGauge | null;
   /**
    * Numbers in the text that aren't printed elsewhere on the page as written, because they rescale one
    * that is (a size per 10 pp or 25 bp, a lag's count of hours) or quote the rating's own rules and
@@ -89,6 +92,22 @@ export interface BottomLine {
    */
   derived: string[];
 }
+
+/** The gauge, drawn: the primary test's r and 95% range exactly as the page holds them, and its words. */
+export interface DrawnGauge {
+  drawn: true;
+  r: number;
+  ci: [number, number] | null;
+  /** The written line under it: "Moved together, somewhat." */
+  line: string;
+  /** The scale, what "Together" means here, and anything cut at the edge, missing, or uncorrected. */
+  note: string;
+  /** What a screen reader hears for the drawing: the line, r, and the range. */
+  label: string;
+}
+
+/** The gauge, or why there's none. */
+export type BottomLineGauge = DrawnGauge | { drawn: false; why: string };
 
 /** The one sentence allowed to name buying or selling, and only to say this isn't that (language.test.ts). */
 export const NOT_ADVICE = "It is not a prediction, it doesn’t show that one causes the other, and it is not a recommendation to buy or sell anything.";
@@ -251,6 +270,86 @@ function mainTestLine(test: TestResult): string {
 export const smallLinkText = (owner: string, stock: string) =>
   `The evidence is convincing, but the link itself is small: ${owner} moves explain only a tiny part of how ${stock} moved.`;
 
+// ---- The gauge ----
+
+/** What the badge says, for the gauge's words: a link (or still checking), no clear link, or a scan's lead before its correction. */
+type GaugeClaim = "found" | "not_found" | "uncorrected";
+
+const FOUND: readonly BottomLineLevel[] = ["weak", "moderate", "strong", "pending"];
+
+/** The gauge's scale ends as written: "−0.5" and "+0.5". */
+export const GAUGE_ENDS = [formatSigned(-GAUGE_SCALE, 1), formatSigned(GAUGE_SCALE, 1)] as const;
+
+/** A range that reaches or crosses zero: the same test as the "How big?" tile's "Could be zero". */
+export const reachesZero = (ci: [number, number]) => ci[0] <= 0 && ci[1] >= 0;
+
+/**
+ * The line under the gauge. Its size word is the headline's, and it says "close to no link" exactly
+ * when the range reaches zero. The range excludes zero exactly when the main test's p is under 0.05,
+ * so a rated link never reads as none. A scan's lead is rated after correcting for many tests, but
+ * its range isn't, so a lead that didn't survive says so instead of just "Moved".
+ */
+export function gaugeLine(r: number, ci: [number, number] | null, claim: GaugeClaim): string {
+  if (r === 0) return `No lean either way${ci === null ? ", with no range to judge it" : reachesZero(ci) ? ", close to no link" : ""}.`;
+  const size = sizeWord(r);
+  const dir = r > 0 ? "together" : "opposite";
+  const moved = `Moved ${dir}, ${size}`;
+  const leaned = `${upper(size)} ${dir}`;
+  if (ci === null) return claim === "found" ? `${moved}.` : `${leaned}, with no range to judge it.`;
+  if (reachesZero(ci)) return size === "slightly" ? `${leaned}, close to no link.` : `${leaned}, but it could be close to no link.`;
+  if (claim === "found") return `${moved}.`;
+  if (claim === "uncorrected") return `${moved}, but not after correcting for testing many at once.`;
+  return `${leaned}, but the main test found no clear link.`;
+}
+
+const edgeText = (past: "low" | "high") => (past === "low" ? GAUGE_ENDS[0] : GAUGE_ENDS[1]);
+
+/** The note under the line: the scale, what "Together" means here, and anything cut at the edge, missing, or uncorrected. */
+function gaugeNote(r: number, ci: [number, number] | null, together: string, scan: boolean): string {
+  const s = GAUGE_SCALE;
+  const parts = [`Scale: r from ${GAUGE_ENDS[0]} to ${GAUGE_ENDS[1]}.`, together];
+  const edges = new Set<"low" | "high">();
+  const rPast = r < -s ? "low" : r > s ? "high" : null;
+  if (rPast) {
+    edges.add(rPast);
+    parts.push(`r is past ${edgeText(rPast)}, so the needle stops at the edge.`);
+  }
+  if (ci) {
+    const [lo, hi] = ci;
+    const all = hi < -s ? "low" : lo > s ? "high" : null;
+    if (lo < -s) edges.add("low");
+    if (hi > s) edges.add("high");
+    if (all) parts.push(`The whole range is past ${edgeText(all)}.`);
+    else if (lo < -s && hi > s) parts.push("The range runs past both ends.");
+    else if (lo < -s || hi > s) parts.push(`The range runs past ${edgeText(lo < -s ? "low" : "high")}.`);
+  }
+  if (edges.size > 0) parts.push(edges.size === 1 ? "An arrow marks the cut." : "Arrows mark the cuts.");
+  if (!ci) parts.push("The main test couldn’t give a 95% range, so only r is drawn.");
+  else if (scan) parts.push("Its range isn’t corrected for testing many at once.");
+  return parts.join(" ");
+}
+
+/** The gauge for a primary test: its r and range as they are, and its words; or why there's none. */
+function gaugeOf(primary: TestResult | null, level: BottomLineLevel, scan: boolean, together: string, derived: string[]): BottomLineGauge {
+  if (primary === null) return { drawn: false, why: "No gauge: there’s no main test in this view." };
+  if (primary.estimate === null) return { drawn: false, why: "No gauge: the main test has no correlation to draw in this window." };
+  const { estimate: r, ci } = primary;
+  const line = gaugeLine(r, ci, FOUND.includes(level) ? "found" : scan ? "uncorrected" : "not_found");
+  derived.push(...GAUGE_ENDS);
+  const numbers = `r = ${fmtR(r)}${ci ? `, 95% range ${formatCi(ci, fmtR)}` : ", no 95% range"}`;
+  return {
+    drawn: true,
+    r,
+    ci,
+    line,
+    note: gaugeNote(r, ci, together, scan),
+    label: `How they moved together: ${line.charAt(0).toLowerCase()}${line.slice(1, -1)}. ${numbers}, on a scale from ${GAUGE_ENDS[0]} to ${GAUGE_ENDS[1]}.`,
+  };
+}
+
+/** "“Together” means TLT rose when the chance of “Fed maintains rate” rose." */
+const togetherText = (stock: string, subject: string) => `“Together” means ${stock} rose when ${subject} rose.`;
+
 // ---- One analysis ----
 
 /** What the summary reads from the Research panel (or a report's input, which holds the same). */
@@ -306,6 +405,7 @@ export function bottomLine(i: BottomLineInput): BottomLine {
       { id: "lead", title: `Does ${who.name} move first?`, items: [leadText(i.results.view.lags, i.results.shown, i.stock, w, who, derived)] },
       { id: "limits", title: "What this can’t tell you", items: [ANALYSIS_LIMITS] },
     ],
+    gauge: gaugeOf(primary, rating.level, false, togetherText(i.stock, subjectOf(i.variable)), derived),
     derived,
   };
 }
@@ -635,6 +735,7 @@ export function scanBottomLine({ stock, choice, resolution, candidates, snap }: 
       tiles: [],
       why: whyTitle(level),
       sections: [limits],
+      gauge: null,
       derived,
     };
   }
@@ -677,15 +778,19 @@ export function scanBottomLine({ stock, choice, resolution, candidates, snap }: 
       { id: "scan-why", title: why, items: [...lead.reasons, [stricter, second].filter(Boolean).join(" "), "Open its full analysis for the details."] },
       limits,
     ],
+    gauge: gaugeOf(state.test.primary!, rating.level, true, togetherText(stock, leadSubject(candidates[index])), derived),
     derived,
   };
 }
+
+/** What rose for a scan's candidate: "the expected rate change", or "the chance of “Fed maintains rate”". */
+const leadSubject = (c: ScanCandidate) => (c.kind === "event" ? "the expected rate change" : `the chance of “${c.label ?? c.title}”`);
 
 /** The lead in words (shown with its badge) and its reasons (folded away). */
 function scanLeadParts(stock: string, c: ScanCandidate, state: Done, rating: ScanLeadRating, bh: number, w: Words, tested: number, final: boolean, derived: string[]): { text: string; reasons: string[] } {
   const primary = state.test.primary!;
   const who = mover(c.kind === "event" ? "expected" : "probability");
-  const subject = c.kind === "event" ? "the expected rate change" : `the chance of “${c.label ?? c.title}”`;
+  const subject = leadSubject(c);
   const name = `“${c.title}” (${c.ticker})`;
   const numbers = `r = ${fmtR(primary.estimate)}${primary.ci ? ` (95% range ${formatCi(primary.ci, fmtR)})` : ""}`;
   const loo = state.loo !== null && typeof state.loo === "object" ? state.loo : null;

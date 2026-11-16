@@ -128,7 +128,37 @@ export function analysisScenarios(): Scenario[] {
   const raw = simulated({ returns: "raw" });
   const input = bottomLineInput(raw.results, { leaveOneOut: raw.loo, detectable: detectableAt(0.25) });
   out.push({ name: "market raw returns", summary: bottomLine(input), input });
+  for (const variable of [MARKET, EVENT]) {
+    for (const c of GAUGE_CASES) {
+      const input = gaugeInput(c, { variable });
+      out.push({ name: `${variable.kind} gauge: ${c.name}`, summary: bottomLine(input), input });
+    }
+  }
   return out;
+}
+
+/**
+ * Cases for the gauge, added after the ones above (which stay as they were): a rule's setup with r
+ * and its range swapped, keeping the rule's p, so a range excludes zero exactly when p < 0.05, as the
+ * main test's does.
+ */
+export const GAUGE_CASES: { name: string; rule: (typeof RULES)[number]; primary: Partial<TestResult> }[] = [
+  { name: "r and range past +0.5", rule: "moderate", primary: { estimate: 0.62, ci: [0.31, 0.84] } },
+  { name: "r and range past −0.5", rule: "strong", primary: { estimate: -0.58, ci: [-0.77, -0.33] } },
+  { name: "range past both ends", rule: "low_power_capped", primary: { estimate: -0.04, ci: [-0.71, 0.66] } },
+  { name: "opposite, range crossing zero", rule: "no_link", primary: { estimate: -0.03, ci: [-0.09, 0.04] } },
+  { name: "clearly together, range crossing zero", rule: "low_power", primary: { estimate: 0.34, ci: [-0.04, 0.63] } },
+  { name: "range ending at zero", rule: "no_link", primary: { estimate: 0.05, ci: [0, 0.1] } },
+  { name: "r exactly zero", rule: "no_link", primary: { estimate: 0, ci: [-0.07, 0.07] } },
+  { name: "no range, not rated", rule: "no_p", primary: { estimate: -0.12 } },
+  { name: "no correlation", rule: "no_p", primary: { estimate: null } },
+];
+
+/** One gauge case's input, at one setting. */
+export function gaugeInput(c: (typeof GAUGE_CASES)[number], over: Partial<BottomLineInput> = {}): BottomLineInput {
+  const input = ruleInput(c.rule, over);
+  const primary = primaryWith(input.results.market!.primary!, c.primary);
+  return { ...input, results: withParts(input.results, { primary }) };
 }
 
 // ---- Scans ----
@@ -221,5 +251,13 @@ export function scanScenarios(): Scenario[] {
   out.push({ name: "scan nothing stood out, one tested", summary: scanBottomLine({ ...settings, snap: fewer(scanSnap({ bh: 0.3, holm: 0.6, p: 0.3, estimate: 0.15 }), 1) }) });
   out.push({ name: "scan nothing tested", summary: scanBottomLine({ ...settings, snap: { ...none, states: none.states.map(() => ({ status: "untested" as const, reason: "x" })), corrections: none.states.map(() => null) } }) });
   out.push({ name: "scan just started", summary: scanBottomLine({ ...settings, snap: { ...none, phase: "running", states: none.states.map(() => ({ status: "loading" as const })), corrections: none.states.map(() => null) } }) });
+  // For the gauge, added after the cases above (which stay as they were): leads whose range agrees with their own p.
+  const gauge: [string, ScanSnapshot][] = [
+    ["nothing stood out, range clear of zero", scanSnap({ bh: 0.3, holm: 0.6, p: 0.03, estimate: 0.15, ci: [0.02, 0.27] })],
+    ["nothing stood out, range crossing zero", scanSnap({ bh: 0.6, holm: 0.9, p: 0.2, estimate: -0.08, ci: [-0.2, 0.05] })],
+    ["nothing stood out, no range", scanSnap({ bh: 0.6, holm: 0.9, p: 0.2, estimate: 0.11, ci: null })],
+    ["strong, past +0.5", scanSnap({ bh: 0.003, holm: 0.004, estimate: 0.56, ci: [0.38, 0.71] })],
+  ];
+  for (const [name, snap] of gauge) out.push({ name: `scan gauge: ${name}`, summary: scanBottomLine({ ...settings, snap }) });
   return out;
 }
