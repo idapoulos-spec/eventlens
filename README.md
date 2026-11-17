@@ -544,6 +544,51 @@ With real effects, 200 data sets per window (median sample correlation in bracke
 - **It does miss small links, as its wording says.** With a real correlation around 0.12, well under the ±0.30 the label is set at, the card said "No clear link" in 19.5% of data sets at 90 days and 49.0% at 180. That's why it says a strong link is unlikely but a weaker one can't be ruled out.
 - **Strong evidence isn't a big effect:** with a real correlation around 0.12, 7.0–9.5% of data sets were rated Strong at 90 and 180 days: strong evidence of a modest link. The headline's size word and the effect in percent say how big it is, and below |r| = 0.10 the card adds that the link itself is small.
 
+### The experimental signal
+
+An analysis's card also shows an experimental signal: **Leans Buy vs. SPY** or **Leans Sell vs. SPY** (naming the benchmark in use), or **Hold: no signal**, always with an evidence level and a reason (`lib/analytics/signal.ts`). A Buy or Sell implies the stock moves next, so the signal rests only on Kalshi moving first. These rules were fixed on 2026-11-16 and written here before any code or simulation of them ran; they are not tuned to any result, simulated or real. They use the page's own results, plus one new check of how stable Kalshi's lead is. A scan never shows a signal: it runs too many tests at once.
+
+- **The lags** are the market-adjusted lead-lag tests the page shows: Kalshi's change in one hour (or trading day) against the stock's abnormal return k hours (or days) later, for k = ±1…±3 hourly and ±1…±5 daily, corrected together with Benjamini–Hochberg (BH). Lag 0 is the primary test and isn't in that family.
+- **The lead** is the Kalshi-first lag (k > 0) whose BH p is under 0.05 with the smallest p (ties go to the shorter lag): the lag the "Does Kalshi move first?" tile names. Only that lag is used; if it fails a later rule, no other lag is tried.
+- **The lead's rating** applies the scan-lead rules above to the lead, on its BH p: Weak if fragile or without a 95% range; Strong if its BH p is under 0.005 and it isn't a daily window past 90 days; Moderate otherwise. Fragile means F1 on the lead's own pairs (Kalshi's movement in them is worth fewer than 10 effective intervals) or F3: rerunning the whole lead-lag family, with the market model refitted, without any one of the 10 sessions (or runs of days) that weigh most in the lead's own test changes the lead's BH decision at 5% or the sign of its correlation. A rerun without a p-value decides nothing, and a check that can't run counts as fragile. With the page's 999 draws, a lead's BH p falls below 0.005 only when at least two lags have tiny p-values, so in practice Moderate is the ceiling.
+- **The level** is the lower of the lead's rating and the card's evidence badge (Weak, then Moderate, then Strong), so the signal is never stronger than the badge.
+- **Pending intervals** are the window's last k grid slots, up to its end (its last row), for the lead's k: Kalshi changes whose partner, the stock's return k slots later, is still to come. Daily, all k count. Hourly, a lead never pairs hours across a close, so a slot counts only if its partner hour ends by 4:00 PM New York the same day. Early closes (such as 1:00 PM before some holidays) aren't modelled, as elsewhere on the page.
+- **The recent move** is the sum of Kalshi's changes in the pending intervals (in points for a market, in its unit, such as bp, for an event), shown to one decimal and compared with the jump size as shown.
+- **Direction** is the sign of the lead's correlation times the sign of the recent move: + is Leans Buy, − is Leans Sell. The lags use market-adjusted returns, so the direction is relative to the benchmark: "Leans Buy vs. SPY" means the stock tended to rise beyond what SPY's move explains, not that it rose.
+
+The first rule that matches decides:
+
+| # | When | Shows |
+| --- | --- | --- |
+| S1 | No market-adjusted lead-lag results: Returns is set to Raw, or market adjustment isn't possible | Hold: no signal · No rating |
+| S2 | No lag in the family has a p-value | Hold: no signal · Not enough data |
+| S3 | No Kalshi-first lag passes BH | Hold: no signal · No clear lead |
+| S4 | A stock-first lag passes BH too | Hold: no signal · No clear lead |
+| S5 | The lead's checks or the card's rating are still computing | Checking… |
+| S6 | The lead is rated Weak | Hold: no signal · Weak evidence |
+| S7 | The card's badge is below Moderate | Hold: no signal · the badge's level |
+| S8 | No pending interval (hourly: the lead can't play out by 4:00 PM) | Hold: no signal · the level |
+| S9 | The recent move, as shown, is smaller than the jump size | Hold: no signal · the level |
+| S10 | Otherwise | Leans Buy vs. <benchmark> or Leans Sell vs. <benchmark> · the level (Moderate or Strong) |
+
+Each Hold gives a short reason, such as "Kalshi doesn't move first" or "No Kalshi move of 2 pts or more in the last 2 hours". When the lead's |r| is below 0.10 (as shown, to two decimals), the signal adds that Kalshi's moves explain only a tiny part of the stock's later moves. The signal is worked out at the window's end, so a frozen link gives the same signal, and a live window's signal changes as new data comes in.
+
+### Checking the signal by simulation
+
+Set before any run (`lib/analytics/signal-rates.sim.test.ts`, run with `pnpm test:sim`): each data set gets the signal exactly as the page works it out, with the lead-lag family, the primary test, and the leave-one-out checks at 999 draws, computing only what the rules need to decide the label.
+
+- **Design:** the rating simulations' data (hourly, Kalshi tracking the benchmark at 0.1% per pp, shared volatility; windows of 21, 62, and 124 sessions, with the market model on 62 loaded sessions for 30 and 90 days and on the window itself for 180). It is the worst case for false signals: every data set's window ends at 1:00 PM New York in its last session, right after Kalshi's change in the hour ending then was set to 3 pp (up for even seeds, down for odd; less only if Kalshi's price was within 3 points of the simulator's 1% and 99% bounds). So a recent move is nearly always there, and the rate measures the evidence rules. The jump size is the page's hourly default for a market, 2 pp. The rest of that session (to 4:00 PM) is left out of the window and used only to see what the stock did next.
+- **No relationship:** 500 data sets per window, seeds 7,300,000–7,300,499, 7,310,000–7,310,499, and 7,320,000–7,320,499.
+- **Real links,** 200 data sets each, the effects in % of the stock's return per pp of Kalshi's change:
+  - **Kalshi first only:** 0.3% per pp in the hour after Kalshi's change, within the same session, at 30, 90, and 180 days (seeds 7,400,000, 7,410,000, and 7,420,000 + 0–199).
+  - **The same lead plus 0.3% per pp in the same hour,** at 90 days (seeds 7,500,000 + 0–199).
+  - **0.3% per pp in the same hour only,** at 90 days (seeds 7,600,000 + 0–199). The simulated Kalshi keeps moving the way it just moved (the same sign 70% of the time after a move), so a lagged correlation can show up even without a lead; this setting shows how often the signal appears then.
+  - All seeds are fresh; each data set's stock noise uses its seed + 7,919, as in the rating simulations.
+- **The test fails, with no relationship, at any window, if** Leans Buy or Leans Sell appears in more than 5.0% of data sets (25 of 500).
+- **Reported, without a bar:** for every setting, how often each rule decides, Leans Buy against Leans Sell, and the share of labels whose stock then moved that way against the benchmark over the lead's next k hours (the sum of its abnormal returns by the window's market model), next to the 50% of a coin flip. With a real link, also the share of labels pointing the way the link implies (every simulated effect is positive, so that is the direction of Kalshi's last move). And the run time.
+- **The same as the page:** a few data sets also go through the panel's own functions and its signal job, which must give the same signal.
+- **Each setting runs once.** Rates come with their count, one Monte Carlo standard error, and a 95% Wilson range. If the bar is missed, the rules stay as they are, the measured rate is shown on the page and here, and only that bar is loosened, with this disclosure. Daily data, a year, and All use the same rules but aren't simulated, and the signal's rules say so. If timing shows the CI job would pass its 60-minute limit, only the real-link data-set counts are cut, before the run, and that is recorded here.
+
 ### What the card says
 
 The card sits above the Research card, for a single market and for a whole event (`components/plain/`). It answers first and folds the reasoning away. Top to bottom:
