@@ -30,6 +30,8 @@ import { fmtR, lowerFirst, plural } from "../research/parts";
 import { formatCi, formatP } from "../research/stats";
 import type { CandidateState, ScanSnapshot } from "../scan/scanRunner";
 import { GAUGE_SCALE } from "./gauge";
+import { bottomLineSignal, SCAN_NO_SIGNAL, type BottomLineSignal } from "./signal";
+import type { SignalCheck } from "@/lib/analytics/signal";
 
 export type BottomLineLevel = EvidenceLevel | ScanLeadLevel | "pending" | "none";
 
@@ -85,6 +87,8 @@ export interface BottomLine {
   sections: BottomLineSection[];
   /** The "how they moved together" gauge under the answer (beside the lead for a scan); null for a scan with no lead. */
   gauge: BottomLineGauge | null;
+  /** The experimental signal, under the tiles; null for a scan, which has none. */
+  signal: BottomLineSignal | null;
   /**
    * Numbers in the text that aren't printed elsewhere on the page as written, because they rescale one
    * that is (a size per 10 pp or 25 bp, a lag's count of hours) or quote the rating's own rules and
@@ -109,11 +113,14 @@ export interface DrawnGauge {
 /** The gauge, or why there's none. */
 export type BottomLineGauge = DrawnGauge | { drawn: false; why: string };
 
-/** The one sentence allowed to name buying or selling, and only to say this isn't that (language.test.ts). */
-export const NOT_ADVICE = "It is not a prediction, it doesn’t show that one causes the other, and it is not a recommendation to buy or sell anything.";
+/**
+ * A scan's limits: it has no signal, so it says it isn't a prediction or advice. An analysis's card
+ * says the signal's disclaimer once, in its signal panel (signal.ts).
+ */
+export const SCAN_NOT_ADVICE = "It is not a prediction, it doesn’t show that one causes the other, and it is not financial advice.";
 
-export const ANALYSIS_LIMITS = `This describes how two series moved together in the past. ${NOT_ADVICE} Other news can move both at once.`;
-export const SCAN_LIMITS = `This describes how the stock moved with each candidate in the past. ${NOT_ADVICE} A scan finds leads to check, not findings.`;
+export const ANALYSIS_LIMITS = "This describes how two series moved together in the past, and it doesn’t show that one causes the other. Other news can move both at once.";
+export const SCAN_LIMITS = `This describes how the stock moved with each candidate in the past. ${SCAN_NOT_ADVICE} A scan finds leads to check, not findings. ${SCAN_NO_SIGNAL}`;
 
 export const WINNERS_CURSE_PLAIN =
   "Leads at the top of a scan are probably overstated, because they rank first partly by luck. Expect a smaller link if one is checked again on new data.";
@@ -372,6 +379,10 @@ export interface BottomLineInput {
   windowEnd: number | null;
   windowFrozen: boolean;
   frozenAt: number | null;
+  /** The event study's jump size, in the variable's unit: the signal's recent move must reach it. */
+  threshold: number;
+  /** The signal's check of its lead: undefined while it's computing (or not needed), null when it couldn't run. */
+  signalCheck: SignalCheck | null | undefined;
 }
 
 export function bottomLine(i: BottomLineInput): BottomLine {
@@ -406,6 +417,7 @@ export function bottomLine(i: BottomLineInput): BottomLine {
       { id: "limits", title: "What this can’t tell you", items: [ANALYSIS_LIMITS] },
     ],
     gauge: gaugeOf(primary, rating.level, false, togetherText(i.stock, subjectOf(i.variable)), derived),
+    signal: bottomLineSignal(i, rating.level, derived),
     derived,
   };
 }
@@ -736,6 +748,7 @@ export function scanBottomLine({ stock, choice, resolution, candidates, snap }: 
       why: whyTitle(level),
       sections: [limits],
       gauge: null,
+      signal: null,
       derived,
     };
   }
@@ -779,6 +792,7 @@ export function scanBottomLine({ stock, choice, resolution, candidates, snap }: 
       limits,
     ],
     gauge: gaugeOf(state.test.primary!, rating.level, true, togetherText(stock, leadSubject(candidates[index])), derived),
+    signal: null,
     derived,
   };
 }

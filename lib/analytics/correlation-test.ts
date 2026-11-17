@@ -219,7 +219,7 @@ function lagFrame({ sorted, x, y, steps, byStep, layout, refit }: Setup, lag: nu
       f = frame({ r: py, m: null, block }, { index: Int32Array.from(pairs, (_, p) => p), x: px, steps: pairSteps, market: false });
     }
   }
-  return { n: pairs.length, px, r, f };
+  return { n: pairs.length, px, r, f, pairs };
 }
 
 /**
@@ -304,6 +304,19 @@ export function primaryFrame(changes: ChangePoint[], resolution: Resolution, ref
   const s = setup(changes, resolution, refit);
   const { f } = lagFrame(s, 0);
   return f && { f, sorted: s.sorted, layout: s.layout };
+}
+
+/** A lag's frame as its test builds it (the market model refitted), with each pair's Kalshi change. */
+export interface LagTestFrame extends PrimaryFrame {
+  /** Pair p's Kalshi change (its stock return is k slots later): lag 0 pairs each change with itself. */
+  kalshi: ChangePoint[];
+}
+
+/** One lag's frame, as lagCorrelationTests builds it with a refit (fragility.ts reads it), or null when it can't be built. */
+export function lagTestFrame(changes: ChangePoint[], resolution: Resolution, refit: RefitSample, lag: number): LagTestFrame | null {
+  const s = setup(changes, resolution, refit);
+  const { f, pairs } = lagFrame(s, lag);
+  return f && { f, sorted: s.sorted, layout: s.layout, kalshi: pairs.map(([i]) => s.sorted[i]) };
 }
 
 /** The smallest correlation the same-interval test detects with DETECTABLE_POWER, for one sample. */

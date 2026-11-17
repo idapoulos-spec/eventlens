@@ -6,6 +6,8 @@ import type { ChangePoint } from "./changes";
 import { HOUR_MS } from "./probability";
 import { mulberry32, type Rng } from "./random";
 import type { ResearchRow } from "./research";
+// Imported directly: the lib/market-data index also loads the server-only Twelve Data client.
+import { timeZoneOffsetMs } from "@/lib/market-data/session";
 
 /** Standard normal draw (Box–Muller). */
 export function normal(rng: Rng): number {
@@ -168,6 +170,18 @@ export interface MarketSimOptions {
   effect?: number;
   /** As in SimOptions: news days, and big Kalshi moves with a more volatile stock. */
   sharedVolatility?: boolean;
+  /**
+   * Hourly only: stock return (%) per 1 pp Kalshi change `lag` hours earlier in the same session,
+   * beyond what the benchmark carries (Kalshi moves first). Uses no extra random draws.
+   */
+  lagEffect?: { lag: number; effect: number };
+  /**
+   * Hourly only: Kalshi's change (pp, signed) in the last session's interval ending at `nyHour`
+   * o'clock New York time is set to `pp` (less if the price would pass 1% or 99%). The sessions are
+   * stamped in UTC, so from March they run 11:00–17:00 New York. Uses no extra random draws;
+   * Kalshi's later values in that session move with it.
+   */
+  lastSessionJump?: { nyHour: number; pp: number };
 }
 
 /**
@@ -186,6 +200,8 @@ export function simulateMarketRows({
   kalshiInMarket = 0,
   effect = 0,
   sharedVolatility = false,
+  lagEffect,
+  lastSessionJump,
 }: MarketSimOptions): { rows: ResearchRow[]; closesByT: Map<number, number> } {
   const design = mulberry32(seed);
   const noise = mulberry32(noiseSeed);
@@ -198,14 +214,17 @@ export function simulateMarketRows({
     rows.push({ t, step, stockClose: price, kalshiValue: prob, kalshiSource: "midpoint", kalshiAsOf: t, exclusion: null });
     closesByT.set(t, bench);
   };
-  // One interval: the Kalshi move (pp) as realized after clamping, the benchmark's return, and the stock's.
-  const move = (x: number, benchSd: number, stockNoise: number) => {
+  // One interval: the Kalshi move (pp) as realized after clamping, the benchmark's return, and the
+  // stock's (plus `lagged`, a lagged effect's return). Returns the realized move.
+  const move = (x: number, benchSd: number, stockNoise: number, lagged = 0) => {
     const next = Math.min(0.99, Math.max(0.01, prob + x / 100));
     const pp = (next - prob) * 100;
     prob = next;
     const m = benchSd * normal(design) + (kalshiInMarket * pp) / 100;
     bench *= Math.exp(m);
-    price *= Math.exp(beta * m + (effect * pp) / 100 + stockNoise);
+    const r = beta * m + (effect * pp) / 100 + stockNoise;
+    price *= Math.exp(lagged === 0 ? r : r + lagged);
+    return pp;
   };
 
   if (resolution === "hourly") {
@@ -215,6 +234,14 @@ export function simulateMarketRows({
       const news = sharedVolatility && design() < 0.2;
       const dayVol = Math.exp(0.4 * normal(design)) * (news ? 2.5 : 1);
       const x = kalshiPath(design, INTRADAY.length, 0.15, news);
+      if (lastSessionJump && s === sessions - 1) {
+        const t10 = FIRST_SESSION_10AM + day * 24 * HOUR_MS;
+        const h = lastSessionJump.nyHour - new Date(t10 + timeZoneOffsetMs(t10, "America/New_York")).getUTCHours();
+        if (h < 1 || h > INTRADAY.length) throw new Error(`No interval ends at ${lastSessionJump.nyHour}:00 New York in the last session`);
+        x[h - 1] = lastSessionJump.pp;
+      }
+      // The session's realized Kalshi moves (pp), by interval, for a lagged effect.
+      const realized: number[] = [];
       for (let h = 0; h <= INTRADAY.length; h++) {
         const t = FIRST_SESSION_10AM + day * 24 * HOUR_MS + h * HOUR_MS;
         if (h === 0) {
@@ -222,7 +249,9 @@ export function simulateMarketRows({
           move(0, 0.004, 0.006 * dayVol * normal(noise));
         } else {
           const spike = sharedVolatility && Math.abs(x[h - 1]) >= 1.5 ? 3 : 1;
-          move(x[h - 1], 0.0015, 0.002 * dayVol * INTRADAY[h - 1] * spike * studentT(noise, 5));
+          const source = lagEffect ? h - 1 - lagEffect.lag : -1;
+          const lagged = lagEffect && source >= 0 ? (lagEffect.effect * realized[source]) / 100 : 0;
+          realized.push(move(x[h - 1], 0.0015, 0.002 * dayVol * INTRADAY[h - 1] * spike * studentT(noise, 5), lagged));
         }
         push(t, Math.round(t / HOUR_MS));
       }

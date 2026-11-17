@@ -25,7 +25,10 @@ import { sectionText } from "@/lib/report/model";
 import { numbersIn, numbersNotOn, textOf } from "../report/test-helpers";
 import { GLOSSARY } from "./glossary";
 import { BottomLineCard } from "./BottomLineCard";
-import { GAUGE_ENDS, LEVEL_LABEL, NOT_ADVICE, RATING_METHOD_NUMBERS, bottomLine, type BottomLineInput, type BottomLine } from "./summary";
+import { calibrationFor, evidenceRating } from "@/lib/analytics/evidence";
+import { pendingSlots, signalDecision } from "@/lib/analytics/signal";
+import { leanLabel, SIGNAL_DISCLAIMER } from "./signal";
+import { GAUGE_ENDS, LEVEL_LABEL, METER_STEP, RATING_METHOD_NUMBERS, bottomLine, type BottomLineInput, type BottomLine } from "./summary";
 import { cardGlossary, cardParts, expectGaugeMatchesPage, gaugeText, isEvidenceLine, reportParts } from "./test-helpers";
 
 vi.setConfig({ testTimeout: 120_000 });
@@ -89,9 +92,46 @@ function summaryFor(page: Loaded, stock: string, kalshi: string, view: Parameter
   return { input, summary: bottomLine(input) };
 }
 
-/** The card's results text: everything but the labels, the fixed limits, the method notes, and the glossary. */
+/** The card's results text: everything but the labels, the fixed limits, the method notes (the signal's rules among them), and the glossary. */
 const resultsText = (s: BottomLine) =>
-  [s.question, s.verdict, s.headline, ...gaugeText(s), ...s.tiles.flatMap((t) => [t.value, t.note]), ...s.sections.filter((x) => x.id !== "limits").flatMap((x) => x.items)].join("\n");
+  [
+    s.question,
+    s.verdict,
+    s.headline,
+    ...gaugeText(s),
+    ...s.tiles.flatMap((t) => [t.value, t.note]),
+    ...(s.signal ? [s.signal.text, s.signal.reason, ...s.signal.chips.map((c) => c.value)] : []),
+    ...s.sections.filter((x) => x.id !== "limits").flatMap((x) => x.items),
+  ].join("\n");
+
+/** The signal's decision, worked out again from the page's own results, as the rules (signal.ts) read them. */
+function decisionFor(input: BottomLineInput) {
+  const { results } = input;
+  const calibration = calibrationFor(input.resolution, input.choice, input.longDaily);
+  const card = evidenceRating({ primary: results.market?.primary ?? null, fragility: results.fragility, leaveOneOut: input.leaveOneOut, detectable: input.detectable, calibration }).level;
+  return signalDecision({
+    lags: results.shown === "adjusted" ? results.view.lags : null,
+    card,
+    check: input.signalCheck,
+    calibration,
+    changes: results.view.changes,
+    end: results.rows.at(-1) ?? null,
+    resolution: input.resolution,
+    threshold: input.threshold,
+  });
+}
+
+/** The signal says what the page's results decide: its rule and label, a lean naming the page's benchmark, and a level never above the badge. */
+function expectSignalMatchesResults(input: BottomLineInput, summary: BottomLine) {
+  const s = summary.signal!;
+  const d = decisionFor(input);
+  expect({ rule: s.rule, label: s.label, level: s.level }).toEqual({ rule: d.rule, label: d.label, level: d.level });
+  if (s.label === "buy" || s.label === "sell") {
+    expect(s.text).toBe(leanLabel(s.label, input.benchmark));
+    expect(["moderate", "strong"]).toContain(s.level);
+    expect(METER_STEP[s.level as "moderate" | "strong"]!).toBeLessThanOrEqual(METER_STEP[summary.level]!);
+  }
+}
 
 /** The tiles say what the page's own results say: the rating, the regression's size and range, and the corrected lags. */
 function expectTilesMatchResults(input: BottomLineInput, summary: BottomLine) {
@@ -136,6 +176,18 @@ function allowedDerived(input: BottomLineInput, rest: string): Set<string> {
   // A lag's count of hours or days, for a lag the page prints.
   const unit = input.resolution === "hourly" ? "h" : "d";
   for (const l of input.results.view.lags) if (l.lag !== 0 && page.includes(formatLag(l.lag, unit))) allowed.add(String(Math.abs(l.lag)));
+  // The signal's recent move (Kalshi's changes the page holds, summed over the lead's pending hours) and
+  // their count, its leave-one-out reruns, and the 4 PM close.
+  const d = decisionFor(input);
+  if (d.move) {
+    const slots = new Set(pendingSlots(input.results.rows.at(-1)!, d.move.lag, input.resolution));
+    const sum = input.results.view.changes.filter((c) => slots.has(c.step)).reduce((a, c) => a + c.kalshiChange, 0);
+    expect(Math.abs(d.move.value - sum), "the recent move is the page's changes, summed").toBeLessThanOrEqual(0.05 + 1e-9);
+    allowed.add(formatSigned(d.move.value, 1).replace(/−/g, "-")).add(Math.abs(d.move.value).toFixed(1)).add(String(d.move.slots));
+  }
+  const loo = input.signalCheck?.leaveOneOut;
+  if (loo) allowed.add(String(loo.runs.length)).add(String(loo.flips));
+  allowed.add("4");
   return allowed;
 }
 
@@ -160,8 +212,8 @@ function expectReportMatchesCard(html: string, input: AnalysisReportInput) {
   expect(parts.filter((p) => !isEvidenceLine(p))).toEqual(onCard.filter((p) => !isEvidenceLine(p)));
   expect(parts.filter(isEvidenceLine)).toEqual(onCard.filter(isEvidenceLine));
   expect(parts.indexOf("How the rating works")).toBeGreaterThan(4);
-  // The fixed sentence is there once in the whole report, word for word.
-  expect(report.sections.map(sectionText).join("\n").split(NOT_ADVICE).length - 1).toBe(1);
+  // The signal's disclaimer is there once in the whole report, word for word.
+  expect(report.sections.map(sectionText).join("\n").split(SIGNAL_DISCLAIMER).length - 1).toBe(1);
   const terms = report.sections.at(-1)!;
   expect(terms.id).toBe("terms");
   const rows = terms.blocks[0].kind === "facts" ? terms.blocks[0].rows : [];
@@ -181,6 +233,7 @@ function expectCardMatchesPage(html: string, input: AnalysisReportInput, summary
   const allowed = allowedDerived(input, rest);
   expect(missing.filter((n) => !allowed.has(n)), "declared numbers that don't match their source").toEqual([]);
   expectTilesMatchResults(input, summary);
+  expectSignalMatchesResults(input, summary);
   expectGaugeMatchesPage(card, textOf(rest), input.results.market?.primary ?? null);
 }
 
@@ -290,6 +343,28 @@ describe("the bottom-line card's numbers are its page's", () => {
     const page = await marketPage(deps, "LAGGE", MOVING_MARKET.ticker, { window: null, resolution: null });
     const { input, summary } = summaryFor(page, "LAGGE", MOVING_MARKET.ticker, { choice: 90, resolution: "hourly" });
     expect(resultsText(summary)).toMatch(/Also, LAGGE moved first: Kalshi tended to move 1 hour after LAGGE did/);
+    expectCardMatchesPage(page.html, input, summary);
+  });
+
+  // The experimental signal on real pages: symbols with a same-hour link and one an hour later.
+  it("for a stable lead with a same-hour link, holding with no recent Kalshi move", async () => {
+    linkSymbol("LNK16", MOVING_MARKET, 0.004, 0, [{ perCent: 0.006, lagHours: 1 }]);
+    stubWorld([MOVING_MARKET]);
+    const page = await marketPage(deps, "LNK16", MOVING_MARKET.ticker, { window: null, resolution: null });
+    const { input, summary } = summaryFor(page, "LNK16", MOVING_MARKET.ticker, { choice: 90, resolution: "hourly" });
+    expect(summary.signal).toMatchObject({ rule: "no_move", text: "Hold: no signal", levelText: "Moderate evidence" });
+    expect(summary.signal!.chips.map((c) => c.value)).toEqual(["Yes, by 1 hr", "Stable", "0.0 pts in 1 hr", expect.stringMatching(/^\d+ hrs$/)]);
+    expectCardMatchesPage(page.html, input, summary);
+  });
+
+  it("for a fragile lead right after a Kalshi move, at an earlier time", async () => {
+    vi.setSystemTime(Date.UTC(2026, 9, 2, 15, 40));
+    linkSymbol("LEADB", MOVING_MARKET, 0.008, 0, [{ perCent: 0.01, lagHours: 1 }]);
+    stubWorld([MOVING_MARKET]);
+    const page = await marketPage(deps, "LEADB", MOVING_MARKET.ticker, { window: null, resolution: null, jump: 1 });
+    const { input, summary } = summaryFor(page, "LEADB", MOVING_MARKET.ticker, { choice: 90, resolution: "hourly", jump: 1 });
+    expect(summary.signal).toMatchObject({ rule: "weak_lead", levelText: "Weak evidence" });
+    expect(summary.signal!.chips[2].value).toBe("+1.0 pts in 1 hr");
     expectCardMatchesPage(page.html, input, summary);
   });
 

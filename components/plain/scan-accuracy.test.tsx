@@ -23,7 +23,7 @@ import { numbersNotOn, textOf } from "../report/test-helpers";
 import { sectionText } from "@/lib/report/model";
 import { cardGlossary, cardParts, expectGaugeMatchesPage, gaugeText, isEvidenceLine, reportParts } from "./test-helpers";
 import { ScanBottomLine } from "./BottomLineCard";
-import { GAUGE_ENDS, NOT_ADVICE, scanBottomLine, type BottomLine } from "./summary";
+import { GAUGE_ENDS, SCAN_NOT_ADVICE, scanBottomLine, type BottomLine } from "./summary";
 
 vi.setConfig({ testTimeout: 120_000 });
 vi.mock("server-only", () => ({}));
@@ -142,7 +142,7 @@ function expectSummaryMatchesCard(html: string, snap: ScanSnapshot, summary: Bot
   const onCard = cardParts(card);
   expect(parts.filter((p) => !isEvidenceLine(p))).toEqual(onCard.filter((p) => !isEvidenceLine(p)));
   expect(parts.filter(isEvidenceLine)).toEqual(onCard.filter(isEvidenceLine));
-  expect(report.sections.map(sectionText).join("\n").split(NOT_ADVICE).length - 1).toBe(1);
+  expect(report.sections.map(sectionText).join("\n").split(SCAN_NOT_ADVICE).length - 1).toBe(1);
   const terms = report.sections.at(-1)!;
   expect(terms.id).toBe("terms");
   expect(terms.blocks[0].kind === "facts" && terms.blocks[0].rows.map(([k, v]) => `${k}: ${v}`)).toEqual(cardGlossary(card));

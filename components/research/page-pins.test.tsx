@@ -138,8 +138,12 @@ describe("the Research panel's markup is unchanged", () => {
     expect(html.replace(/<section data-plain-english[\s\S]*?<\/section>/g, "").match(TERM_MARKER)?.length).toBeGreaterThanOrEqual(6);
     // Re-taken 2026-10-26 for one intentional text fix, the event study's subtitle "the probability moved
     // moved" → "the probability moved"; the markup differs from the original pins by that one word only.
-    expect(sha(pinnedMarkup(html))).toBe("4c723accd2cc4a7e");
-    expect(sha(pinnedMarkup(await marketMarkup("NVDA", LIVE_MARKET.ticker, LINKED)))).toBe("7cad7e81356388f7");
+    // Re-taken 2026-11-16 (feat/signal), at the user's request, for the Research footer's wording only:
+    // "…in this sample. They are not predictions or trading signals." → "…in the past. The experimental
+    // signal above leans on those patterns, but it is not a prediction or financial advice." Before/after
+    // renders of all five pins below differ in that one paragraph and nothing else.
+    expect(sha(pinnedMarkup(html))).toBe("455802131ea3002e");
+    expect(sha(pinnedMarkup(await marketMarkup("NVDA", LIVE_MARKET.ticker, LINKED)))).toBe("3e2a3bb461dda4c9");
   });
 
   it("for a market settled before the archive cutoff, from the store, ending at its close", async () => {
@@ -147,8 +151,8 @@ describe("the Research panel's markup is unchanged", () => {
     await store([SETTLED_MARKET]);
     const html = await withStore(() => marketMarkup("TLT", SETTLED_MARKET.ticker));
     expect(html).toContain("in windows ending at the market&#x27;s close");
-    // Re-taken 2026-10-26 for the same one-word subtitle fix, and nothing else.
-    expect(sha(pinnedMarkup(html))).toBe("ad384cfb0f2054ac");
+    // Re-taken 2026-10-26 for the same one-word subtitle fix, and nothing else; and 2026-11-16 for the footer's wording only (above).
+    expect(sha(pinnedMarkup(html))).toBe("db8fa002462ddf52");
   });
 
   it("for a live event, without the store", async () => {
@@ -156,8 +160,9 @@ describe("the Research panel's markup is unchanged", () => {
     const html = await eventMarkup("TLT", "KXFEDDECISION-26DEC");
     expect(html).toContain("ΔE");
     expect(html).toContain("<section data-plain-english");
-    expect(sha(pinnedMarkup(html))).toBe("0f5b2f50936244ea");
-    expect(sha(pinnedMarkup(await eventMarkup("TLT", "KXFEDDECISION-26DEC", LINKED)))).toBe("e4b9bd8a5cc41e60");
+    // Re-taken 2026-11-16 for the footer's wording only (above).
+    expect(sha(pinnedMarkup(html))).toBe("d8c7779586d41dd7");
+    expect(sha(pinnedMarkup(await eventMarkup("TLT", "KXFEDDECISION-26DEC", LINKED)))).toBe("3636f476511abdf8");
   });
 });
 

@@ -6,6 +6,7 @@ import { FONT, GRID, INK, SURFACE } from "@/lib/report/charts";
 import type { Block, Section } from "@/lib/report/model";
 import { gaugeSvg, type GaugePalette } from "../plain/gaugeSvg";
 import { GLOSSARY } from "../plain/glossary";
+import { DECIDED_LABEL, SIGNAL_RULES_TITLE, SIGNAL_TITLE, type BottomLineSignal } from "../plain/signal";
 import { LEVEL_LABEL, RATING_METHOD, type BottomLine, type BottomLineGauge, type BottomLineTile } from "../plain/summary";
 
 /** The correlation teal, the app's --series-correlation (gauge-colors.test.ts checks they match), on the report's light colors. */
@@ -35,7 +36,24 @@ export function tileText({ id, label, value, note }: Pick<BottomLineTile, "id" |
   return `${label}${label.endsWith("?") ? "" : ":"} ${value}${id === "tested" ? " " : ". "}${note}${/[.?!]$/.test(note) ? "" : "."}`;
 }
 
-/** "The bottom line": the question, the answer, the gauge, the tiles, then the reasons, in the card's order, with the limits last. */
+/** The label and its level as one line, as the card's panel reads: "Leans Buy vs. SPY · Moderate evidence". */
+export const signalLine = (signal: BottomLineSignal) => (signal.levelText ? `${signal.text} · ${signal.levelText}` : signal.text);
+
+/** The experimental signal as a report shows it, in the card's order, with its rules written out. */
+export function signalBlocks(signal: BottomLineSignal): Block[] {
+  return [
+    { kind: "heading", text: SIGNAL_TITLE },
+    { kind: "paragraph", text: signalLine(signal) },
+    { kind: "paragraph", text: signal.reason },
+    { kind: "list", items: signal.chips.map((c) => `${c.label}: ${c.value}`) },
+    { kind: "paragraph", text: `${DECIDED_LABEL} ${signal.decided}` },
+    { kind: "heading", text: SIGNAL_RULES_TITLE },
+    { kind: "list", items: signal.rules },
+    { kind: "paragraph", text: signal.disclaimer },
+  ];
+}
+
+/** "The bottom line": the question, the answer, the gauge, the tiles, the signal, then the reasons, in the card's order, with the limits last. */
 export function bottomLineSection(summary: BottomLine, { method }: { method: boolean }): Section {
   const evidence: Block = { kind: "paragraph", text: `Evidence: ${LEVEL_LABEL[summary.level]}` };
   const blocks: Block[] = [{ kind: "paragraph", text: summary.question }];
@@ -46,6 +64,7 @@ export function bottomLineSection(summary: BottomLine, { method }: { method: boo
   const leadGauge = summary.sections.some((s) => s.id === "scan-lead");
   if (!leadGauge) blocks.push(...gaugeBlocks(summary.gauge));
   if (summary.tiles.length > 0) blocks.push({ kind: "list", items: summary.tiles.map(tileText) });
+  if (summary.signal) blocks.push(...signalBlocks(summary.signal));
   for (const s of summary.sections) {
     if (s.id === "limits") continue;
     blocks.push({ kind: "heading", text: s.title });
