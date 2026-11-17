@@ -54,6 +54,7 @@ describe("@/lib/analytics", () => {
       "kalshiBenchmarkCorrelation",
       "kalshiRegression",
       "lagCorrelationTests",
+      "lagTestFrame",
       "logReturns",
       "marketAdjustment",
       "marketCore",

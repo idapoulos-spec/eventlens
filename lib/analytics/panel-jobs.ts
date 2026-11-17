@@ -4,12 +4,15 @@ import {
   panelResults,
   secondaryDetectable,
   secondaryLeaveOneOutSteps,
+  secondarySignalCheckSteps,
   type PanelCore,
   type PanelInput,
   type PanelResults,
 } from "./panel";
 import type { DetectableCorrelation } from "./correlation-test";
 import type { LeaveOneOut } from "./fragility";
+import type { TestResult } from "./inference";
+import type { SignalCheck } from "./signal";
 
 // The Research panel's computations as jobs, run in slices on the page after its main results
 // (components/research/panelJobs.ts). Pure apart from timing, so it's tested directly.
@@ -17,17 +20,20 @@ import type { LeaveOneOut } from "./fragility";
 /**
  * main: every result the cards show, for the longer windows (too slow for the page itself).
  * secondary: the detectable size and the leave-one-out check, for every window.
+ * signal: the experimental signal's check of its Kalshi-first lead (`lag`, whose test is `lead`).
  * `coreKey` names everything but the jump size, so a job for another jump size reuses the core.
  */
 export type PanelJob =
   | { kind: "main"; key: string; coreKey: string; input: PanelInput; threshold: number }
-  | { kind: "secondary"; key: string; coreKey: string; input: PanelInput };
+  | { kind: "secondary"; key: string; coreKey: string; input: PanelInput }
+  | { kind: "signal"; key: string; coreKey: string; input: PanelInput; lag: number; lead: TestResult };
 
 /** A job's results, each part as soon as it's ready, with how long it took (ms). */
 export type PanelMessage =
   | { kind: "main"; key: string; value: PanelResults; ms: number }
   | { kind: "detectable"; key: string; value: DetectableCorrelation | null; ms: number }
-  | { kind: "leave_one_out"; key: string; value: LeaveOneOut | null; ms: number };
+  | { kind: "leave_one_out"; key: string; value: LeaveOneOut | null; ms: number }
+  | { kind: "signal_check"; key: string; value: SignalCheck | null; ms: number };
 
 const now = () => (typeof performance === "undefined" ? Date.now() : performance.now());
 
@@ -72,6 +78,11 @@ export function panelRunner() {
       return;
     }
     const core = yield* coreFor(job.coreKey, job.input, false);
+    if (job.kind === "signal") {
+      const value = yield* steps(secondarySignalCheckSteps(job.input, core, job.lag, job.lead));
+      yield { kind: "signal_check", key: job.key, value, ms: elapsed() };
+      return;
+    }
     const detectable = secondaryDetectable(core, job.input.resolution);
     yield { kind: "detectable", key: job.key, value: detectable, ms: elapsed() };
     since = now();

@@ -11,6 +11,8 @@ import { combineMarket, marketAdjustment, marketCoreSteps, marketEvents, type Ma
 import { drain } from "./steps";
 import { rowsSince, type ResearchRow, type Resolution } from "./research";
 import { rollingCorrelation, type RollingPoint } from "./rolling";
+import { signalCheckSteps, type SignalCheck } from "./signal";
+import type { TestResult } from "./inference";
 import type { TimePoint } from "./types";
 
 // What the Research panel computes for one window, resolution, jump size, and benchmark, as plain
@@ -286,5 +288,27 @@ export function* secondaryLeaveOneOutSteps(input: PanelInput, core: PanelCore): 
     resolution: input.resolution,
     primary: core.market.primary,
     fragility: core.fragility,
+  });
+}
+
+/**
+ * The experimental signal's check of its Kalshi-first lead (signal.ts): the lead's own diagnostics
+ * and the lead-lag family rerun without each of its most influential sessions. Null without a market model.
+ */
+export function* secondarySignalCheckSteps(input: PanelInput, core: PanelCore, lag: number, lead: TestResult): Generator<void, SignalCheck | null> {
+  const closesByT = closeMap(input.closes);
+  const model = core.market?.model;
+  const abnormal = core.market?.abnormal;
+  if (!closesByT || !model || !abnormal) return null;
+  return yield* signalCheckSteps({
+    full: input.full,
+    closesByT,
+    changes: core.series.changes,
+    abnormal,
+    model,
+    resolution: input.resolution,
+    lag,
+    lead,
+    maxLag: COMPUTE_SETTINGS[input.resolution].maxLag,
   });
 }

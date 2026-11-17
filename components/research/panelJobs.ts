@@ -1,10 +1,11 @@
 "use client";
 
 // Runs the Research panel's slower jobs (lib/analytics/panel-jobs.ts) after its main results have
-// rendered: the longer windows, the detectable size, and the leave-one-out check. They run a slice
-// at a time (one bootstrap or less, at most about 30 ms of work per task) and hand the main thread
-// back in between, so clicks and scrolling stay responsive while they compute. Each part's result is
-// kept by its key; asking for other jobs drops ones that are no longer wanted.
+// rendered: the longer windows, the detectable size, the leave-one-out check, and the experimental
+// signal's check. They run a slice at a time (one bootstrap or less, at most about 30 ms of work per
+// task) and hand the main thread back in between, so clicks and scrolling stay responsive while they
+// compute. Each part's result is kept by its key; asking for other jobs drops ones that are no longer
+// wanted.
 //
 // A Web Worker would move them off the main thread entirely, but Next.js 16.3's Turbopack emits
 // `new Worker(new URL(…, import.meta.url))` targets as plain static files rather than bundles, so
@@ -17,7 +18,7 @@ import { panelRunner, type PanelJob, type PanelMessage } from "@/lib/analytics/p
 export const partId = (kind: PanelMessage["kind"], key: string) => `${kind}:${key}`;
 const jobId = (job: PanelJob) => `${job.kind}:${job.key}`;
 /** The part that finishes a job. */
-const lastPart = (job: PanelJob) => partId(job.kind === "main" ? "main" : "leave_one_out", job.key);
+const lastPart = (job: PanelJob) => partId(job.kind === "main" ? "main" : job.kind === "signal" ? "signal_check" : "leave_one_out", job.key);
 
 /** Work done in one task before the page gets the main thread back (ms). */
 const SLICE_MS = 30;

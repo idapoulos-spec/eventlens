@@ -1,10 +1,11 @@
 import type { ChangePoint } from "./changes";
-import { blockKey, primaryFrame, type BlockLayout } from "./correlation-test";
+import { blockKey, lagTestFrame, primaryFrame, type BlockLayout } from "./correlation-test";
 import { ALPHA, type TestResult } from "./inference";
 import { adjustedChanges, benchmarkReturnsByT, fitMarketModel, primaryTest, type MarketModel } from "./market-model";
 import type { ResearchRow, Resolution } from "./research";
 import { MIN_BOOTSTRAP_BLOCKS, MIN_KALSHI_MOVES } from "./sample";
 import { drain } from "./steps";
+import type { Frame } from "./wild-bootstrap";
 
 /**
  * How much the primary test rests on a few intervals or sessions (fed-history's post-hoc
@@ -117,8 +118,23 @@ export interface Fragility {
 /** The primary test's diagnostics from its inputs (marketAdjustment's abnormal changes and model); null when its frame can't be built. */
 export function fragility(abnormal: ChangePoint[], model: MarketModel, resolution: Resolution): Fragility | null {
   const pf = primaryFrame(abnormal, resolution, model.sample);
-  if (!pf) return null;
-  const { f, sorted, layout } = pf;
+  return pf && diagnose(pf.f, pf.sorted, pf.sorted, pf.layout, model);
+}
+
+/**
+ * The same diagnostics for one lead-lag lag's test (the market model refitted), from its own pairs:
+ * how much of Kalshi's movement in them, and which sessions weigh most in it. Lag 0 is fragility().
+ */
+export function lagFragility(abnormal: ChangePoint[], model: MarketModel, resolution: Resolution, lag: number): Fragility | null {
+  const lf = lagTestFrame(abnormal, resolution, model.sample, lag);
+  return lf && diagnose(lf.f, lf.sorted, lf.kalshi, lf.layout, model);
+}
+
+/**
+ * Diagnostics from a test's frame: `sorted` holds the window's changes in step order (its first
+ * step keys the runs of days, as in the test), and `kalshi` each pair's Kalshi change.
+ */
+function diagnose(f: Frame, sorted: ChangePoint[], kalshi: ChangePoint[], layout: BlockLayout, model: MarketModel): Fragility {
   const { sample } = model;
   const first = sorted.length > 0 ? sorted[0].step : 0;
   const keyOf = (i: number) => blockKey(sample.t[i], sample.step[i], first, layout.runDays);
@@ -146,13 +162,13 @@ export function fragility(abnormal: ChangePoint[], model: MarketModel, resolutio
 
   const c2 = contribution.reduce((sum, v) => sum + v * v, 0);
   const hours = Array.from({ length: f.m }, (_, p) => p)
-    .sort((a, b) => Math.abs(contribution[f.index[b]]) - Math.abs(contribution[f.index[a]]) || sorted[a].t - sorted[b].t)
+    .sort((a, b) => Math.abs(contribution[f.index[b]]) - Math.abs(contribution[f.index[a]]) || kalshi[a].t - kalshi[b].t)
     .slice(0, 10)
     .map((p) => {
       const j = f.index[p];
       return {
-        t: sorted[p].t,
-        kalshiChange: sorted[p].kalshiChange,
+        t: kalshi[p].t,
+        kalshiChange: kalshi[p].kalshiChange,
         abnormal: f.a[j],
         contribution: contribution[j],
         share: c2 > 0 ? (contribution[j] * contribution[j]) / c2 : 0,
@@ -165,7 +181,7 @@ export function fragility(abnormal: ChangePoint[], model: MarketModel, resolutio
     blocking: { first, runDays: layout.runDays },
     movement: {
       intervals: f.m,
-      moves: sorted.filter((c) => c.kalshiChange !== 0).length,
+      moves: kalshi.filter((c) => c.kalshiChange !== 0).length,
       top1: topShare(descending, 1, 1),
       top5: topShare(descending, 1, 5),
       effective: effectiveCount(weights),

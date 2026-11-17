@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { panelCore, panelEvents, panelResults, secondaryDetectable, secondaryLeaveOneOut, type PanelInput } from "./panel";
+import { panelCore, panelEvents, panelResults, secondaryDetectable, secondaryLeaveOneOut, secondarySignalCheckSteps, type PanelInput } from "./panel";
 import { panelRunner, runJob, type PanelMessage } from "./panel-jobs";
+import { drain } from "./steps";
 import { simulateMarketRows } from "./test-helpers";
 
 // A window of 20 sessions: the jobs, run a step at a time, give exactly what the page computes directly.
@@ -51,6 +52,21 @@ describe("panelRunner", () => {
     let main: PanelMessage | undefined;
     runJob(run, { kind: "main", key: "a", coreKey: "core", input, threshold: 1.5 }, (m) => (main = m));
     expect(main?.kind === "main" && main.value.view.lags).toHaveLength(7);
+  });
+
+  it("posts the signal's check of a lead, as computed directly, reusing the core", () => {
+    const run = panelRunner();
+    runJob(run, { kind: "secondary", key: "a", coreKey: "core|light", input }, () => {});
+    const core = panelCore(input);
+    const lead = core.lags.find((l) => l.lag === 2)!.test;
+    const messages: PanelMessage[] = [];
+    runJob(run, { kind: "signal", key: "a|signal:2", coreKey: "core|light", input, lag: 2, lead }, (m) => messages.push(m));
+    expect(messages.map((m) => [m.kind, m.key])).toEqual([["signal_check", "a|signal:2"]]);
+    expect(messages[0].value).toEqual(drain(secondarySignalCheckSteps(input, core, 2, lead)));
+    expect(messages[0].value).not.toBeNull();
+    // A step per lag of each family rerun: 7 lags × 11 reruns, at least.
+    const steps = [...panelRunner()({ kind: "signal", key: "a|signal:2", coreKey: "c", input, lag: 2, lead })];
+    expect(steps.filter((s) => s === null).length).toBeGreaterThanOrEqual(77);
   });
 
   it("pauses between every bootstrap, so a page can stay responsive while it runs", () => {
