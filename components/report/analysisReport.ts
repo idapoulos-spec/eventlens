@@ -614,7 +614,7 @@ export function caveatsSection(lines: string[]): Section {
   return {
     id: "caveats",
     title: "Caveats",
-    blocks: [{ kind: "list", items: [...lines, "Correlation, not causation: these figures describe how the series moved together in this sample. They are not predictions or trading signals. Other news can move both at once."] }, p(DISCLAIMER)],
+    blocks: [{ kind: "list", items: [...lines, "Correlation, not causation: these figures describe how the two moved in the past. The experimental signal above leans on those patterns, but it is not a prediction or financial advice. Other news can move both at once."] }, p(DISCLAIMER)],
   };
 }
 

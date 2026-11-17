@@ -629,8 +629,8 @@ export function ResearchPanel({
         ))}
 
       <p className="text-xs text-ink-muted">
-        <Term id="correlation">Correlation</Term>, not causation: these figures describe how the two series moved together in this sample. They are
-        not predictions or trading signals. Other news can move both at once.
+        <Term id="correlation">Correlation</Term>, not causation: these figures describe how the two moved in the past. The experimental signal
+        above leans on those patterns, but it is not a prediction or financial advice. Other news can move both at once.
       </p>
     </div>
   );
