@@ -252,6 +252,8 @@ export function* leadWithoutSteps(
   if (!model) return null;
   const kept = changes.filter((c) => !dropped(c.t, c.step));
   const abnormal = adjustedChanges(kept, benchmarkReturnsByT(full, closesByT), model);
+  // A pause after the refit, so no step holds both it and a bootstrap.
+  yield;
   const family = yield* crossCorrelationSteps(abnormal, maxLag, resolution, { primaryLag: 0, refit: model.sample, draws });
   return family.find((l) => l.lag === lag)?.test ?? null;
 }
