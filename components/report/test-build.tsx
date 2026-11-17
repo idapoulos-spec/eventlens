@@ -6,9 +6,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { KalshiVariable, Resolution } from "@/lib/analytics";
 import { expectedVariable, probabilityVariable } from "@/lib/analytics/variable";
 import { panelCore, panelEvents, panelResults, type PanelInput, type Returns } from "@/lib/analytics/panel";
-import { panelRunner, runJob } from "@/lib/analytics/panel-jobs";
+import { panelRunner, runJob, signalJob } from "@/lib/analytics/panel-jobs";
 import type { DetectableCorrelation } from "@/lib/analytics/correlation-test";
 import type { LeaveOneOut } from "@/lib/analytics/fragility";
+import type { SignalCheck } from "@/lib/analytics/signal";
 import { eventResearchRows, lastRows, marketResearchRows, type ResearchRows } from "@/lib/history/rows";
 import { STOCK_HISTORY_MS, type ResearchView, type WindowChoice } from "@/lib/history/window";
 import { benchmarkFrom } from "@/lib/market-data/benchmark-series";
@@ -106,6 +107,13 @@ export function reportInputFor(
       if (m.kind === "leave_one_out") leaveOneOut = m.value;
     });
   }
+  let signalCheck: SignalCheck | null = null;
+  const job = signalJob("s", input, results);
+  if (job) {
+    runJob(panelRunner(), job, (m) => {
+      if (m.kind === "signal_check") signalCheck = m.value;
+    });
+  }
   return {
     stock,
     kalshi,
@@ -126,6 +134,7 @@ export function reportInputFor(
     results,
     detectable,
     leaveOneOut,
+    signalCheck,
     sample: { kind: "loaded", days: view.choice },
     fewRuns: resolution === "daily" && view.choice < 90,
     longDaily: false,

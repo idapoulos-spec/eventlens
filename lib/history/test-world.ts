@@ -59,12 +59,19 @@ const factor = (() => {
 /**
  * Opt-in symbols whose log price also carries a Kalshi market's mid (cents) `lagHours` before each
  * bar's close, times `perCent`, so a test can see a real link on the page, in the same hour or a
- * later one (components/plain/accuracy.test.tsx). Every other symbol is unchanged.
+ * later one (components/plain/accuracy.test.tsx); `also` adds more links to the same market (for the
+ * experimental signal: one in the same hour and one later). Every other symbol is unchanged.
  */
-const LINKED = new Map<string, { quotes: Quote[]; perCent: number; lagMs: number }>();
-export function linkSymbol(symbol: string, market: WorldMarket, perCent: number, lagHours = 0): void {
-  LINKED.set(symbol, { quotes: market.quotes, perCent, lagMs: lagHours * HOUR_MS });
+const LINKED = new Map<string, { quotes: Quote[]; perCent: number; lagMs: number; also: { perCent: number; lagMs: number }[] }>();
+export function linkSymbol(symbol: string, market: WorldMarket, perCent: number, lagHours = 0, also: { perCent: number; lagHours: number }[] = []): void {
+  LINKED.set(symbol, { quotes: market.quotes, perCent, lagMs: lagHours * HOUR_MS, also: also.map((l) => ({ perCent: l.perCent, lagMs: l.lagHours * HOUR_MS })) });
   halfHourly.delete(symbol);
+}
+
+/** A linked symbol's log level at a bar's close `t`: its first link, plus any others. */
+function linkedLog(link: NonNullable<ReturnType<typeof LINKED.get>>, t: number): number {
+  const first = link.perCent * midAt(link.quotes, t - link.lagMs);
+  return link.also.length === 0 ? first : link.also.reduce((sum, l) => sum + l.perCent * midAt(link.quotes, t - l.lagMs), first);
 }
 
 /** The mid (cents) of the last quote at or before `t`; the first quote's before it. */
@@ -91,7 +98,7 @@ function barsOf(symbol: string): Bar[] {
       factor[s].map((m, i) => {
         const own = symbol === "SPY" ? 0 : (i === 0 ? 0.008 : 0.0025) * normal(rng);
         price *= Math.exp(beta * m + own);
-        const level = link ? Math.exp(link.perCent * midAt(link.quotes, open + (i + 1) * HALF_HOUR_MS - link.lagMs)) : 1;
+        const level = link ? Math.exp(linkedLog(link, open + (i + 1) * HALF_HOUR_MS)) : 1;
         return { open: open + i * HALF_HOUR_MS, close: Number((price * level).toFixed(2)) };
       }),
     );

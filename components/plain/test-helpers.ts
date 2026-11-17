@@ -14,8 +14,8 @@ import { textOf } from "../report/test-helpers";
 import { fmtR } from "../research/parts";
 import { formatCi } from "../research/stats";
 import { GAUGE_SCALE, valueAt, type GaugeSize } from "./gauge";
+import { HOLD, leanLabel, SCAN_NO_SIGNAL, type BottomLineSignal } from "./signal";
 import type { BottomLineInput, BottomLine } from "./summary";
-import { NOT_ADVICE } from "./summary";
 
 export const MARKET = probabilityVariable("Fed maintains rate");
 export const EVENT = expectedVariable({ unit: "bp", label: "the expected rate change" });
@@ -74,6 +74,8 @@ export function bottomLineInput(results: PanelResults, over: Partial<BottomLineI
     windowEnd: null,
     windowFrozen: false,
     frozenAt: null,
+    threshold: 2,
+    signalCheck: null,
     ...over,
   };
 }
@@ -81,28 +83,59 @@ export function bottomLineInput(results: PanelResults, over: Partial<BottomLineI
 /** The gauge's words: its line, note, and spoken label, or why there's none. */
 export const gaugeText = (s: BottomLine): string[] => (!s.gauge ? [] : s.gauge.drawn ? [s.gauge.line, s.gauge.note, s.gauge.label] : [s.gauge.why]);
 
-/** Everything the summary says, as one text: the question, the answer, the gauge, the tiles, and every section's title and items. */
+/**
+ * Everything the summary says outside its experimental signal, as one text: the question, the answer,
+ * the gauge, the tiles, and every section's title and items.
+ */
 export const summaryText = (s: BottomLine) =>
   [s.question, s.verdict, s.headline, ...gaugeText(s), ...s.tiles.flatMap((t) => [t.label, t.value, t.note]), s.why, ...s.sections.flatMap((x) => [x.title, ...x.items])].join("\n");
 
+/** Everything the experimental signal says, as one text: its label and level, reason, chips, how it's decided, rules, and disclaimer. */
+export const signalText = (signal: BottomLineSignal | null) =>
+  !signal
+    ? ""
+    : [signal.text, signal.levelText, signal.reason, ...signal.chips.flatMap((c) => [c.label, c.value]), signal.decided, ...signal.rules, signal.disclaimer].filter(Boolean).join("\n");
+
+/** All the card's words: the summary and its signal. */
+export const cardText = (s: BottomLine) => [summaryText(s), signalText(s.signal)].filter(Boolean).join("\n");
+
 // ---- Language ----
 
-/** Trading words (and their forms), matched as whole words, any case. */
-export const BANNED = /\b(buy(s|ing)?|sell(s|ing)?|signal(s|ed|ing|led|ling)?|opportunit(y|ies)|recommend(s|ed|ing|ation|ations)?|profit(s|able|ably|ability)?)\b|\bshould\s+invest/gi;
+/** Words banned everywhere, signal included: promises, advice, and gain (and their forms), as whole words, any case. */
+const ALWAYS = "opportunit(?:y|ies)|recommend(?:s|ed|ing|ation|ations)?|profit(?:s|able|ably|ability)?|guarantee(?:s|d|ing)?|should";
+const TRADING = "buy(?:s|ing)?|sell(?:s|ing)?|hold(?:s|ing)?";
+
+/**
+ * Outside the experimental signal: trading words as well, and "signal" itself. "Hold" is a plain verb
+ * in three fixed phrases (ORDINARY_HOLD), which are taken out before matching.
+ */
+export const BANNED = new RegExp(`\\b(?:${TRADING}|signal(?:s|ed|ing|led|ling)?|${ALWAYS})\\b`, "gi");
+/** Inside the experimental signal: "Buy", "Sell", and "Hold" only in its exact labels, which are taken out before matching. */
+export const SIGNAL_BANNED = new RegExp(`\\b(?:${TRADING}|${ALWAYS})\\b`, "gi");
+
+/** "Hold" as a plain verb, where the card uses it: not about trading. */
+export const ORDINARY_HOLD = ["hold fixed", "hold the true value", "holds only"];
 
 /** "Odds" isn't what a Kalshi price says: its prices are probabilities, so the wording says "chance". */
 export const ODDS = /\bodds\b/gi;
 
-/** Trading words in a text, after removing the one sentence allowed to name them (NOT_ADVICE). */
+const without = (text: string, phrases: string[]) => phrases.reduce((t, p) => t.split(p).join(" "), text);
+
+/** Trading words in text outside the signal, after removing the scan's one sentence about the signal and the plain uses of "hold". */
 export function bannedIn(text: string): string[] {
-  return [...text.split(NOT_ADVICE).join(" ").matchAll(BANNED)].map((m) => m[0]);
+  return [...without(text, [SCAN_NO_SIGNAL, ...ORDINARY_HOLD]).matchAll(BANNED)].map((m) => m[0]);
 }
 
-/** Sentences: split at ., ?, or ! followed by a space or the end (not inside 0.034). Line breaks end one too. */
+/** Banned words in the signal's text, after removing its exact labels (naming `benchmark`). */
+export function signalBannedIn(text: string, benchmark: string): string[] {
+  return [...without(text, [leanLabel("buy", benchmark), leanLabel("sell", benchmark), HOLD]).matchAll(SIGNAL_BANNED)].map((m) => m[0]);
+}
+
+/** Sentences: split at ., ?, or ! followed by a space or the end (not inside 0.034, nor after "vs."). Line breaks end one too. */
 export function sentences(text: string): string[] {
   return text
     .split(/\n+/)
-    .flatMap((line) => line.split(/(?<=[.?!…])\s+/))
+    .flatMap((line) => line.split(/(?<=[.?!…])(?<!\bvs\.)\s+/))
     .map((s) => s.trim())
     .filter((s) => /[A-Za-z]/.test(s));
 }

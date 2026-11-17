@@ -34,7 +34,7 @@ import {
   type PanelResults,
   type Returns,
 } from "@/lib/analytics/panel";
-import type { PanelJob, PanelMessage } from "@/lib/analytics/panel-jobs";
+import { signalJob, type PanelJob, type PanelMessage } from "@/lib/analytics/panel-jobs";
 import type { LongRows } from "@/lib/history/rows";
 import { fromNewYorkInput, newYorkInput, WINDOW_LABEL, WINDOWS, windowPlan, type ResearchView, type WindowChoice, type WindowPlan } from "@/lib/history/window";
 import { DEFAULT_BENCHMARK } from "@/lib/market-data/benchmark-series";
@@ -282,6 +282,17 @@ export function ResearchPanel({
   const secondaryPending = useDelayed(primary?.p != null && !looPart ? secondaryKey : null);
   const longPending = useDelayed(plan.kind === "long" && !results ? mainKey : plan.kind === "waiting" ? "waiting" : null, 0);
 
+  // The experimental signal's check of its Kalshi-first lead, once the results show one that passes
+  // alone (signal.ts), in its own queue: for the longer windows the lead is known only after the main job.
+  const signalSpec = useMemo(
+    () => (results && secondaryInput && secondaryKey ? signalJob(secondaryKey, secondaryInput, results) : null),
+    [results, secondaryInput, secondaryKey],
+  );
+  const signalParts = usePanelJobs(signalSpec ? [signalSpec] : []);
+  const signalPart = signalSpec ? (signalParts.get(partId("signal_check", signalSpec.key)) as Extract<PanelMessage, { kind: "signal_check" }> | undefined) : undefined;
+  // Undefined while it's computing; null when no check is needed (or it couldn't be set up, which counts as fragile).
+  const signalCheck = signalSpec ? signalPart?.value : null;
+
   const canAdjust = Boolean(market?.model && market.abnormal);
   const returns: Returns = results?.shown ?? "raw";
   const sample: ModelSample = plan.kind === "long" ? { kind: "window", label: WINDOW_LABEL[choice] } : { kind: "loaded", days: plan.kind === "loaded" ? plan.days : 90 };
@@ -338,8 +349,13 @@ export function ResearchPanel({
     onFrozen: () => setFrozenAt(asOf),
   });
   const reportControl = useReportControl({
-    ready: results !== null && !(primary?.p != null && !looPart),
-    pendingText: results === null ? "The report waits for the results." : "The report waits for the leave-one-out check…",
+    ready: results !== null && !(primary?.p != null && !looPart) && !(signalSpec && !signalPart),
+    pendingText:
+      results === null
+        ? "The report waits for the results."
+        : primary?.p != null && !looPart
+          ? "The report waits for the leave-one-out check…"
+          : "The report waits for the signal’s check…",
     fileBase: analysisFileBase({ stock: stockSymbol, kalshi: kalshiTicker, choice, resolution, asOf }),
     build: ({ preparedBy, includeLink }) => {
       if (!results) return null;
@@ -364,6 +380,7 @@ export function ResearchPanel({
         results,
         detectable: detectablePart?.value ?? null,
         leaveOneOut: looPart?.value ?? null,
+        signalCheck: signalCheck ?? null,
         sample,
         fewRuns: resolution === "daily" && plan.kind === "loaded" && plan.days < 90,
         longDaily: resolution === "daily" && plan.kind === "long",
@@ -402,9 +419,11 @@ export function ResearchPanel({
           windowEnd,
           windowFrozen,
           frozenAt,
+          threshold,
+          signalCheck,
         }),
       ),
-    [stockSymbol, variable, choice, resolution, benchmark.active.symbol, unavailable, results, detectableValue, looValue, longDaily, note, sources, windowEnd, windowFrozen, frozenAt],
+    [stockSymbol, variable, choice, resolution, benchmark.active.symbol, unavailable, results, detectableValue, looValue, longDaily, note, sources, windowEnd, windowFrozen, frozenAt, threshold, signalCheck],
   );
 
   function downloadCsv() {

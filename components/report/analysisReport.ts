@@ -20,6 +20,7 @@ import { reportInstant, reportTime } from "@/lib/report/format";
 import { MAY_DIFFER, REPRODUCED } from "../analysis/reproducibility";
 import { bottomLine } from "../plain/summary";
 import { formatLag } from "../charts/LeadLagChart";
+import type { SignalCheck } from "@/lib/analytics/signal";
 import { DISCLAIMER } from "../Disclaimer";
 import { formatAlpha, intervalNoun, modelSample, NEAR_DUPLICATE_R2, NEWEY_WEST_NOTE, verdictText, type ModelSample } from "../research/MarketAdjustmentCard";
 import { fmtR, lowerFirst, plural } from "../research/parts";
@@ -84,6 +85,8 @@ export interface AnalysisReportInput {
   results: PanelResults;
   detectable: DetectableCorrelation | null;
   leaveOneOut: LeaveOneOut | null;
+  /** The experimental signal's check of its lead (null when it wasn't needed or couldn't run). */
+  signalCheck: SignalCheck | null;
   sample: ModelSample;
   /** 30-day daily: the detectable size was validated as unreliable. */
   fewRuns: boolean;

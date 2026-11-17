@@ -5,6 +5,7 @@
 import type { TestResult } from "@/lib/analytics";
 import type { Correction } from "@/lib/analytics/scan";
 import type { Fragility, LeaveOneOut } from "@/lib/analytics/fragility";
+import type { PanelResults } from "@/lib/analytics/panel";
 import type { WindowChoice } from "@/lib/history/window";
 import type { ScanCandidate } from "@/lib/scan/types";
 import type { CandidateState, ScanSnapshot } from "../scan/scanRunner";
@@ -159,6 +160,108 @@ export function gaugeInput(c: (typeof GAUGE_CASES)[number], over: Partial<Bottom
   const input = ruleInput(c.rule, over);
   const primary = primaryWith(input.results.market!.primary!, c.primary);
   return { ...input, results: withParts(input.results, { primary }) };
+}
+
+// ---- The experimental signal ----
+
+/** How the signal's paths set up the lead-lag family, the window's end, and the lead's check. */
+type LagSetup = "none_tested" | "no_lead" | "both_ways" | "lead" | "lead_small" | "lead_strong" | "lead_no_range" | "lead_negative";
+type CheckSetup = "stable" | "fragile_loo" | "fragile_moves" | "unchecked" | "pending";
+type EndSetup = "in_session" | "late" | "quiet" | "falling";
+
+/** Each signal path: the card's rule (its badge), the lags, the lead's check, and the window's end. */
+export const SIGNAL_PATHS: Record<string, { card: (typeof RULES)[number]; lags: LagSetup; check?: CheckSetup; end?: EndSetup }> = {
+  "signal: no lag tested": { card: "no_p", lags: "none_tested" },
+  "signal: Kalshi doesn't move first": { card: "moderate", lags: "no_lead" },
+  "signal: both ways": { card: "moderate", lags: "both_ways" },
+  "signal: checking the lead": { card: "moderate", lags: "lead", check: "pending" },
+  "signal: waiting for the card": { card: "pending_significant", lags: "lead", check: "stable" },
+  "signal: fragile lead (F3)": { card: "moderate", lags: "lead", check: "fragile_loo" },
+  "signal: fragile lead (F1)": { card: "moderate", lags: "lead", check: "fragile_moves" },
+  "signal: lead check couldn't run": { card: "moderate", lags: "lead", check: "unchecked" },
+  "signal: lead without a range": { card: "moderate", lags: "lead_no_range", check: "stable" },
+  "signal: badge Weak": { card: "fragile_loo", lags: "lead", check: "stable" },
+  "signal: badge No clear link": { card: "no_link", lags: "lead", check: "stable" },
+  "signal: badge Not enough data": { card: "low_power", lags: "lead", check: "stable" },
+  "signal: too late in the day": { card: "moderate", lags: "lead", check: "stable", end: "late" },
+  "signal: no recent move": { card: "moderate", lags: "lead", check: "stable", end: "quiet" },
+  "signal: leans up": { card: "moderate", lags: "lead", check: "stable" },
+  "signal: leans down, Kalshi falling": { card: "moderate", lags: "lead", check: "stable", end: "falling" },
+  "signal: leans down, opposite lead": { card: "strong", lags: "lead_negative", check: "stable" },
+  "signal: leans, small lead": { card: "moderate", lags: "lead_small", check: "stable" },
+  "signal: leans, strong lead capped at the badge": { card: "moderate", lags: "lead_strong", check: "stable" },
+  "signal: leans, strong": { card: "strong", lags: "lead_strong", check: "stable" },
+};
+
+const NY_HOUR = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hourCycle: "h23" });
+
+/** The family −3…3 with tests swapped: a Kalshi-first lead at +2 (or none), and others quiet. */
+function lagsWith(lags: PanelResults["view"]["lags"], setup: LagSetup): PanelResults["view"]["lags"] {
+  const quiet = (t: TestResult): TestResult => ({ ...t, p: 0.5, holm: 1, bh: 0.8, estimate: 0.02, ci: [-0.08, 0.12] });
+  const passing = (t: TestResult, over: Partial<TestResult> = {}): TestResult => ({ ...t, p: 0.004, holm: 0.024, bh: 0.024, estimate: 0.18, ci: [0.06, 0.3], ...over });
+  return lags.map((l) => {
+    if (l.test.role !== "exploratory") return l;
+    if (setup === "none_tested") return { ...l, test: { ...l.test, p: null, holm: null, bh: null, ci: null, pUnavailable: "too_few_blocks" } };
+    const lead = l.lag === 2;
+    const test =
+      lead && setup !== "no_lead"
+        ? passing(l.test, {
+            ...(setup === "lead_small" && { estimate: 0.07, ci: [0.02, 0.12] }),
+            ...(setup === "lead_strong" && { p: 0.001, bh: 0.003, holm: 0.004 }),
+            ...(setup === "lead_no_range" && { ci: null, ciUnavailable: "unstable" }),
+            ...(setup === "lead_negative" && { estimate: -0.22, ci: [-0.35, -0.08] }),
+          })
+        : setup === "both_ways" && l.lag === -1
+          ? passing(l.test)
+          : setup === "lead_strong" && l.lag === 1
+            ? passing(l.test, { p: 0.001, bh: 0.003, holm: 0.004 })
+            : quiet(l.test);
+    return { ...l, test };
+  });
+}
+
+/** The input for one signal path, at one setting. */
+export function signalInput(path: keyof typeof SIGNAL_PATHS, over: Partial<BottomLineInput> = {}): BottomLineInput {
+  const { card, lags, check = "stable", end = "in_session" } = SIGNAL_PATHS[path];
+  const input = ruleInput(card, over);
+  const { results } = input;
+  const { loo } = base();
+  // End the window at 1 PM New York (late: 4 PM) on its last day, right after a Kalshi move of 3 (quiet: 0.5).
+  const hour = end === "late" ? 16 : 13;
+  const rows = results.rows.slice(0, results.rows.findLastIndex((r) => Number(NY_HOUR.format(r.t)) === hour) + 1);
+  const endT = rows[rows.length - 1].t;
+  const move = end === "quiet" ? 0.5 : end === "falling" ? -3 : 3;
+  const changes = results.view.changes.filter((c) => c.t <= endT).map((c) => (c.t === endT ? { ...c, kalshiChange: move } : c.t > endT - 2 * 3600_000 ? { ...c, kalshiChange: 0 } : c));
+  const f = results.fragility!;
+  const signalCheck: BottomLineInput["signalCheck"] =
+    check === "pending"
+      ? undefined
+      : check === "unchecked"
+        ? null
+        : { fragility: fragilityWith(f, check === "fragile_moves" ? 6.1 : 24), leaveOneOut: looWith(loo, check === "fragile_loo" ? 2 : 0) };
+  return {
+    ...input,
+    threshold: input.variable.kind === "probability" ? 2 : 0.5,
+    signalCheck,
+    results: { ...results, rows, view: { ...results.view, changes, lags: lagsWith(results.view.lags, lags) } },
+  };
+}
+
+/** Every signal wording path × market and event × setting, plus Raw returns. */
+export function signalScenarios(): Scenario[] {
+  const out: Scenario[] = [];
+  for (const variable of [MARKET, EVENT]) {
+    for (const setting of SETTINGS) {
+      for (const path of Object.keys(SIGNAL_PATHS)) {
+        const input = signalInput(path, { variable, ...setting.over });
+        out.push({ name: `${variable.kind} ${setting.name} ${path}`, summary: bottomLine(input), input });
+      }
+    }
+    // Another benchmark, named in the label.
+    const input = signalInput("signal: leans up", { variable, benchmark: "QQQ" });
+    out.push({ name: `${variable.kind} signal: leans up vs. QQQ`, summary: bottomLine(input), input });
+  }
+  return out;
 }
 
 // ---- Scans ----

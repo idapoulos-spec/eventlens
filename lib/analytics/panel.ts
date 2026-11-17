@@ -11,7 +11,7 @@ import { combineMarket, marketAdjustment, marketCoreSteps, marketEvents, type Ma
 import { drain } from "./steps";
 import { rowsSince, type ResearchRow, type Resolution } from "./research";
 import { rollingCorrelation, type RollingPoint } from "./rolling";
-import { signalCheckSteps, type SignalCheck } from "./signal";
+import { signalCheckSteps, type LeadCheckInput, type SignalCheck } from "./signal";
 import type { TestResult } from "./inference";
 import type { TimePoint } from "./types";
 
@@ -292,23 +292,35 @@ export function* secondaryLeaveOneOutSteps(input: PanelInput, core: PanelCore): 
 }
 
 /**
- * The experimental signal's check of its Kalshi-first lead (signal.ts): the lead's own diagnostics
- * and the lead-lag family rerun without each of its most influential sessions. Null without a market model.
+ * What the experimental signal's check of its Kalshi-first lead needs (signal.ts), from the panel's
+ * input and the results it already has: the lead's own diagnostics and the lead-lag family rerun
+ * without each of its most influential sessions. Null without a market model.
  */
-export function* secondarySignalCheckSteps(input: PanelInput, core: PanelCore, lag: number, lead: TestResult): Generator<void, SignalCheck | null> {
+export function signalCheckInput(
+  input: PanelInput,
+  results: { series: ChangeSeries; market: Pick<MarketCore, "model" | "abnormal"> | null },
+  lag: number,
+  lead: TestResult,
+): LeadCheckInput | null {
   const closesByT = closeMap(input.closes);
-  const model = core.market?.model;
-  const abnormal = core.market?.abnormal;
+  const model = results.market?.model;
+  const abnormal = results.market?.abnormal;
   if (!closesByT || !model || !abnormal) return null;
-  return yield* signalCheckSteps({
+  return {
     full: input.full,
     closesByT,
-    changes: core.series.changes,
+    changes: results.series.changes,
     abnormal,
     model,
     resolution: input.resolution,
     lag,
     lead,
     maxLag: COMPUTE_SETTINGS[input.resolution].maxLag,
-  });
+  };
+}
+
+/** The signal's check of a lead from a panel core, a lag at a time. */
+export function* secondarySignalCheckSteps(input: PanelInput, core: PanelCore, lag: number, lead: TestResult): Generator<void, SignalCheck | null> {
+  const check = signalCheckInput(input, core, lag, lead);
+  return check && (yield* signalCheckSteps(check));
 }

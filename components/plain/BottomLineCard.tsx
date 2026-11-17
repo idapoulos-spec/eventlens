@@ -1,7 +1,9 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { BADGE } from "./badge";
 import { GaugeDrawing } from "./GaugeDrawing";
+import { SignalPanel } from "./SignalPanel";
 import { GLOSSARY } from "./glossary";
 import { LEVEL_LABEL, METER_STEP, RATING_METHOD, type BottomLine, type BottomLineGauge, type BottomLineLevel, type BottomLineSection } from "./summary";
 import { markTerms } from "./Term";
@@ -12,21 +14,6 @@ import { markTerms } from "./Term";
 // (with no <section> inside it), which the markup pins leave out, so the cards below stay exactly as
 // they were. The first use of each glossary term in a card is marked (<Term>): its definition shows on
 // hover, focus, or a tap.
-
-/**
- * The evidence badge's looks: an ink ramp with no hue, so no level reads as a go or a stop. Weight and
- * border style carry the level, and it's always written out. Every text here is at least 9.2:1 on the
- * card (README, "The bottom line").
- */
-const BADGE: Record<Exclude<BottomLineLevel, "none">, string> = {
-  strong: "bg-ink text-page",
-  moderate: "bg-[var(--axis)] text-ink",
-  weak: "border border-ink-muted text-ink-secondary",
-  no_clear_link: "border border-border text-ink-secondary",
-  nothing_stood_out: "border border-border text-ink-secondary",
-  not_enough_data: "border border-dashed border-ink-muted text-ink-secondary",
-  pending: "border border-dotted border-ink-muted text-ink-secondary",
-};
 
 /**
  * The rating, written out, in a live region so a screen reader hears "Checking…" turn into a rating.
@@ -214,6 +201,7 @@ export function BottomLineCard({ summary }: { summary: BottomLine }) {
       <Answer summary={summary} nodes={nodes} size="text-base" />
       <Gauge gauge={summary.gauge} />
       <Tiles summary={summary} nodes={nodes} surface="bg-surface-raised" />
+      {summary.signal && <SignalPanel signal={summary.signal} />}
       <Folds summary={summary} nodes={nodes} />
       <Limits summary={summary} />
     </section>
