@@ -589,6 +589,32 @@ Set before any run (`lib/analytics/signal-rates.sim.test.ts`, run with `pnpm tes
 - **The same as the page:** a few data sets also go through the panel's own functions and its signal job, which must give the same signal.
 - **Each setting runs once.** Rates come with their count, one Monte Carlo standard error, and a 95% Wilson range. If the bar is missed, the rules stay as they are, the measured rate is shown on the page and here, and only that bar is loosened, with this disclosure. Daily data, a year, and All use the same rules but aren't simulated, and the signal's rules say so. If timing shows the CI job would pass its 60-minute limit, only the real-link data-set counts are cut, before the run, and that is recorded here.
 
+**Results** (the single run, 2026-11-16; 530 s on an Apple-silicon Mac for all nine tests). With no relationship, 500 data sets per window; each cell is the share of data sets the rule decided, with the count in brackets. S1, S2, S5, S8, and S9 decided none (every window ends at 1:00 PM, right after a 3-point move):
+
+| Window | Kalshi doesn't move first (S3) | Both ways (S4) | Weak lead (S6) | Badge below Moderate (S7) | Leans Buy or Sell (bar 5.0%) |
+| --- | --- | --- | --- | --- | --- |
+| 30 days | 99.2% (496) | 0% (0) | 0.6% (3) | 0.2% (1) | 0% (0), range 0–0.8% |
+| 90 days | 98.4% (492) | 0% (0) | 1.4% (7) | 0.2% (1) | 0% (0), range 0–0.8% |
+| 180 days | 97.0% (485) | 0.2% (1) | 1.8% (9) | 1.0% (5) | 0% (0), range 0–0.8% |
+
+- **The bar was met at every window:** none of the 1,500 data sets with no relationship leaned either way, even right after a 3-point Kalshi move. A Kalshi-first lag passed BH in 0.8% (4 of 500), 1.6% (8), and 3.0% (15) of them; the stability check and the badge cap held every one.
+
+With real links, 100 data sets each (the share of data sets each rule decided; labels' direction counted among the labels):
+
+| Link | Window | No lead (S3) | Both ways (S4) | Weak lead (S6) | Badge (S7) | Leans Buy or Sell | The way the link implies | Stock then moved that way |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Kalshi first only | 30 days | 62% (62) | 0% (0) | 32% (32) | 6% (6) | 0% (0), range 0–3.7% | — | — |
+| Kalshi first only | 90 days | 11% (11) | 3% (3) | 20% (20) | 63% (63) | 3.0% (3) ± 1.7, range 1.0–8.5% | 3 of 3 | 3 of 3 |
+| Kalshi first only | 180 days | 4% (4) | 2% (2) | 1% (1) | 88% (88) | 5.0% (5) ± 2.2, range 2.2–11.2% | 5 of 5 | 5 of 5 |
+| Kalshi first and the same hour | 90 days | 5% (5) | 19% (19) | 15% (15) | 9% (9) | 52.0% (52) ± 5.0, range 42.3–61.5% | 100% (52 of 52), range 93.1–100% | 96.2% (50 of 52) ± 2.7, range 87.0–98.9% |
+| The same hour only | 90 days | 94% (94) | 0% (0) | 3% (3) | 1% (1) | 2.0% (2) ± 1.4, range 0.6–7.0% | 2 of 2 | 1 of 2 |
+
+- **The badge cap does what it was chosen to do.** With Kalshi first only, a Kalshi-first lag passed BH in 89% and 96% of data sets at 90 and 180 days, but with no same-hour link the card's badge was below Moderate in most of them, so the signal held: it leaned in 3% and 5%. A lead without a same-hour link almost never gives a signal.
+- **With both links, it leaned in 52% of data sets, every time the way the link implies,** and the stock then moved that way against the benchmark over the lead's next hour in 96.2%. That reflects the simulated effect's size (a 3-point move at 0.3% per pp is about a 0.9% move, against hourly noise of about 0.2%): the rules point the right way when a clear lead exists. It says nothing about how often real signals are followed; that needs the track record (a separate follow-up).
+- **Both ways came up in 19% with both links:** the simulated Kalshi keeps moving the way it just moved, so a stock that moves with Kalshi in the same hour also lines up with Kalshi's next move, a stock-first lag passes too, and the rules hold.
+- **With a same-hour link only,** it leaned in 2% (2 of 100), resting on Kalshi's own tendency to keep moving; the stock then moved that way in 1 of the 2.
+- **At 30 days it never leaned with a real lead:** the lead didn't pass in 62% of data sets and was fragile in 32%.
+
 ### What the card says
 
 The card sits above the Research card, for a single market and for a whole event (`components/plain/`). It answers first and folds the reasoning away. Top to bottom:
