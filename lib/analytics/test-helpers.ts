@@ -6,6 +6,8 @@ import type { ChangePoint } from "./changes";
 import { HOUR_MS } from "./probability";
 import { mulberry32, type Rng } from "./random";
 import type { ResearchRow } from "./research";
+// Imported directly: the lib/market-data index also loads the server-only Twelve Data client.
+import { timeZoneOffsetMs } from "@/lib/market-data/session";
 
 /** Standard normal draw (Box–Muller). */
 export function normal(rng: Rng): number {
@@ -174,11 +176,12 @@ export interface MarketSimOptions {
    */
   lagEffect?: { lag: number; effect: number };
   /**
-   * Hourly only: Kalshi's change (pp, signed) in the last session's interval `interval` (0 ends at
-   * 11:00 New York, 2 at 13:00) is set to `pp` (less if the price would pass 1% or 99%). Uses no
-   * extra random draws; Kalshi's later values in that session move with it.
+   * Hourly only: Kalshi's change (pp, signed) in the last session's interval ending at `nyHour`
+   * o'clock New York time is set to `pp` (less if the price would pass 1% or 99%). The sessions are
+   * stamped in UTC, so from March they run 11:00–17:00 New York. Uses no extra random draws;
+   * Kalshi's later values in that session move with it.
    */
-  lastSessionJump?: { interval: number; pp: number };
+  lastSessionJump?: { nyHour: number; pp: number };
 }
 
 /**
@@ -231,7 +234,12 @@ export function simulateMarketRows({
       const news = sharedVolatility && design() < 0.2;
       const dayVol = Math.exp(0.4 * normal(design)) * (news ? 2.5 : 1);
       const x = kalshiPath(design, INTRADAY.length, 0.15, news);
-      if (lastSessionJump && s === sessions - 1) x[lastSessionJump.interval] = lastSessionJump.pp;
+      if (lastSessionJump && s === sessions - 1) {
+        const t10 = FIRST_SESSION_10AM + day * 24 * HOUR_MS;
+        const h = lastSessionJump.nyHour - new Date(t10 + timeZoneOffsetMs(t10, "America/New_York")).getUTCHours();
+        if (h < 1 || h > INTRADAY.length) throw new Error(`No interval ends at ${lastSessionJump.nyHour}:00 New York in the last session`);
+        x[h - 1] = lastSessionJump.pp;
+      }
       // The session's realized Kalshi moves (pp), by interval, for a lagged effect.
       const realized: number[] = [];
       for (let h = 0; h <= INTRADAY.length; h++) {

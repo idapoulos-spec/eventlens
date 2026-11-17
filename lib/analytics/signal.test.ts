@@ -278,10 +278,12 @@ describe("the simulator's opt-in lead and jump", () => {
   });
 
   it("a last-session jump sets that interval's Kalshi change, leaving every earlier session as it was", () => {
-    const jumped = simulateMarketRows({ ...base, lastSessionJump: { interval: 2, pp: -3 } });
+    const jumped = simulateMarketRows({ ...base, lastSessionJump: { nyHour: 13, pp: -3 } });
     expect(jumped.rows.slice(0, -7)).toEqual(plain.rows.slice(0, -7));
     const last = jumped.rows.slice(-7);
-    // Interval 2 ends at 13:00, the last session's fourth row.
+    // January, on winter time: 13:00 New York is the last session's fourth row.
+    expect(last[3].t).toBe(Date.UTC(2026, 0, 9, 18));
     expect((last[3].kalshiValue! - last[2].kalshiValue!) * 100).toBeCloseTo(-3, 9);
+    expect(() => simulateMarketRows({ ...base, lastSessionJump: { nyHour: 10, pp: 3 } })).toThrow();
   });
 });
