@@ -20,9 +20,12 @@ export function SignalPanel({ signal }: { signal: BottomLineSignal }) {
         {signal.levelText && (
           <>
             {" "}
-            <span className="text-ink-secondary">·</span>{" "}
-            <span className={`inline-block whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold ${signal.level === "none" ? "border border-border text-ink-secondary" : BADGE[signal.level]}`}>
-              {signal.levelText}
+            {/* The dot stays with the level, so on a narrow screen it wraps with it rather than ending the label's line. */}
+            <span className="inline-flex items-center gap-2 whitespace-nowrap">
+              <span className="text-ink-secondary">·</span>{" "}
+              <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${signal.level === "none" ? "border border-border text-ink-secondary" : BADGE[signal.level]}`}>
+                {signal.levelText}
+              </span>
             </span>
           </>
         )}
